@@ -91,3 +91,51 @@ def test_humidity_too_dry(base_features):
 def test_humidity_too_wet(base_features):
     f = replace(base_features, humidity_pct=100)
     assert HumidityFactor().evaluate(f) == 0.0
+
+
+# Task 10: RuleBasedPredictor tests
+from predictor.rules import (
+    RuleBasedPredictor,
+)
+from predictor.fetch import FakeSource, WeatherSnapshot
+
+
+def _make_fake_source():
+    snap = WeatherSnapshot(
+        cloud_low_pct=10.0, cloud_mid_pct=50.0, cloud_high_pct=40.0,
+        humidity_pct=60.0, source_label="fake",
+        retrieved_at=datetime(2026, 5, 20, tzinfo=timezone.utc),
+    )
+    return FakeSource(snap)
+
+
+def test_predictor_returns_forecast_with_named_components():
+    p = RuleBasedPredictor(
+        rules=[MidHighCloudPresence(), LowCloudObstruction(), HumidityFactor()],
+        weights={"mid_high_cloud_presence": 1.0, "low_cloud_obstruction": 1.0, "humidity": 1.0},
+        source=_make_fake_source(),
+    )
+    f = p.score(lat=42.36, lon=-71.06, time=datetime(2026, 5, 20, 23, 20, tzinfo=timezone.utc))
+    assert set(f.components.keys()) == {"mid_high_cloud_presence", "low_cloud_obstruction", "humidity"}
+    assert 0.0 <= f.probability <= 1.0
+    assert f.explanation  # non-empty
+
+
+def test_predictor_default_combiner_is_weighted_average():
+    rule = MidHighCloudPresence()
+    p = RuleBasedPredictor(rules=[rule], weights={rule.name: 2.0}, source=_make_fake_source())
+    f = p.score(lat=42.36, lon=-71.06, time=datetime(2026, 5, 20, 23, 20, tzinfo=timezone.utc))
+    # Single rule → probability equals that rule's score regardless of weight magnitude.
+    assert f.probability == f.components["mid_high_cloud_presence"]
+
+
+def test_predictor_unset_weight_defaults_to_one():
+    """A rule with no entry in `weights` should still contribute with weight 1.0."""
+    p = RuleBasedPredictor(
+        rules=[MidHighCloudPresence(), HumidityFactor()],
+        weights={"mid_high_cloud_presence": 3.0},  # humidity weight omitted
+        source=_make_fake_source(),
+    )
+    f = p.score(lat=42.36, lon=-71.06, time=datetime(2026, 5, 20, 23, 20, tzinfo=timezone.utc))
+    # Both rules score 1.0 for this fake snapshot → weighted avg = 1.0.
+    assert f.probability == 1.0

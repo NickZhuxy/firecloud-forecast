@@ -1,6 +1,6 @@
 """Scoring rules and the rule-based predictor."""
 from __future__ import annotations
-from typing import Protocol
+from typing import Callable, Protocol
 from predictor.features import Features
 
 
@@ -67,3 +67,55 @@ class HumidityFactor:
 
     def evaluate(self, f: Features) -> float:
         return _trapezoid(f.humidity_pct, low0=20, low1=40, high1=80, high0=95)
+
+
+# ---------------------------------------------------------------------------
+# Combiner + predictor
+# ---------------------------------------------------------------------------
+
+from predictor.fetch import WeatherSource  # noqa: E402 – deferred to avoid circulars
+from predictor.features import derive       # noqa: E402
+from predictor.score import Forecast        # noqa: E402
+
+
+def weighted_average(components: dict[str, float], weights: dict[str, float]) -> float:
+    """Weighted average with default weight 1.0 for missing keys."""
+    total_w = 0.0
+    acc = 0.0
+    for name, value in components.items():
+        w = weights.get(name, 1.0)
+        acc += w * value
+        total_w += w
+    return acc / total_w if total_w > 0 else 0.0
+
+
+class RuleBasedPredictor:
+    def __init__(
+        self,
+        rules: list[ScoringRule],
+        weights: dict[str, float] | None = None,
+        source: WeatherSource | None = None,
+        combiner: Callable[[dict[str, float], dict[str, float]], float] = weighted_average,
+    ):
+        if source is None:
+            raise ValueError("RuleBasedPredictor requires a WeatherSource")
+        self.rules = rules
+        self.weights = weights or {}
+        self.source = source
+        self.combiner = combiner
+
+    def score(self, lat: float, lon: float, time) -> Forecast:
+        snapshot = self.source.fetch(lat, lon, time)
+        feats = derive(snapshot, lat, lon, time)
+        components = {r.name: r.evaluate(feats) for r in self.rules}
+        prob = self.combiner(components, self.weights)
+        return Forecast(
+            probability=prob,
+            components=components,
+            explanation=self._explain(components, prob),
+            inputs=snapshot.to_dict(),
+        )
+
+    def _explain(self, components: dict[str, float], prob: float) -> str:
+        pieces = [f"{k}={v:.2f}" for k, v in components.items()]
+        return f"Composite={prob:.2f} from " + ", ".join(pieces)
