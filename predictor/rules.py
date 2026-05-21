@@ -30,3 +30,16 @@ class MidHighCloudPresence:
     def evaluate(self, f: Features) -> float:
         avg = (f.cloud_mid_pct + f.cloud_high_pct) / 2.0
         return _trapezoid(avg, low0=0, low1=30, high1=70, high0=100)
+
+
+class LowCloudObstruction:
+    """Penalize low cloud cover that blocks sunlight from reaching the canvas.
+
+    Score 1.0 up to 20%, linear ramp to 0.0 by 100%.
+    """
+    name = "low_cloud_obstruction"
+
+    def evaluate(self, f: Features) -> float:
+        if f.cloud_low_pct <= 20:
+            return 1.0
+        return max(0.0, 1.0 - (f.cloud_low_pct - 20) / 80.0)
