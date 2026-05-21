@@ -61,11 +61,13 @@ class HRRRSource:
         from datetime import timezone, timedelta
 
         # Pick a recent HRRR cycle (HRRR runs hourly) and the right forecast hour.
-        # Simple choice: use the run cycle 1 hour before `time`, fxx=1.
+        # HRRR data typically becomes available ~1–1.5 h after the run time.
+        # We use a 2-hour lag (run_dt = time - 2h, fxx=2) so the forecast
+        # always references a published cycle, even for near-real-time queries.
         if time.tzinfo is None:
             time = time.replace(tzinfo=timezone.utc)
-        run_dt = time.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
-        fxx = 1
+        run_dt = time.replace(minute=0, second=0, microsecond=0) - timedelta(hours=2)
+        fxx = 2
 
         H = Herbie(
             run_dt.strftime("%Y-%m-%d %H:%M"),
