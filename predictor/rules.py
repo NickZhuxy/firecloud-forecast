@@ -1,7 +1,9 @@
 """Scoring rules and the rule-based predictor."""
 from __future__ import annotations
 from typing import Callable, Protocol
-from predictor.features import Features
+from predictor.features import Features, derive
+from predictor.fetch import WeatherSource
+from predictor.score import Forecast
 
 
 class ScoringRule(Protocol):
@@ -72,10 +74,6 @@ class HumidityFactor:
 # ---------------------------------------------------------------------------
 # Combiner + predictor
 # ---------------------------------------------------------------------------
-
-from predictor.fetch import WeatherSource  # noqa: E402 – deferred to avoid circulars
-from predictor.features import derive       # noqa: E402
-from predictor.score import Forecast        # noqa: E402
 
 
 def weighted_average(components: dict[str, float], weights: dict[str, float]) -> float:

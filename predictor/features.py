@@ -2,7 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
-from astral import LocationInfo, Observer
+from astral import Observer
 from astral.sun import sun, elevation
 
 

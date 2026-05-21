@@ -1,6 +1,15 @@
 # predictor/tests/test_rules.py
 from dataclasses import replace
-from predictor.rules import MidHighCloudPresence
+from datetime import datetime, timezone, timedelta
+
+from predictor.fetch import FakeSource, WeatherSnapshot
+from predictor.rules import (
+    HumidityFactor,
+    LowCloudObstruction,
+    MidHighCloudPresence,
+    RuleBasedPredictor,
+    SolarAngleAtSunset,
+)
 
 
 def test_mid_high_cloud_zero_cover_scores_zero(base_features):
@@ -25,10 +34,6 @@ def test_mid_high_cloud_low_end_ramp(base_features):
     assert abs(MidHighCloudPresence().evaluate(f) - 0.5) < 1e-9
 
 
-# Append to predictor/tests/test_rules.py
-from predictor.rules import LowCloudObstruction
-
-
 def test_low_cloud_zero_scores_one(base_features):
     f = replace(base_features, cloud_low_pct=0)
     assert LowCloudObstruction().evaluate(f) == 1.0
@@ -50,11 +55,6 @@ def test_low_cloud_mid_range_linear(base_features):
     assert abs(LowCloudObstruction().evaluate(f) - 0.5) < 1e-9
 
 
-# Append to predictor/tests/test_rules.py
-from datetime import datetime, timezone, timedelta
-from predictor.rules import SolarAngleAtSunset
-
-
 def test_solar_angle_at_sunset_peaks_within_30min(base_features):
     sunset = datetime(2026, 5, 20, 23, 30, tzinfo=timezone.utc)
     f = replace(base_features, sunset_time=sunset, query_time=sunset - timedelta(minutes=15))
@@ -74,10 +74,6 @@ def test_solar_angle_ramp_45_min_before(base_features):
     assert abs(SolarAngleAtSunset().evaluate(f) - 0.5) < 1e-9
 
 
-# Append to predictor/tests/test_rules.py
-from predictor.rules import HumidityFactor
-
-
 def test_humidity_sweet_spot(base_features):
     f = replace(base_features, humidity_pct=60)
     assert HumidityFactor().evaluate(f) == 1.0
@@ -94,12 +90,6 @@ def test_humidity_too_wet(base_features):
 
 
 # Task 10: RuleBasedPredictor tests
-from predictor.rules import (
-    RuleBasedPredictor,
-)
-from predictor.fetch import FakeSource, WeatherSnapshot
-
-
 def _make_fake_source():
     snap = WeatherSnapshot(
         cloud_low_pct=10.0, cloud_mid_pct=50.0, cloud_high_pct=40.0,
