@@ -72,3 +72,22 @@ def test_solar_angle_ramp_45_min_before(base_features):
     sunset = datetime(2026, 5, 20, 23, 30, tzinfo=timezone.utc)
     f = replace(base_features, sunset_time=sunset, query_time=sunset - timedelta(minutes=45))
     assert abs(SolarAngleAtSunset().evaluate(f) - 0.5) < 1e-9
+
+
+# Append to predictor/tests/test_rules.py
+from predictor.rules import HumidityFactor
+
+
+def test_humidity_sweet_spot(base_features):
+    f = replace(base_features, humidity_pct=60)
+    assert HumidityFactor().evaluate(f) == 1.0
+
+
+def test_humidity_too_dry(base_features):
+    f = replace(base_features, humidity_pct=10)
+    assert HumidityFactor().evaluate(f) == 0.0
+
+
+def test_humidity_too_wet(base_features):
+    f = replace(base_features, humidity_pct=100)
+    assert HumidityFactor().evaluate(f) == 0.0

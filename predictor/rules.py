@@ -59,3 +59,11 @@ class SolarAngleAtSunset:
         if diff_min >= 60:
             return 0.0
         return (60 - diff_min) / 30.0
+
+
+class HumidityFactor:
+    """Reward middling humidity (40–80%); penalize extremes."""
+    name = "humidity"
+
+    def evaluate(self, f: Features) -> float:
+        return _trapezoid(f.humidity_pct, low0=20, low1=40, high1=80, high0=95)
