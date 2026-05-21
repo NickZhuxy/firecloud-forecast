@@ -43,3 +43,19 @@ class LowCloudObstruction:
         if f.cloud_low_pct <= 20:
             return 1.0
         return max(0.0, 1.0 - (f.cloud_low_pct - 20) / 80.0)
+
+
+class SolarAngleAtSunset:
+    """Score how close the query time is to the local sunset.
+
+    1.0 within ±30 min of sunset; linear ramp to 0 by ±60 min; 0 beyond.
+    """
+    name = "solar_angle"
+
+    def evaluate(self, f: Features) -> float:
+        diff_min = abs((f.query_time - f.sunset_time).total_seconds()) / 60.0
+        if diff_min <= 30:
+            return 1.0
+        if diff_min >= 60:
+            return 0.0
+        return (60 - diff_min) / 30.0

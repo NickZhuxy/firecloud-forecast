@@ -48,3 +48,27 @@ def test_low_cloud_mid_range_linear(base_features):
     # Linear ramp from 1.0 at 20% to 0.0 at 100% → at 60% should be 0.5
     f = replace(base_features, cloud_low_pct=60)
     assert abs(LowCloudObstruction().evaluate(f) - 0.5) < 1e-9
+
+
+# Append to predictor/tests/test_rules.py
+from datetime import datetime, timezone, timedelta
+from predictor.rules import SolarAngleAtSunset
+
+
+def test_solar_angle_at_sunset_peaks_within_30min(base_features):
+    sunset = datetime(2026, 5, 20, 23, 30, tzinfo=timezone.utc)
+    f = replace(base_features, sunset_time=sunset, query_time=sunset - timedelta(minutes=15))
+    assert SolarAngleAtSunset().evaluate(f) == 1.0
+
+
+def test_solar_angle_far_from_sunset_scores_zero(base_features):
+    sunset = datetime(2026, 5, 20, 23, 30, tzinfo=timezone.utc)
+    f = replace(base_features, sunset_time=sunset, query_time=sunset - timedelta(hours=4))
+    assert SolarAngleAtSunset().evaluate(f) == 0.0
+
+
+def test_solar_angle_ramp_45_min_before(base_features):
+    # 45 min before sunset → halfway through the [30, 60] ramp → 0.5
+    sunset = datetime(2026, 5, 20, 23, 30, tzinfo=timezone.utc)
+    f = replace(base_features, sunset_time=sunset, query_time=sunset - timedelta(minutes=45))
+    assert abs(SolarAngleAtSunset().evaluate(f) - 0.5) < 1e-9
