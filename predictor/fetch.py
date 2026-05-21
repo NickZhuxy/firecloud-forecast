@@ -55,9 +55,13 @@ class HRRRSource:
     def __init__(self, cache_dir: Path | None = None):
         self.cache_dir = Path(cache_dir or self.DEFAULT_CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # Per-instance in-memory cache of parsed datasets keyed by (run_dt, fxx).
+        # Herbie's on-disk GRIB2 cache avoids re-downloading, but xarray parsing
+        # still costs seconds per call; the map notebook makes hundreds of
+        # same-cycle calls, so memoizing the parsed tuple here is the win.
+        self._ds_cache: dict[tuple[datetime, int], tuple[xr.Dataset, xr.Dataset]] = {}
 
     def fetch(self, lat: float, lon: float, time: "datetime") -> WeatherSnapshot:
-        from herbie import Herbie
         from datetime import timezone, timedelta
 
         # Pick a recent HRRR cycle (HRRR runs hourly) and the right forecast hour.
@@ -69,17 +73,7 @@ class HRRRSource:
         run_dt = time.replace(minute=0, second=0, microsecond=0) - timedelta(hours=2)
         fxx = 2
 
-        H = Herbie(
-            run_dt.strftime("%Y-%m-%d %H:%M"),
-            model="hrrr",
-            product="sfc",
-            fxx=fxx,
-            save_dir=self.cache_dir,
-        )
-        # Returns a list of 3 Datasets (one per cloud layer); merge into one.
-        cloud_list = H.xarray(":(?:HCDC|MCDC|LCDC):")
-        ds_clouds = xr.merge(cloud_list, compat="override")
-        ds_rh = H.xarray(":RH:2 m above ground")
+        ds_clouds, ds_rh = self._load_datasets(run_dt, fxx)
 
         run_label = f"hrrr@{run_dt.strftime('%Y-%m-%dT%HZ')}+f{fxx:02d}"
         return self._snapshot_from_datasets(
@@ -90,6 +84,29 @@ class HRRRSource:
             retrieved_at=datetime.now(timezone.utc),
         )
 
+    def _load_datasets(self, run_dt: datetime, fxx: int) -> tuple[xr.Dataset, xr.Dataset]:
+        key = (run_dt, fxx)
+        cached = self._ds_cache.get(key)
+        if cached is not None:
+            return cached
+
+        from herbie import Herbie
+
+        H = Herbie(
+            run_dt.strftime("%Y-%m-%d %H:%M"),
+            model="hrrr",
+            product="sfc",
+            fxx=fxx,
+            save_dir=self.cache_dir,
+        )
+        # H.xarray for the cloud regex returns a list of 3 Datasets (one per layer); merge into one.
+        cloud_list = H.xarray(":(?:HCDC|MCDC|LCDC):")
+        ds_clouds = xr.merge(cloud_list, compat="override")
+        ds_rh = H.xarray(":RH:2 m above ground")
+
+        self._ds_cache[key] = (ds_clouds, ds_rh)
+        return ds_clouds, ds_rh
+
     @staticmethod
     def _snapshot_from_datasets(
         ds_clouds: xr.Dataset,
@@ -99,7 +116,7 @@ class HRRRSource:
         retrieved_at: "datetime",
     ) -> WeatherSnapshot:
         """Pure transform: pick the nearest grid point and assemble a snapshot."""
-        # HRRR has 2D latitude/longitude arrays on (y, x); use simple Euclidean nearest.
+        # HRRR has 2D latitude/longitude arrays on (y, x).
         yi, xi = _nearest_grid_index(ds_clouds.latitude.values, ds_clouds.longitude.values, lat, lon)
         yi_rh, xi_rh = _nearest_grid_index(ds_rh.latitude.values, ds_rh.longitude.values, lat, lon)
 
@@ -121,7 +138,14 @@ class HRRRSource:
 
 
 def _nearest_grid_index(lat_arr: np.ndarray, lon_arr: np.ndarray, lat: float, lon: float) -> tuple[int, int]:
-    """Return (yi, xi) of the grid point nearest (lat, lon) using squared Euclidean distance."""
-    d2 = (lat_arr - lat) ** 2 + (lon_arr - lon) ** 2
+    """Return (yi, xi) of the grid point nearest (lat, lon).
+
+    Applies a cos(lat) longitude correction so degrees-of-longitude are scaled
+    to their actual geographic distance — without it, a degree of longitude is
+    treated as equal to a degree of latitude, which biases nearest-neighbor
+    selection by ~1 grid cell at mid-latitudes.
+    """
+    cos_lat = np.cos(np.radians(lat))
+    d2 = (lat_arr - lat) ** 2 + ((lon_arr - lon) * cos_lat) ** 2
     yi, xi = np.unravel_index(np.argmin(d2), d2.shape)
     return int(yi), int(xi)
