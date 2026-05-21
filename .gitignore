@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Project caches (HRRR downloads can be GBs)
+research/data/cache/
+research/data/raw/
+
+# IDE
+.vscode/
+.idea/
