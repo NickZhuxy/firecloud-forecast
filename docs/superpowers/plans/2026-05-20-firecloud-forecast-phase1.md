@@ -485,18 +485,21 @@ from predictor.fetch import HRRRSource
 
 
 def _fake_hrrr_clouds_dataset(lat_target=42.36, lon_target=-71.06):
-    """Build a tiny 3x3 xarray Dataset shaped like a HRRR cloud-cover slice."""
+    """Build a tiny 3x3 xarray Dataset shaped like a HRRR cloud-cover slice.
+
+    cfgrib shortnames: hcc (high), mcc (middle), lcc (low).
+    """
     # Build a 3x3 grid centered on target with ~0.05 deg spacing
     lats = np.array([[lat_target + dy for _ in range(3)] for dy in [-0.05, 0.0, 0.05]])
     lons = np.array([[lon_target + dx for dx in [-0.05, 0.0, 0.05]] for _ in range(3)])
-    hcdc = np.array([[10, 20, 30], [40, 55, 60], [50, 50, 50]], dtype=float)
-    mcdc = np.array([[20, 30, 40], [50, 65, 70], [60, 60, 60]], dtype=float)
-    lcdc = np.array([[5, 8, 10], [12, 15, 20], [18, 22, 25]], dtype=float)
+    hcc = np.array([[10, 20, 30], [40, 55, 60], [50, 50, 50]], dtype=float)
+    mcc = np.array([[20, 30, 40], [50, 65, 70], [60, 60, 60]], dtype=float)
+    lcc = np.array([[5, 8, 10], [12, 15, 20], [18, 22, 25]], dtype=float)
     return xr.Dataset(
         data_vars={
-            "hcdc": (("y", "x"), hcdc),
-            "mcdc": (("y", "x"), mcdc),
-            "lcdc": (("y", "x"), lcdc),
+            "hcc": (("y", "x"), hcc),
+            "mcc": (("y", "x"), mcc),
+            "lcc": (("y", "x"), lcc),
         },
         coords={
             "latitude": (("y", "x"), lats),
@@ -568,7 +571,7 @@ class HRRRSource:
 
     def fetch(self, lat: float, lon: float, time: "datetime") -> WeatherSnapshot:
         from herbie import Herbie
-        from datetime import datetime, timezone, timedelta
+        from datetime import timezone, timedelta
 
         # Pick a recent HRRR cycle (HRRR runs hourly) and the right forecast hour.
         # Simple choice: use the run cycle 1 hour before `time`, fxx=1.
@@ -584,7 +587,9 @@ class HRRRSource:
             fxx=fxx,
             save_dir=self.cache_dir,
         )
-        ds_clouds = H.xarray(":(?:HCDC|MCDC|LCDC):entire atmosphere")
+        # Returns a list of 3 Datasets (one per cloud layer); merge into one.
+        cloud_list = H.xarray(":(?:HCDC|MCDC|LCDC):")
+        ds_clouds = xr.merge(cloud_list, compat="override")
         ds_rh = H.xarray(":RH:2 m above ground")
 
         run_label = f"hrrr@{run_dt.strftime('%Y-%m-%dT%HZ')}+f{fxx:02d}"
@@ -609,17 +614,17 @@ class HRRRSource:
         yi, xi = _nearest_grid_index(ds_clouds.latitude.values, ds_clouds.longitude.values, lat, lon)
         yi_rh, xi_rh = _nearest_grid_index(ds_rh.latitude.values, ds_rh.longitude.values, lat, lon)
 
-        # cfgrib uses lower-case names mapped from GRIB shortname. Common ones:
-        #   HCDC -> 'hcdc', MCDC -> 'mcdc', LCDC -> 'lcdc', RH at 2m -> 'r2'.
-        hcdc = float(ds_clouds["hcdc"].isel(y=yi, x=xi).item())
-        mcdc = float(ds_clouds["mcdc"].isel(y=yi, x=xi).item())
-        lcdc = float(ds_clouds["lcdc"].isel(y=yi, x=xi).item())
+        # cfgrib uses lower-case GRIB shortnames:
+        #   HCDC -> 'hcc', MCDC -> 'mcc', LCDC -> 'lcc', RH at 2m -> 'r2'.
+        hcc = float(ds_clouds["hcc"].isel(y=yi, x=xi).item())
+        mcc = float(ds_clouds["mcc"].isel(y=yi, x=xi).item())
+        lcc = float(ds_clouds["lcc"].isel(y=yi, x=xi).item())
         rh = float(ds_rh["r2"].isel(y=yi_rh, x=xi_rh).item())
 
         return WeatherSnapshot(
-            cloud_low_pct=lcdc,
-            cloud_mid_pct=mcdc,
-            cloud_high_pct=hcdc,
+            cloud_low_pct=lcc,
+            cloud_mid_pct=mcc,
+            cloud_high_pct=hcc,
             humidity_pct=rh,
             source_label=run_label,
             retrieved_at=retrieved_at,

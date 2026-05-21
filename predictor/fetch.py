@@ -21,7 +21,7 @@ class WeatherSnapshot:
     cloud_mid_pct: float
     cloud_high_pct: float
     humidity_pct: float
-    source_label: str          # e.g. "hrrr@2026-05-20T18:00Z+f06"
+    source_label: str          # e.g. "hrrr@2026-05-20T18Z+f01"
     retrieved_at: datetime
 
     def to_dict(self) -> dict:
@@ -58,7 +58,7 @@ class HRRRSource:
 
     def fetch(self, lat: float, lon: float, time: "datetime") -> WeatherSnapshot:
         from herbie import Herbie
-        from datetime import datetime, timezone, timedelta
+        from datetime import timezone, timedelta
 
         # Pick a recent HRRR cycle (HRRR runs hourly) and the right forecast hour.
         # Simple choice: use the run cycle 1 hour before `time`, fxx=1.

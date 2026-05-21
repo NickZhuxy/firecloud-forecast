@@ -1,7 +1,10 @@
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
+import pytest
 import xarray as xr
-from datetime import datetime, timezone
-from predictor.fetch import WeatherSnapshot, FakeSource, HRRRSource
+
+from predictor.fetch import FakeSource, HRRRSource, WeatherSnapshot
 
 
 def _fake_hrrr_clouds_dataset(lat_target=42.36, lon_target=-71.06):
@@ -79,10 +82,6 @@ def test_fake_source_returns_canned_snapshot():
     src = FakeSource(canned)
     got = src.fetch(lat=42.36, lon=-71.06, time=datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc))
     assert got is canned
-
-
-import pytest
-from datetime import timedelta
 
 
 @pytest.mark.integration
