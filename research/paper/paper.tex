@@ -51,7 +51,7 @@
 \title{An Operational, Physics-Motivated Framework for\\
 Sunset Glow Prediction over the Continental United States}
 \author{Nick Zhu \\ \small\texttt{zhuxyparzival@gmail.com}}
-\date{\today\\\small Working draft v0.3 --- arxiv preprint target}
+\date{\today\\\small Working draft v0.4 --- arxiv preprint target}
 
 \begin{document}
 \maketitle
@@ -244,6 +244,61 @@ Figure~\ref{fig:horizon} plots $d(h)$ and the corresponding direct-illumination 
 \label{fig:horizon}
 \end{figure}
 
+\subsubsection{A Parabolic Reformulation in Flat Coordinates}
+\label{sec:parabola}
+
+The trigonometric apparatus above becomes more tractable for forecasting practice in a flattened coordinate system. Define $l = R_\oplus \theta$ as arc length along Earth's surface and $h$ as altitude above the surface. In these coordinates, surfaces of constant altitude become horizontal lines, but a straight sunlight ray that grazes Earth's surface tangentially at the origin acquires a quadratic profile. Using $r = R_\oplus + h = R_\oplus / \cos\theta$ and expanding to second order in $\theta = l / R_\oplus$,
+\begin{equation}
+h(l) \approx \frac{l^2}{2 R_\oplus},
+\label{eq:parabola}
+\end{equation}
+with relative error $\sim (l / R_\oplus)^4$ that is negligible for the few-hundred-kilometer scales of sunset light propagation. A ray that grazes the surface at $l = l_0$ at altitude $h_0$ takes the translated form
+\begin{equation}
+h(l) = \frac{(l - l_0)^2}{2 R_\oplus} + h_0.
+\label{eq:parabola_translated}
+\end{equation}
+
+The flattening trades curvilinear Earth geometry for parabolic light paths but eliminates trigonometric functions and converts rotations (Earth's rotation, which changes solar zenith angle) into translations. For a level cloud base at altitude $h_{CB}$, the constraint $h(l) = h_{CB}$ together with Eq.~\ref{eq:parabola} yields the maximum surface distance from an observer at which sunlight can graze Earth and just reach the underside of the cloud:
+\begin{equation}
+|l|_{\max} = 2 \sqrt{2 R_\oplus \, h_{CB}}.
+\label{eq:max_penetration}
+\end{equation}
+
+Equation~\ref{eq:max_penetration} is a closed-form upper bound on the horizontal range over which a fire cloud can form for a given cloud base altitude. Representative values: $h_{CB} = 2$~km gives $|l|_{\max} \approx 319$~km; $h_{CB} = 5$~km gives 505~km; $h_{CB} = 10$~km gives 714~km. For an observer to see a fire cloud, a candidate cloud's near boundary must lie within this distance along the sunset direction.
+
+\subsubsection{Fire-Cloud Spatiotemporal Triangle}
+\label{sec:triangle}
+
+Combining the parabolic geometry of Section~\ref{sec:parabola} with Earth's rotation produces a closed-form characterization of when and where fire-cloud illumination is geometrically possible. For an observer at the origin and a flat-bottom cloud layer at altitude $h_{CB}$, define $v = -R_\oplus \, d\phi/dt$ as the linear velocity at which the sunset terminator moves along the sunset direction (with $\phi$ the solar elevation). Two boundary rays delimit the illuminated region at any instant $t$ after the observer's apparent sunset:
+
+\begin{itemize}
+\item The \emph{far boundary} $l_f(t)$ is set by Earth's shadow---rays graze the surface tangentially. With $L \equiv \sqrt{2 R_\oplus h_{CB}}$,
+\begin{equation}
+l_f(t) = -L + v t.
+\end{equation}
+\item The \emph{near boundary} $l_n(t)$ is set by the cloud's own edge blocking light from below:
+\begin{equation}
+l_n(t) = \begin{cases} 2 v t, & t \leq 0, \\ 0, & t > 0. \end{cases}
+\end{equation}
+\end{itemize}
+
+The two boundaries coincide at $(t, l) = (-L/v, -2L)$ and again at $(L/v, 0)$. Between these points, the illuminated horizontal extent at time $t$ is $\Delta l(t) = l_n(t) - l_f(t)$, defining a triangular region in the $(t, l)$ plane (Figure~\ref{fig:triangle}). The triangle encodes several operational consequences for fire-cloud prediction:
+
+\begin{enumerate}
+\item For a flat-bottom layer cloud, the local fire cloud at the observer's zenith \emph{always occurs after apparent sunset (or before apparent sunrise)}, never simultaneously.
+\item Higher cloud base $h_{CB}$ enlarges both axes of the triangle ($\propto \sqrt{h_{CB}}$): a fire cloud reaches farther and lasts longer.
+\item The longest fire-cloud duration at any single fixed location occurs near the cloud's own boundary, not deep inside the cloud sheet.
+\item For an evening fire cloud, illumination begins at the innermost edge of the cloud relative to the observer and propagates outward along the sunset direction; the morning case is time-reversed.
+\item A fire cloud may still be visible when the cloud's sun-direction boundary is below the observer's local horizon, but only if the boundary is sufficiently distant.
+\end{enumerate}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\linewidth]{fig4_spatiotemporal_triangle.png}
+\caption{Fire-cloud spatiotemporal illumination triangle for a flat-bottom cloud layer with base $h_{CB}$. The shaded triangle is the set of $(t, l)$ pairs for which direct sunlight can illuminate the cloud base. The far boundary (lower edge) is set by Earth's shadow; the near boundary (upper edges) is set by the cloud's own edge for $t \leq 0$ and by the observer's zenith for $t > 0$. The horizontal red bar marks the illuminated extent at a representative instant $t = -3$~min. The dashed reference line is the geometric sunset terminator $l = vt$. Parameters: $h_{CB} = 5$~km, sunset rate $v = 21$~km/min.}
+\label{fig:triangle}
+\end{figure}
+
 \subsection{Cloud Physics: Altitude, Type, and the Planetary Boundary Layer}
 
 The geometric argument of Section~\ref{sec:horizondepression} is one of three independent mechanisms that together explain why mid- and high-level clouds dominate the sunset glow phenomenon while low clouds rarely produce vivid color. This section develops the remaining two mechanisms---boundary-layer attenuation of incoming sunlight and the high optical thickness of low water clouds---after summarizing the standard cloud classification used in the literature and in NOAA's HRRR output.
@@ -355,6 +410,59 @@ Stratospheric $\AOD$ & OSIRIS, OMPS, SAGE III & $\sim$100\,km daily & Volcanic e
 \end{table}
 
 Section~\ref{sec:datasources} describes our operational use of HRRR's surface visibility variable as the immediate Goldilocks gate proxy, with HRRR-Smoke and satellite $\AOD$ identified as Phase 2 and Phase 3 enhancements.
+
+\subsubsection{Equivalent Cloud Base Height from the Aerosol Extinction Profile}
+\label{sec:eqcloudbase}
+
+The geometric model of Section~\ref{sec:solargeometry} treats Earth's surface as an opaque shadow boundary and the troposphere above as fully transparent. In reality, the lower troposphere is optically thick by virtue of aerosol extinction; the shadow boundary effectively lies above the geometric surface at an altitude where the aerosol extinction coefficient has dropped below some threshold $\beta_x$ that permits useful light transmission. This subsection formalizes that observation and gives the resulting correction to the geometry of Section~\ref{sec:triangle}.
+
+Empirically, aerosol concentration decays exponentially with altitude with a scale height $h_a$ of order 500--4000\,m:
+\begin{equation}
+\beta(h) \approx \beta_0 \, e^{-h / h_a},
+\label{eq:aerosol_profile}
+\end{equation}
+where $\beta_0$ is the near-surface extinction coefficient at 550\,nm. The total column aerosol optical depth is then $\AOD = \beta_0 \, h_a$.
+
+Following the Beer--Lambert law, sunlight transmission through the column is fully attenuated when the integrated extinction along the path exceeds a few; the height $h_x$ at which the local extinction $\beta(h_x)$ equals a transmission-cutoff threshold $\beta_x$ acts as an \emph{equivalent opaque ground} for the geometric model. Inverting Eq.~\ref{eq:aerosol_profile},
+\begin{equation}
+h_x = h_a \, \ln\!\left(\frac{\beta_0}{\beta_x}\right) = h_a \, \ln\!\left(\frac{\AOD}{h_a \, \beta_x}\right).
+\label{eq:equivalent_ground}
+\end{equation}
+
+Substituting $h_x$ for the geometric surface in the parabolic geometry of Section~\ref{sec:parabola}, the relevant ``effective cloud base height'' becomes
+\begin{equation}
+h_{CB, \text{eff}} = h_{CB} - h_x,
+\end{equation}
+and the maximum penetration distance becomes $2 \sqrt{2 R_\oplus \, h_{CB, \text{eff}}}$. The fire-cloud spatiotemporal triangle of Section~\ref{sec:triangle} contracts correspondingly.
+
+The threshold $\beta_x$ is operationally chosen rather than derived; a working value of $\beta_x = 0.02$\,km$^{-1}$ at 550\,nm corresponds to the visibility-based extinction relation $\text{Vis} = -\ln(0.02) / \beta_{550} \approx 196 / \beta_{550}$\,km, calibrated against the standard visibility convention that an object is at the limit of visibility when its image contrast reaches 2\% of intrinsic. Equation~\ref{eq:equivalent_ground} provides the conceptual link between HRRR's surface visibility variable (operationally available, per Section~\ref{sec:datasources}) and the geometric framework of Section~\ref{sec:solargeometry}.
+
+Table~\ref{tab:hxvalues} tabulates $h_x$ for representative aerosol scale heights at $\AOD = 0.15$ (a typical clean-to-moderately-polluted CONUS value):
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{cc}
+\toprule
+$h_a$ (km) & $h_x$ (km) \\
+\midrule
+0.5 & 1.35 \\
+1.0 & 2.01 \\
+1.5 & 2.41 \\
+2.0 & 2.64 \\
+2.5 & 2.74 \\
+3.0 & 2.75 \\
+3.5 & 2.66 \\
+4.0 & 2.51 \\
+\bottomrule
+\end{tabular}
+\caption{Equivalent opaque-ground height $h_x$ as a function of aerosol scale height $h_a$, computed from Eq.~\ref{eq:equivalent_ground} with $\AOD = 0.15$ and $\beta_x = 0.02$~km$^{-1}$. The non-monotonicity in $h_a$ reflects the competition between near-surface concentration $\beta_0 = \AOD / h_a$ and the rate of decay with altitude.}
+\label{tab:hxvalues}
+\end{table}
+
+For a candidate fire cloud with cloud base 5\,km and the maximum equivalent ground height $h_x \approx 2.75$\,km, the effective cloud base shrinks to 2.25\,km and the maximum penetration distance contracts from 505\,km to $2\sqrt{2 R_\oplus \cdot 2.25} \approx 339$\,km---a 33\% reduction that the simple Earth-shadow geometry would miss. For cloud bases of comparable altitude to $h_x$, sunlight does not reach the cloud base at all, and the prediction becomes \emph{no fire cloud is possible} regardless of cloud cover or sky conditions otherwise.
+
+This refinement upgrades the binary $\texttt{CleanAirGate}$ rule of Section~\ref{sec:rules} from a simple visibility threshold to a continuous correction on the cloud-base height used by the geometric model. The architectural impact is contained: the gate's score function is replaced by a transformation of the cloud-base feature, and downstream rules operate on the modified value.
 
 \subsection{Synthesis: Necessary vs.\ Enhancing Conditions}
 \label{sec:synthesis}
@@ -578,6 +686,23 @@ The codebase is open-source [license to be selected before submission]; the repo
 
 Herbie's on-disk cache of downloaded GRIB2 files lives at \texttt{research/data/cache/hrrr/}; the directory is excluded from version control. For grid-scale notebook execution where many query points share an HRRR cycle, the in-memory dataset cache on the \texttt{HRRRSource} instance avoids the cfgrib re-parse cost. Without the in-memory cache, the 150-point Olympic Peninsula case study takes approximately ten minutes; with it, the first grid point dominates total runtime and subsequent points return in milliseconds.
 
+\subsection{A Human-in-the-Loop Operational Workflow}
+\label{sec:workflow}
+
+The framework as implemented produces a single-number probability per grid point. For an experienced forecaster, however, this output is the starting point of a richer characterization: when does the glow begin and end? What color? What accompanying optical phenomena? How robust is the prediction to uncertainty in the underlying NWP forecast? This subsection sketches a five-step workflow that uses the geometric apparatus of Section~\ref{sec:solargeometry} (the parabolic reformulation, fire-cloud triangle, and equivalent cloud base height) together with standard meteorological diagnostic plots (vertical cross sections, skew-T diagrams) to produce a forecaster-grade prediction. The framework's role here is to mechanize the per-rule scoring and to expose the components for inspection; the human role is to judge the cross-cutting evidence and quantify uncertainty.
+
+\textbf{Step 1: Identify the cloud base along the sunset direction.} From an NWP vertical cross section taken from the observer's location along the sunset azimuth (computed for the query date and location), identify any layer of high relative humidity ($> 90\%$) and read its altitude and approximate downwind extent. The skew-T diagram at the observer's location supplements this with cloud-base temperature and a check on the relative-humidity-derived layer.
+
+\textbf{Step 2: Compute the equivalent cloud base.} Read the aerosol optical depth along the sunset direction from a forecast field or recent observation, choose a plausible range for the aerosol scale height $h_a$ (typically 0.5--4\,km), and compute the equivalent opaque-ground height $h_x$ via Eq.~\ref{eq:equivalent_ground} for each. Subtract from the cloud base height to obtain $h_{CB, \text{eff}}$.
+
+\textbf{Step 3: Apply the geometric check.} Verify $2\sqrt{2 R_\oplus \, h_{CB, \text{eff}}} > $ distance to the cloud's near boundary along the sunset direction. If the inequality fails, no local fire cloud is possible. Otherwise, compute the elevation angle of the cloud's far boundary from Eq.~\ref{eq:parabola_translated} and the local-zenith fire-cloud duration from the spatiotemporal triangle of Section~\ref{sec:triangle}.
+
+\textbf{Step 4: Skew-T diagnosis of cloud type and accompanying phenomena.} Use the standard skew-T temperature--dew-point overlay to classify cloud type (cirrus, altocumulus, stratus, etc.) and check for accompanying ice-crystal optical phenomena (22\textdegree\ halo if the cloud-top temperature crosses the column ice-crystal regime, sundogs if plate ice crystals dominate, and so forth).
+
+\textbf{Step 5: Uncertainty diagnosis.} Identify the sources of uncertainty in the prediction, addressed systematically in Section~\ref{sec:openquestions}, and qualitatively assess their magnitude for the case at hand. A confident forecast is one where the four to five most plausible failure modes can be ruled out by inspection of the available NWP and observational evidence; a tentative forecast carries explicit caveats.
+
+We emphasize that this workflow is not a replacement for the automated framework; it is a complementary mode in which the framework's per-rule scoring is one input among several that an experienced forecaster integrates. The implemented predictor of Section~\ref{sec:implementation} is the appropriate tool for large-scale (e.g., CONUS) maps and for retrospective validation against historical observations; the workflow described here is appropriate for the case where a forecaster wishes to issue a detailed prediction for a specific location and time.
+
 \section{Preliminary Case Study: Olympic Peninsula, 20 May 2026}
 \label{sec:casestudy}
 
@@ -703,6 +828,22 @@ We do not have systematic ground-truth comparisons against these services. The c
 \item \textbf{HRRR-Smoke is CONUS-only.} Wildfire-driven aerosol enhancement, operationally important in Pacific Northwest and California fire seasons, is captured by HRRR-Smoke but unavailable outside the HRRR domain.
 \end{enumerate}
 
+\subsection{A Taxonomy of NWP-Driven Forecast Failure Modes}
+\label{sec:failuremodes}
+
+A separate class of limitations stems not from the predictor's design but from uncertainty in the upstream NWP forecast. When a fire-cloud prediction proves wrong (a so-called ``forecast bust''), it is operationally useful to characterize the failure with specific physical language rather than blanket statements like ``too cloudy'' or ``too hazy.'' The operational workflow of Section~\ref{sec:workflow} surfaces several distinct failure modes worth flagging when characterizing prediction uncertainty:
+
+\begin{enumerate}
+\item \textbf{Cloud-amount uncertainty within the layer.} A relatively-humid layer in the NWP cross section is predicted to be cloudy at the threshold (e.g., RH $\approx 90\%$). If the actual humidity is a few percent lower, the cloud may not form at all. This failure is most acute when the predicted cloud layer is thin and the RH peak within it just barely exceeds saturation.
+\item \textbf{Cloud-boundary position uncertainty.} The horizontal position of the cloud's edge along the sunset direction depends on the spatial gradient of the moisture field, which itself depends on the NWP forecast's accuracy. A relative-humidity field that drops gradually from 95\% to 85\% over 100\,km has a much less certain ``cloud edge'' than one that drops from 99\% to 1\% over 1\,km. Modest forecast biases in the gradual case produce large shifts in cloud boundary location.
+\item \textbf{Cloud-edge wind speed.} Even if the boundary's location is well predicted, the wind speed component along the sunset direction at the cloud's altitude controls how quickly the boundary translates between the NWP analysis time and the actual sunset moment. Empirically, an along-direction wind component below 15~m/s introduces small position uncertainty; 15--30~m/s introduces moderate uncertainty; above 30~m/s introduces large uncertainty, with the cloud potentially translating tens of kilometers between successive NWP outputs.
+\item \textbf{Small angle between cloud boundary and sunset direction.} When the cloud's edge is nearly parallel to the sunset azimuth, a small lateral shift in either the cloud edge or the solar azimuth produces a large shift in the cross-section's cloud-edge position. Such configurations carry intrinsically high uncertainty; rules of thumb suggest care when the angle between cloud-edge tangent and sunset azimuth falls below $10^\circ$.
+\item \textbf{Unaccounted intervening clouds.} The geometric model treats the sunset light path as obstructed only by Earth's shadow and the target cloud's own boundary. In practice, additional mid- or low-level cloud layers between the observer and the target cloud can intercept the light path. Inspection of the full vertical cross section, not just the target cloud's altitude, is required.
+\item \textbf{Upstream aerosol underestimation.} The aerosol forecast (HRRR-Smoke or equivalent) reflects \emph{local} aerosol concentration; the relevant quantity for fire-cloud color is the aerosol along the upstream sunlight path, which may span hundreds of kilometers in the sunset direction. A clean local atmosphere does not guarantee a clean upstream path. This is the most subtle of the failure modes and is captured imperfectly even with high-resolution aerosol forecasts.
+\end{enumerate}
+
+A forecaster reviewing a busted prediction should be able to attribute the failure to a specific item in this list rather than a generic ``the model was wrong.'' Operationally this discipline yields better calibration of future forecasts and a more honest accounting of prediction uncertainty.
+
 \section{Conclusion and Future Work}
 \label{sec:conclusion}
 
@@ -734,7 +875,9 @@ The HRRR-based predictor described here is operational only for the continental 
 
 \section*{Acknowledgments}
 
-[Acknowledgments to be added in camera-ready version.]
+The geometric reformulations of Sections~\ref{sec:parabola}--\ref{sec:triangle} (the parabolic light-path approximation, the fire-cloud spatiotemporal triangle, the equivalent-cloud-base correction for atmospheric extinction) and the operational workflow of Section~\ref{sec:workflow} draw on an extensive Chinese-language community knowledge base on amateur sunset-cloud forecasting in the Yangtze Delta region, which compiles operational meteorological practice not otherwise published in the peer-reviewed literature. The framing of forecast-failure modes in Section~\ref{sec:failuremodes} similarly reflects practitioner consensus from that community.
+
+[Additional acknowledgments to be added in camera-ready version.]
 
 \bibliography{references}
 
