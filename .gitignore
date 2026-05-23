@@ -19,3 +19,11 @@ research/data/raw/
 # IDE
 .vscode/
 .idea/
+
+# LaTeX build artifacts
+docs/paper/*.aux
+docs/paper/*.bbl
+docs/paper/*.blg
+docs/paper/*.log
+docs/paper/*.out
+docs/paper/*.toc
