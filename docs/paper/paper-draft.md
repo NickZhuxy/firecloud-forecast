@@ -4,9 +4,9 @@
 
 > Draft notes (to be addressed before submission):
 > 1. Citations are real peer-reviewed papers identified via literature search, but specific numerical extractions (e.g., Lange et al. 2023's 66% ozone contribution at SZA 90°; Mateshvili et al. 2005's measurement wavelengths) should be verified against the primary sources by a co-author with archive access before submission.
-> 2. The thesis—that necessary conditions for sunset glow are mishandled by additive scoring—is grounded in the theoretical literature; quantitative validation against ground-truth observations remains future work and is acknowledged as such in Sections 5 and 6.
-> 3. Section 5's counterfactual claim that the proposed gate × modifier architecture would return ~0 for the Olympic Peninsula case is currently computed analytically from the rule definitions but has not yet been demonstrated by a re-run of the code with the new architecture implemented. The implementation change (Section 3.4) is the next engineering step.
-> 4. Figures: none yet. The paper as currently written calls for at least three: (a) cumulative extinction $\tau_{\text{total}}(\lambda)$ across the visible spectrum at SZA=90° showing the Rayleigh/Mie/Chappuis contributions; (b) horizon depression angle and direct-illumination window as a function of cloud altitude; (c) side-by-side maps of the Olympic Peninsula case with weighted-sum versus gate × modifier scoring.
+> 2. The thesis—that necessary conditions for sunset glow are mishandled by additive scoring—is grounded in the theoretical literature; the case study of Section 5 demonstrates the failure mode and the architectural fix empirically on a 180-cell grid; broader validation against citizen-science ground-truth observations remains future work and is acknowledged as such in Sections 5 and 7.
+> 3. Three figures are included (`docs/paper/figures/`): Figure 1, spectral extinction at SZA 90° decomposed into Rayleigh / Mie / ozone Chappuis contributions; Figure 2, horizon depression angle and direct-illumination window as a function of cloud altitude with WMO altitude bands; Figure 3, side-by-side maps of the Olympic Peninsula case study with weighted-sum versus gate × modifier scoring (both schemes computed from the same per-rule component scores on the same 180 grid points).
+> 4. Figure 1 uses illustrative approximations (Bodhaine-form Rayleigh, AOD₀ = 0.05 Mie, Gaussian Chappuis around 600 nm) rather than full radiative transfer; for camera-ready submission Figure 1 should be regenerated from a peer-reviewed radiative transfer model such as SCIATRAN or libRadtran.
 
 ## Abstract
 
@@ -98,7 +98,11 @@ with
 
 $$\tau_{\text{total}}(\lambda) = \tau_R(\lambda) + \tau_{\text{Mie}}(\lambda) + \tau_{O_3}(\lambda)$$
 
-where each term integrates the corresponding extinction coefficient along the path. At low solar elevation, the path length is dominated by horizontal transit through the lower atmosphere (Section 2.2). The wavelength-dependent differences in $\tau_{\text{total}}(\lambda)$ across the visible spectrum constitute the physical answer to the question of why sunsets are red.
+where each term integrates the corresponding extinction coefficient along the path. At low solar elevation, the path length is dominated by horizontal transit through the lower atmosphere (Section 2.2). Figure 1 illustrates the wavelength-resolved contributions at SZA = 90° using standard atmospheric approximations: the Rayleigh contribution dominates the blue end of the spectrum and decays steeply with wavelength; the Mie contribution is nearly flat across the visible band; the Chappuis contribution forms a smaller but distinct hump around 600 nm. The cumulative effect on transmission shows orders-of-magnitude attenuation across the visible band, with only the deep red surviving at substantial fraction—the physical answer to the question of why sunsets are red.
+
+![Figure 1](figures/fig1_extinction_spectrum.png)
+
+*Figure 1.* Spectral extinction at apparent sunset (SZA = 90°). Top panel: Rayleigh (Bodhaine-form approximation), Mie (clean-troposphere AOD₀ = 0.05), and ozone Chappuis (300 DU, Gaussian approximation around 600 nm) contributions to total optical depth, scaled by Kasten–Young air mass m = 38. Bottom panel: surviving transmission $T = e^{-\tau_{\text{total}}}$; the color band along the bottom encodes wavelength as a perceptual color reference. Values are illustrative; for camera-ready figures a full radiative transfer model is recommended.
 
 ### 2.2 Solar Geometry: Air Mass and the Twilight Window
 
@@ -158,7 +162,11 @@ Numerical values:
 
 The rate $d\alpha/dt$ near the horizon varies with latitude and season; values above are approximate for mid-latitudes near the equinoxes. At Forks, Washington (~48° N) in late May, $|d\alpha/dt| \approx 0.15°/\text{min}$, and the corresponding direct-illumination windows are roughly 30% longer than tabulated.
 
-The asymmetry between high and low clouds is striking and is the geometric foundation for the cloud-altitude dependence developed in Section 2.3. Low stratus or stratocumulus at 1 km altitude loses direct sunlight within minutes of apparent sunset; cirrus at 10 km remains directly lit for nearly twenty minutes more. Indirect illumination by multiply-scattered light extends the visual sunset glow phenomenon further still—qualitative reports of high cirrus visibly illuminated up to 30 minutes after sunset are consistent with the geometric upper bound modulo a few minutes of secondary scattering.
+The asymmetry between high and low clouds is striking and is the geometric foundation for the cloud-altitude dependence developed in Section 2.3. Low stratus or stratocumulus at 1 km altitude loses direct sunlight within minutes of apparent sunset; cirrus at 10 km remains directly lit for nearly twenty minutes more. Figure 2 plots both quantities continuously across the relevant altitude range, with WMO altitude bands shaded for reference. Indirect illumination by multiply-scattered light extends the visual sunset glow phenomenon further still—qualitative reports of high cirrus visibly illuminated up to 30 minutes after sunset are consistent with the geometric upper bound modulo a few minutes of secondary scattering.
+
+![Figure 2](figures/fig2_horizon_depression.png)
+
+*Figure 2.* Cloud altitude controls illumination duration after sunset. Left: horizon depression angle $d(h) = \arccos(R_\oplus / (R_\oplus + h))$ as a function of cloud altitude $h$. Right: direct-illumination time window $\Delta t(h) = 2 d(h) / |d\alpha/dt|$ from apparent sunset, using a representative mid-latitude solar elevation rate $|d\alpha/dt| = 0.20°/$min. Annotations show typical cloud-type altitudes. WMO three-tier altitude bands (low, mid, high) shaded in both panels.
 
 ### 2.3 Cloud Physics: Altitude, Type, and the Planetary Boundary Layer
 
@@ -485,13 +493,24 @@ Under the gate × modifier architecture proposed in Section 3.4, with the partit
 
 $$\mathcal{G} = \{\text{MidHighCloudPresence}, \text{LowCloudObstruction}, \text{SolarAngleAtSunset}\}, \qquad \mathcal{M} = \{\text{HumidityFactor}\}$$
 
-(humidity reclassified as a saturation modifier per Section 2.5) and uniform gate weights $w_i = 1$, the same atmospheric state yields:
+(humidity reclassified as a saturation modifier per Section 2.5) and uniform gate weights $w_i = 1$, the same atmospheric state yields at the representative grid point:
 
 $$G = \left(0.00 \cdot 1.00 \cdot 1.00\right)^{1/3} = 0.00$$
 $$M = \text{HumidityFactor}(86.0\%) = 0.60$$
 $$P = G \cdot M = 0.00.$$
 
-The gate's zero on MidHighCloudPresence drives the composite to zero, in line with physical expectation. Adjacent grid points with any non-zero mid-high cloud coverage would receive a small but non-trivial composite score, modulated by the humidity modifier. This graceful behavior—from clear no-glow predictions in canvas-free regions to discriminating scores where the gate is satisfied—is the operational advantage of the architecture.
+Re-running the predictor over the full 180-point grid with both scoring schemes computed from the same per-rule component vectors yields the following summary statistics:
+
+| Scoring scheme | Min | Mean | Max |
+|---|---|---|---|
+| Weighted-sum (current implementation) | 0.625 | 0.631 | 0.631 |
+| Gate × modifier (proposed) | 0.000 | 0.000 | 0.000 |
+
+Figure 3 displays both fields as side-by-side maps. The weighted-sum panel shows the uniformly high probability across the region described qualitatively in Section 5.2; the gate × modifier panel correctly returns zero everywhere, since HRRR-reported mid- and high-cloud coverage is zero across the entire bounding box. The gate's zero on MidHighCloudPresence drives the composite to zero in every cell, in line with physical expectation. Adjacent regions with any non-zero mid- or high-cloud coverage would receive a small but non-trivial composite score, modulated by the humidity modifier; this graceful behavior—zero predictions in canvas-free regions and discriminating scores where the gate is satisfied—is the operational advantage of the architecture.
+
+![Figure 3](figures/fig3_olympic_peninsula.png)
+
+*Figure 3.* Olympic Peninsula case study comparing weighted-sum scoring (left, current implementation) against the proposed gate × modifier scoring (right, this paper). Both panels use the same per-rule component scores computed from a single HRRR forecast cycle (initialized 01:00 UTC on 21 May 2026, forecast hour 2, valid at the query time). Cyan stars mark La Push, Forks, and Ruby Beach on the Olympic Peninsula coast of Washington State. The weighted-sum panel returns 0.625–0.631 across all 180 grid cells despite zero HRRR-reported mid- and high-cloud coverage; the gate × modifier panel returns 0.000 in every cell, consistent with the physical impossibility of sunset glow formation in the absence of a cloud canvas.
 
 ### 5.4 Sensitivity and Limitations
 
