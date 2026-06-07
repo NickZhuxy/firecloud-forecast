@@ -87,6 +87,66 @@ def weighted_average(components: dict[str, float], weights: dict[str, float]) ->
     return acc / total_w if total_w > 0 else 0.0
 
 
+def gate_modifier_combiner(
+    gate_names: set[str],
+) -> Callable[[dict[str, float], dict[str, float]], float]:
+    """Build a combiner implementing the two-layer gate × modifier architecture.
+
+    Rules whose ``name`` is in ``gate_names`` form the gate layer; the remaining
+    rules form the modifier layer. The composite is ``P = G * M`` where:
+
+        G = ∏ s_i ** (w_i / W_G)   over gates,  W_G = Σ w_i   (gates)
+        M = (Σ w_j * s_j) / W_M    over modifiers, W_M = Σ w_j (modifiers)
+
+    Semantics:
+        - Any gate score equal to 0 forces G = 0 → P = 0 regardless of modifiers.
+        - With no gates, G = 1 and P = M (pure weighted-average).
+        - With no modifiers, M = 1 and P = G (pure weighted geometric mean).
+        - Gate weight 0 means the rule does not contribute (treated as score 1).
+
+    See paper §6.2 for the derivation and the relation to noisy-AND models.
+    """
+    gate_set = set(gate_names)
+
+    def combiner(components: dict[str, float], weights: dict[str, float]) -> float:
+        gate_scores = {k: v for k, v in components.items() if k in gate_set}
+        mod_scores = {k: v for k, v in components.items() if k not in gate_set}
+
+        # Gate layer: weighted geometric mean.
+        if not gate_scores:
+            gate = 1.0
+        else:
+            total_w_gate = sum(weights.get(k, 1.0) for k in gate_scores)
+            if total_w_gate <= 0:
+                gate = 1.0
+            else:
+                gate = 1.0
+                for name, score in gate_scores.items():
+                    w = weights.get(name, 1.0)
+                    if w <= 0:
+                        continue
+                    if score <= 0:
+                        gate = 0.0
+                        break
+                    gate *= score ** (w / total_w_gate)
+
+        # Modifier layer: weighted arithmetic mean.
+        if not mod_scores:
+            modifier = 1.0
+        else:
+            total_w_mod = sum(weights.get(k, 1.0) for k in mod_scores)
+            if total_w_mod <= 0:
+                modifier = 1.0
+            else:
+                modifier = sum(
+                    weights.get(k, 1.0) * v for k, v in mod_scores.items()
+                ) / total_w_mod
+
+        return gate * modifier
+
+    return combiner
+
+
 class RuleBasedPredictor:
     def __init__(
         self,
