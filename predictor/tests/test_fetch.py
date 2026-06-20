@@ -180,6 +180,197 @@ def test_hrrr_source_cache_misses_on_different_run(monkeypatch, tmp_path):
     assert counts["xarray"] == 4  # 2 clouds + 2 RH
 
 
+# ---------------------------------------------------------------------------
+# OpenMeteoSource — offline tests (no real HTTP)
+# ---------------------------------------------------------------------------
+
+from predictor.fetch import OpenMeteoSource
+
+
+def _open_meteo_payload(
+    *,
+    query_time_str="2026-05-20T23:00",
+    times=("2026-05-20T22:00", "2026-05-20T23:00", "2026-05-21T00:00"),
+    cloud_low=(5.0, 10.0, 15.0),
+    cloud_mid=(40.0, 50.0, 60.0),
+    cloud_high=(30.0, 35.0, 40.0),
+    visibility=(20_000.0, 25_000.0, 30_000.0),
+    humidity=(55.0, 60.0, 65.0),
+    sunsets=("2026-05-20T23:30", "2026-05-21T23:31"),
+):
+    """Factory: build a canned Open-Meteo-shaped dict for parser tests."""
+    return {
+        "hourly": {
+            "time": list(times),
+            "cloud_cover_low": list(cloud_low),
+            "cloud_cover_mid": list(cloud_mid),
+            "cloud_cover_high": list(cloud_high),
+            "visibility": list(visibility),
+            "relative_humidity_2m": list(humidity),
+        },
+        "daily": {
+            "sunset": list(sunsets),
+        },
+    }
+
+
+class _FakeResponse:
+    """Minimal fake HTTP response."""
+    def __init__(self, data):
+        self._data = data
+
+    def raise_for_status(self):
+        pass  # no-op
+
+    def json(self):
+        return self._data
+
+
+class _FakeSession:
+    """Minimal fake requests Session — records calls, never touches the network."""
+    def __init__(self, payload):
+        self._payload = payload
+        self.calls: list[dict] = []
+
+    def get(self, url, params=None, timeout=None):
+        self.calls.append({"url": url, "params": params, "timeout": timeout})
+        return _FakeResponse(self._payload)
+
+
+# --- _snapshot_from_payload (pure parser) ---
+
+def test_snapshot_from_payload_picks_nearest_hour():
+    payload = _open_meteo_payload()
+    query_utc = datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc)
+    snap = OpenMeteoSource._snapshot_from_payload(payload, query_utc)
+    # Hour index 1 ("2026-05-20T23:00") is the exact match
+    assert snap.cloud_low_pct == 10.0
+    assert snap.cloud_mid_pct == 50.0
+    assert snap.cloud_high_pct == 35.0
+    assert snap.humidity_pct == 60.0
+
+
+def test_snapshot_from_payload_sets_visibility_m():
+    payload = _open_meteo_payload()
+    query_utc = datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc)
+    snap = OpenMeteoSource._snapshot_from_payload(payload, query_utc)
+    assert snap.visibility_m == 25_000.0
+
+
+def test_snapshot_from_payload_cloud_base_is_none():
+    """OpenMeteoSource never sets cloud_base_m — it must be None."""
+    payload = _open_meteo_payload()
+    query_utc = datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc)
+    snap = OpenMeteoSource._snapshot_from_payload(payload, query_utc)
+    assert snap.cloud_base_m is None
+
+
+def test_snapshot_from_payload_picks_nearest_sunset():
+    payload = _open_meteo_payload(sunsets=["2026-05-20T23:30", "2026-05-21T23:31"])
+    query_utc = datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc)
+    snap = OpenMeteoSource._snapshot_from_payload(payload, query_utc)
+    # The closer sunset is 2026-05-20T23:30 (30 min away vs ~24 h away)
+    assert snap.sunset_time is not None
+    assert snap.sunset_time.year == 2026 and snap.sunset_time.month == 5 and snap.sunset_time.day == 20
+
+
+def test_snapshot_from_payload_source_label_format():
+    payload = _open_meteo_payload()
+    query_utc = datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc)
+    snap = OpenMeteoSource._snapshot_from_payload(payload, query_utc)
+    assert snap.source_label == "open-meteo@2026-05-20T23Z"
+
+
+def test_snapshot_from_payload_no_sunsets_sunset_time_none():
+    payload = _open_meteo_payload(sunsets=[])
+    query_utc = datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc)
+    snap = OpenMeteoSource._snapshot_from_payload(payload, query_utc)
+    assert snap.sunset_time is None
+
+
+def test_snapshot_from_payload_off_hour_query_picks_closest():
+    # Query at 22:45 — closer to 23:00 (15 min) than to 22:00 (45 min)
+    payload = _open_meteo_payload()
+    query_utc = datetime(2026, 5, 20, 22, 45, tzinfo=timezone.utc)
+    snap = OpenMeteoSource._snapshot_from_payload(payload, query_utc)
+    # Index 1 (23:00) is closer → cloud_mid=50, not 40
+    assert snap.cloud_mid_pct == 50.0
+
+
+# --- fetch via injected session ---
+
+def test_open_meteo_fetch_returns_weather_snapshot():
+    payload = _open_meteo_payload()
+    session = _FakeSession(payload)
+    src = OpenMeteoSource(session=session)
+    snap = src.fetch(lat=42.36, lon=-71.06, time=datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc))
+    assert isinstance(snap, WeatherSnapshot)
+    assert snap.cloud_mid_pct == 50.0
+
+
+def test_open_meteo_fetch_makes_no_real_http():
+    """The session mock captures all calls; confirm exactly one call was made."""
+    payload = _open_meteo_payload()
+    session = _FakeSession(payload)
+    src = OpenMeteoSource(session=session)
+    src.fetch(lat=42.36, lon=-71.06, time=datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc))
+    assert len(session.calls) == 1
+    assert session.calls[0]["url"] == OpenMeteoSource.ENDPOINT
+
+
+def test_open_meteo_fetch_passes_lat_lon_params():
+    payload = _open_meteo_payload()
+    session = _FakeSession(payload)
+    src = OpenMeteoSource(session=session)
+    src.fetch(lat=42.36, lon=-71.06, time=datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc))
+    params = session.calls[0]["params"]
+    assert "42.3600" in params["latitude"]
+    assert "-71.0600" in params["longitude"]
+
+
+# --- fetch_many via injected session ---
+
+def test_open_meteo_fetch_many_returns_one_snapshot_per_coord():
+    single_payload = _open_meteo_payload()
+    multi_payload = [single_payload, single_payload]
+    session = _FakeSession(multi_payload)
+    src = OpenMeteoSource(session=session)
+    coords = [(42.36, -71.06), (40.71, -74.01)]
+    snaps = src.fetch_many(coords=coords, time=datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc))
+    assert len(snaps) == 2
+    assert all(isinstance(s, WeatherSnapshot) for s in snaps)
+
+
+def test_open_meteo_fetch_many_empty_coords_returns_empty_list():
+    session = _FakeSession([])
+    src = OpenMeteoSource(session=session)
+    result = src.fetch_many(coords=[], time=datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc))
+    assert result == []
+    # No HTTP call should be made for empty coord list
+    assert len(session.calls) == 0
+
+
+def test_open_meteo_fetch_many_makes_single_http_call():
+    single_payload = _open_meteo_payload()
+    multi_payload = [single_payload, single_payload, single_payload]
+    session = _FakeSession(multi_payload)
+    src = OpenMeteoSource(session=session)
+    coords = [(42.36, -71.06), (40.71, -74.01), (37.77, -122.42)]
+    src.fetch_many(coords=coords, time=datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc))
+    # Multi-location API uses a single request
+    assert len(session.calls) == 1
+
+
+def test_open_meteo_fetch_many_single_coord_wrapped_in_list():
+    # Single-coord multi-location: payload is a dict (not list), should still return 1 snapshot
+    single_payload = _open_meteo_payload()
+    session = _FakeSession(single_payload)  # not a list — mimics the "object not array" edge case
+    src = OpenMeteoSource(session=session)
+    snaps = src.fetch_many(coords=[(42.36, -71.06)], time=datetime(2026, 5, 20, 23, 0, tzinfo=timezone.utc))
+    assert len(snaps) == 1
+    assert isinstance(snaps[0], WeatherSnapshot)
+
+
 @pytest.mark.integration
 def test_hrrr_source_real_fetch_for_boston(tmp_path):
     """Hits the network (AWS S3). Run manually with: pytest -m integration."""

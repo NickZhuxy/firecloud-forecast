@@ -20,6 +20,9 @@ research/data/raw/
 .vscode/
 .idea/
 
+# Large third-party reference material (kept local, not redistributed)
+research/*.pdf
+
 # LaTeX build artifacts
 research/paper/*.aux
 research/paper/*.bbl

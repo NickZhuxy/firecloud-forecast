@@ -23,10 +23,16 @@ class WeatherSnapshot:
     humidity_pct: float
     source_label: str          # e.g. "hrrr@2026-05-20T18Z+f01"
     retrieved_at: datetime
+    # Optional fields — older sources (HRRR cloud/RH only) may not supply them.
+    visibility_m: float | None = None   # surface horizontal visibility, metres
+    cloud_base_m: float | None = None   # lowest cloud-layer base height, metres
+    sunset_time: datetime | None = None  # source-reported local sunset (if any)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["retrieved_at"] = self.retrieved_at.isoformat()
+        if self.sunset_time is not None:
+            d["sunset_time"] = self.sunset_time.isoformat()
         return d
 
 
@@ -41,6 +47,139 @@ class FakeSource:
 
     def fetch(self, lat: float, lon: float, time: datetime) -> WeatherSnapshot:
         return self.snapshot
+
+
+class OpenMeteoSource:
+    """Fetch point weather from the free, key-less, global Open-Meteo API.
+
+    Unlike HRRRSource (CONUS-only, slow GRIB downloads), Open-Meteo returns a
+    JSON point forecast in well under a second worldwide, which makes it the
+    right backend for an interactive map application. It supplies layered cloud
+    cover, 2 m relative humidity, surface visibility, and the daily sunset time.
+
+    It does not report a cloud-base height; ``cloud_base_m`` is left None and
+    estimated downstream in ``features.derive`` from the present cloud layers.
+    """
+
+    ENDPOINT = "https://api.open-meteo.com/v1/forecast"
+    HOURLY = "cloud_cover_low,cloud_cover_mid,cloud_cover_high,visibility,relative_humidity_2m"
+
+    def __init__(self, session=None, timeout: float = 15.0):
+        self._session = session
+        self._timeout = timeout
+
+    def fetch(self, lat: float, lon: float, time: datetime) -> WeatherSnapshot:
+        from datetime import timezone
+
+        from datetime import timedelta
+
+        if time.tzinfo is None:
+            time = time.replace(tzinfo=timezone.utc)
+        query_utc = time.astimezone(timezone.utc)
+
+        # Request a ±1 day window: near sunset the UTC date rolls over relative
+        # to the local evening (e.g. 20:24 EDT = 00:24Z next day), so a single
+        # UTC date would return the wrong evening's sunset. We pick the sunset
+        # and hour nearest the query time across the window.
+        params = {
+            "latitude": f"{lat:.4f}",
+            "longitude": f"{lon:.4f}",
+            "hourly": self.HOURLY,
+            "daily": "sunset",
+            "timezone": "UTC",
+            "start_date": (query_utc - timedelta(days=1)).strftime("%Y-%m-%d"),
+            "end_date": (query_utc + timedelta(days=1)).strftime("%Y-%m-%d"),
+        }
+        data = self._get_json(self.ENDPOINT, params)
+        return self._snapshot_from_payload(data, query_utc)
+
+    def fetch_many(
+        self, coords: list[tuple[float, float]], time: datetime
+    ) -> list[WeatherSnapshot]:
+        """Fetch many points in a single request (Open-Meteo multi-coordinate API).
+
+        Open-Meteo accepts comma-separated latitude/longitude lists and returns
+        one result object per location, which turns a whole map grid into one
+        HTTP round-trip instead of N. Returns snapshots in the same order as
+        ``coords``.
+        """
+        from datetime import timedelta, timezone
+
+        if not coords:
+            return []
+        if time.tzinfo is None:
+            time = time.replace(tzinfo=timezone.utc)
+        query_utc = time.astimezone(timezone.utc)
+
+        params = {
+            "latitude": ",".join(f"{lat:.4f}" for lat, _ in coords),
+            "longitude": ",".join(f"{lon:.4f}" for _, lon in coords),
+            "hourly": self.HOURLY,
+            "daily": "sunset",
+            "timezone": "UTC",
+            "start_date": (query_utc - timedelta(days=1)).strftime("%Y-%m-%d"),
+            "end_date": (query_utc + timedelta(days=1)).strftime("%Y-%m-%d"),
+        }
+        payload = self._get_json(self.ENDPOINT, params)
+        # Multi-location responses are a JSON array; single-location is an object.
+        results = payload if isinstance(payload, list) else [payload]
+        return [self._snapshot_from_payload(r, query_utc) for r in results]
+
+    def _get_json(self, url: str, params: dict):
+        if self._session is not None:
+            resp = self._session.get(url, params=params, timeout=self._timeout)
+            resp.raise_for_status()
+            return resp.json()
+        import json
+        from urllib.parse import urlencode
+        from urllib.request import urlopen
+
+        with urlopen(f"{url}?{urlencode(params)}", timeout=self._timeout) as fh:
+            return json.loads(fh.read().decode("utf-8"))
+
+    @staticmethod
+    def _snapshot_from_payload(data: dict, query_utc: datetime) -> WeatherSnapshot:
+        """Pure transform: pick the hour nearest the query time, assemble snapshot."""
+        from datetime import datetime as _dt, timezone
+
+        hourly = data["hourly"]
+        times = [
+            _dt.fromisoformat(t).replace(tzinfo=timezone.utc) for t in hourly["time"]
+        ]
+        # Index of the hour closest to the query time.
+        idx = min(
+            range(len(times)),
+            key=lambda i: abs((times[i] - query_utc).total_seconds()),
+        )
+
+        def at(key: str) -> float | None:
+            seq = hourly.get(key)
+            if not seq or seq[idx] is None:
+                return None
+            return float(seq[idx])
+
+        sunset_time = None
+        daily = data.get("daily") or {}
+        sunsets = [s for s in (daily.get("sunset") or []) if s is not None]
+        if sunsets:
+            sunset_times = [
+                _dt.fromisoformat(s).replace(tzinfo=timezone.utc) for s in sunsets
+            ]
+            sunset_time = min(
+                sunset_times, key=lambda s: abs((s - query_utc).total_seconds())
+            )
+
+        return WeatherSnapshot(
+            cloud_low_pct=at("cloud_cover_low") or 0.0,
+            cloud_mid_pct=at("cloud_cover_mid") or 0.0,
+            cloud_high_pct=at("cloud_cover_high") or 0.0,
+            humidity_pct=at("relative_humidity_2m") or 0.0,
+            source_label=f"open-meteo@{times[idx].strftime('%Y-%m-%dT%HZ')}",
+            retrieved_at=_dt.now(timezone.utc),
+            visibility_m=at("visibility"),
+            cloud_base_m=None,
+            sunset_time=sunset_time,
+        )
 
 
 class HRRRSource:
