@@ -171,6 +171,12 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
+// ---- API base ----
+// When the page is served by the FastAPI server, relative URLs work. When it's
+// opened standalone (file:// preview panel), relative fetch can't resolve, so
+// fall back to the local server origin (CORS is enabled server-side).
+const API_BASE = location.protocol.startsWith('http') ? '' : 'http://127.0.0.1:8848';
+
 // ---- magma colormap ----
 const MAGMA = [[0,0,4],[28,16,68],[79,18,123],[129,37,129],[181,54,122],[229,80,100],[251,135,97],[254,194,135],[252,253,191]];
 function magma(t){
@@ -236,8 +242,8 @@ async function runForecast(lat, lon){
   try{
     const q = `lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&date=${date}`;
     const [pointRes, gridRes] = await Promise.all([
-      fetch(`/api/forecast?${q}`).then(r=>r.json()),
-      fetch(`/api/forecast/grid?${q}&radius_deg=2.5&step_deg=0.5`).then(r=>r.json()),
+      fetch(`${API_BASE}/api/forecast?${q}`).then(r=>r.json()),
+      fetch(`${API_BASE}/api/forecast/grid?${q}&radius_deg=2.5&step_deg=0.5`).then(r=>r.json()),
     ]);
     if(pointRes.detail) throw new Error(pointRes.detail);
     renderGrid(gridRes);

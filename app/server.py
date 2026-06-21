@@ -18,6 +18,7 @@ from datetime import date as date_cls, datetime, time as time_cls, timedelta, ti
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -30,6 +31,16 @@ STATIC_DIR = Path(__file__).parent / "static"
 SCORE_OFFSET = timedelta(minutes=10)  # score this long before sunset
 
 app = FastAPI(title="Firecloud Forecast", version="0.1.0")
+
+# Allow the page to call the API even when opened standalone (file:// preview
+# panel, or a different host). This is a local single-user tool, so a permissive
+# policy is appropriate.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
 
 _source = OpenMeteoSource()
 _predictor = standard_predictor(_source)
