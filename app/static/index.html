@@ -38,8 +38,8 @@
   .hint{font-size:12px; color:var(--muted);}
 
   #main{flex:1; position:relative;}
-  #map{position:absolute; inset:0; background:#0e0b09;}
-  .leaflet-container{background:#0e0b09;}
+  #map{position:absolute; inset:0; background:#e9edf0;}
+  .leaflet-container{background:#e9edf0;}
 
   /* result panel */
   #panel{
@@ -86,7 +86,8 @@
     padding:10px 12px; font-size:11px; color:var(--soft);
   }
   #legend .scale{height:9px; width:180px; border-radius:5px; margin:6px 0 4px;
-    background:linear-gradient(90deg,#000004,#1c1044,#4f127b,#812581,#b5367a,#e55064,#fb8761,#fec287,#fcfdbf);}
+    background:linear-gradient(90deg,#ffffff,#ede3f3,#d7b8dd,#e58fc4,#e2599f,#bd2a7a);
+    border:1px solid var(--line);}
   #legend .ends{display:flex; justify-content:space-between; font-variant-numeric:tabular-nums;}
 
   /* loading + toast */
@@ -203,11 +204,11 @@ function verdict(p){
 
 // ---- map setup ----
 const map = L.map('map', {zoomControl:true, worldCopyJump:true}).setView([31.23,121.47], 7);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
   attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:19,
 }).addTo(map);
 
-let gridLayer = L.layerGroup().addTo(map);
+let overlay = null;       // L.imageOverlay of the contour field
 let marker = null;
 let lastClick = null;
 
@@ -241,12 +242,12 @@ async function runForecast(lat, lon){
   showStatus('拉取气象数据并计算…');
   try{
     const q = `lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&date=${date}`;
-    const [pointRes, gridRes] = await Promise.all([
+    const [pointRes, overlayRes] = await Promise.all([
       fetch(`${API_BASE}/api/forecast?${q}`).then(r=>r.json()),
-      fetch(`${API_BASE}/api/forecast/grid?${q}&radius_deg=2.5&step_deg=0.5`).then(r=>r.json()),
+      fetch(`${API_BASE}/api/forecast/overlay?${q}&radius_deg=3.0&step_deg=0.375`).then(r=>r.json()),
     ]);
     if(pointRes.detail) throw new Error(pointRes.detail);
-    renderGrid(gridRes);
+    renderOverlay(overlayRes);
     renderPanel(pointRes);
     hideStatus();
   }catch(e){
@@ -255,15 +256,10 @@ async function runForecast(lat, lon){
   }
 }
 
-function renderGrid(g){
-  gridLayer.clearLayers();
-  const step = g.step_deg;
-  for(const c of g.cells){
-    const bounds = [[c.lat-step/2, c.lon-step/2],[c.lat+step/2, c.lon+step/2]];
-    L.rectangle(bounds, {
-      stroke:false, fillColor:magma(c.probability),
-      fillOpacity: 0.18 + 0.5*c.probability,
-    }).addTo(gridLayer);
+function renderOverlay(o){
+  if(overlay){ map.removeLayer(overlay); overlay = null; }
+  if(o && o.image){
+    overlay = L.imageOverlay(o.image, o.bounds, {opacity:0.9, interactive:false}).addTo(map);
   }
   if(marker) marker.bringToFront();
 }

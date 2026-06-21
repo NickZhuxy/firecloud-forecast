@@ -14,8 +14,16 @@ sunset of the requested date, which is the heart of the fire-cloud window.
 """
 from __future__ import annotations
 
+import base64
+import io
 from datetime import date as date_cls, datetime, time as time_cls, timedelta, timezone
 from pathlib import Path
+
+import matplotlib
+matplotlib.use("Agg")  # headless render, before pyplot import
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.colors import LinearSegmentedColormap
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +37,22 @@ from predictor.rules import standard_predictor
 
 STATIC_DIR = Path(__file__).parent / "static"
 SCORE_OFFSET = timedelta(minutes=10)  # score this long before sunset
+OVERLAY_FLOOR = 0.06  # probabilities below this render transparent
+
+# Sunset-glow palette: transparent at the low end, deepening through lilac and
+# pink to magenta — mirrors the reference "vividness index" maps. Alpha ramps in
+# so the field reads as colour painted onto a light basemap only where clouds matter.
+_SUNSET_CMAP = LinearSegmentedColormap.from_list(
+    "sunset_pink",
+    [
+        (0.00, (1.00, 1.00, 1.00, 0.00)),
+        (0.18, (0.92, 0.89, 0.96, 0.55)),
+        (0.38, (0.84, 0.72, 0.88, 0.70)),
+        (0.58, (0.90, 0.56, 0.78, 0.80)),
+        (0.78, (0.89, 0.35, 0.65, 0.88)),
+        (1.00, (0.74, 0.16, 0.48, 0.94)),
+    ],
+)
 
 app = FastAPI(title="Firecloud Forecast", version="0.1.0")
 
@@ -116,11 +140,14 @@ def _point_forecast(lat: float, lon: float, d: date_cls) -> dict:
     }
 
 
-def _grid_forecast(
+def _grid_field(
     lat: float, lon: float, d: date_cls, radius_deg: float, step_deg: float
-) -> dict:
-    # Resolve the center's sunset and score the whole grid at that one instant,
-    # so the map is a coherent snapshot "at the center's sunset".
+):
+    """Score a regular grid around (lat, lon) at the center's sunset.
+
+    Returns (lats, lons, P) where P[i][j] is the probability at (lats[i],
+    lons[j]), plus the sunset instant. One Open-Meteo batch call for the grid.
+    """
     sunset = _resolve_sunset(lat, lon, d)
     t_score = sunset - SCORE_OFFSET
 
@@ -136,15 +163,26 @@ def _grid_forecast(
         v += step_deg
 
     coords = [(la, lo) for la in lats for lo in lons]
-    if len(coords) > 400:
+    if len(coords) > 500:
         raise HTTPException(status_code=400, detail="grid too large; increase step_deg")
 
     snaps = _source.fetch_many(coords, t_score)
-    cells = []
-    for (la, lo), snap in zip(coords, snaps):
+    P = [[0.0] * len(lons) for _ in range(len(lats))]
+    for k, ((la, lo), snap) in enumerate(zip(coords, snaps)):
         f = _predictor.score_snapshot(snap, la, lo, t_score)
-        cells.append({"lat": la, "lon": lo, "probability": round(f.probability, 4)})
+        P[k // len(lons)][k % len(lons)] = round(f.probability, 4)
+    return lats, lons, P, sunset
 
+
+def _grid_forecast(
+    lat: float, lon: float, d: date_cls, radius_deg: float, step_deg: float
+) -> dict:
+    lats, lons, P, sunset = _grid_field(lat, lon, d, radius_deg, step_deg)
+    cells = [
+        {"lat": lats[i], "lon": lons[j], "probability": P[i][j]}
+        for i in range(len(lats))
+        for j in range(len(lons))
+    ]
     return {
         "center": {"lat": lat, "lon": lon},
         "date": d.isoformat(),
@@ -152,6 +190,63 @@ def _grid_forecast(
         "radius_deg": radius_deg,
         "step_deg": step_deg,
         "cells": cells,
+    }
+
+
+def _smooth(arr: np.ndarray, passes: int = 2) -> np.ndarray:
+    """Light 5-point smoothing (edge-padded), no SciPy dependency.
+
+    Rounds off the contours so the filled field reads as a smooth cloud band
+    rather than a faceted grid.
+    """
+    a = np.asarray(arr, dtype=float)
+    for _ in range(passes):
+        p = np.pad(a, 1, mode="edge")
+        a = (p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:] + 4 * p[1:-1, 1:-1]) / 8.0
+    return a
+
+
+def _render_overlay_png(lats: list[float], lons: list[float], P: list[list[float]]) -> str | None:
+    """Render the probability field as a transparent filled-contour PNG.
+
+    Returns a base64 data URI, or None when the field is everywhere below the
+    floor (nothing to paint). The image maps 1:1 onto the lat/lon bounding box
+    for Leaflet's imageOverlay.
+    """
+    arr = _smooth(np.array(P, dtype=float), passes=2)
+    if float(np.nanmax(arr)) < OVERLAY_FLOOR:
+        return None
+    field = np.ma.masked_less(arr, OVERLAY_FLOOR)
+
+    nlat, nlon = field.shape
+    fig = plt.figure(figsize=(nlon / 24, nlat / 24), dpi=200)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_axis_off()
+    ax.set_xlim(lons[0], lons[-1])
+    ax.set_ylim(lats[0], lats[-1])
+
+    levels = np.linspace(0.0, 1.0, 21)
+    ax.contourf(lons, lats, field, levels=levels, cmap=_SUNSET_CMAP, extend="max", antialiased=True)
+    # Subtle contour lines for a weather-map feel.
+    ax.contour(lons, lats, field, levels=np.linspace(0.2, 1.0, 5),
+               colors="#7a3a64", linewidths=0.35, alpha=0.5)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", transparent=True)
+    plt.close(fig)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _overlay(lat: float, lon: float, d: date_cls, radius_deg: float, step_deg: float) -> dict:
+    lats, lons, P, sunset = _grid_field(lat, lon, d, radius_deg, step_deg)
+    image = _render_overlay_png(lats, lons, P)
+    return {
+        "center": {"lat": lat, "lon": lon},
+        "date": d.isoformat(),
+        "sunset_utc": sunset.isoformat(),
+        "bounds": [[lats[0], lons[0]], [lats[-1], lons[-1]]],  # [[S,W],[N,E]]
+        "image": image,
+        "max_probability": round(float(np.nanmax(np.array(P))), 4),
     }
 
 
@@ -193,6 +288,23 @@ def api_forecast_grid(
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"grid forecast failed: {exc}")
+
+
+@app.get("/api/forecast/overlay")
+def api_forecast_overlay(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    date: str | None = Query(None),
+    radius_deg: float = Query(3.0, gt=0, le=6),
+    step_deg: float = Query(0.375, gt=0, le=2),
+) -> dict:
+    d = _parse_date(date)
+    try:
+        return _overlay(lat, lon, d, radius_deg, step_deg)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"overlay failed: {exc}")
 
 
 @app.get("/")
