@@ -8,7 +8,9 @@ from astral.sun import sun
 
 from predictor.spatial import SunwardProfile
 from predictor.illumination import (
+    assess_layer_contributions,
     canvas_layer_from_diagnosis,
+    canvas_obstruction_fraction,
     cloud_base_from_diagnosis,
 )
 
@@ -47,6 +49,10 @@ class Features:
     cloud_base_source: str | None = None
     cloud_base_fixed_m: float | None = None
     cloud_base_confidence: float | None = None
+    # Graded obstruction of the diagnosed canvas by lower diagnosed layers
+    # (0–100%), and the full per-layer breakdown (#31). None without diagnosis.
+    diagnosed_obstruction_pct: float | None = None
+    layer_contributions: list | None = None
 
 
 def select_canvas_layer(
@@ -241,6 +247,17 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None) 
         # Lowered: a representative height is a weak stand-in for a real base.
         cloud_base_confidence = 0.4 if fixed_base is not None else None
 
+    # Diagnosed per-layer contributions + the canvas's graded obstruction by the
+    # decks below it (#31). Only when layers were supplied; otherwise None.
+    diagnosed_obstruction_pct = None
+    layer_contributions = None
+    if cloud_layers:
+        obstruction = canvas_obstruction_fraction(cloud_layers)
+        diagnosed_obstruction_pct = (
+            obstruction * 100.0 if obstruction is not None else None
+        )
+        layer_contributions = assess_layer_contributions(cloud_layers, lat)
+
     profile = getattr(snapshot, "sunward_profile", None)
     spatial = (
         analyze_sunward_profile(profile, canvas_layer)
@@ -264,5 +281,7 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None) 
         cloud_base_source=cloud_base_source,
         cloud_base_fixed_m=fixed_base,
         cloud_base_confidence=cloud_base_confidence,
+        diagnosed_obstruction_pct=diagnosed_obstruction_pct,
+        layer_contributions=layer_contributions,
         **spatial,
     )

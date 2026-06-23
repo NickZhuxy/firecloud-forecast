@@ -163,6 +163,26 @@ def test_detailed_point_uses_diagnosed_cloud_base(monkeypatch):
     assert geo["cloud_base_confidence"] == 0.77
     # Old fixed estimate (high deck → 7000 m) retained for comparison.
     assert geo["cloud_base_fixed_m"] == 7000.0
+    # Per-layer diagnosed structure is surfaced (#31).
+    diagnosed = body["diagnosed"]
+    assert len(diagnosed["layers"]) == 1
+    assert diagnosed["layers"][0]["is_canvas"] is True
+    assert diagnosed["layers"][0]["base_m"] == 8000
+
+
+def test_detailed_point_surfaces_graded_obstruction(monkeypatch):
+    monkeypatch.setattr(server, "_source", _simple_source(_plain_snapshot()))
+    low = CloudLayer(800.0, 2800.0, 2000.0, "liquid", 0.8, "condensate", signal_margin=10.0)
+    high = CloudLayer(8000.0, 10000.0, 2000.0, "ice", 0.8, "condensate", signal_margin=10.0)
+    monkeypatch.setattr(server, "_diagnose_cloud_layers", lambda lat, lon, t: [low, high])
+    server._point_cache.clear()
+
+    body = client.get(
+        "/api/forecast", params={"lat": 31.23, "lon": 121.47, "date": "2026-06-22"}
+    ).json()
+    # The thick low liquid deck fully obstructs the high canvas.
+    assert body["diagnosed"]["obstruction_pct"] == 100.0
+    assert len(body["diagnosed"]["layers"]) == 2
 
 
 def test_detailed_point_falls_back_when_gfs_unavailable(monkeypatch):

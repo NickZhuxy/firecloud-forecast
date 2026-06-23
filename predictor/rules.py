@@ -56,11 +56,14 @@ class LowCloudObstruction:
     name = "low_cloud_obstruction"
 
     def evaluate(self, f: Features) -> float:
-        obstruction = (
-            f.sunward_obstruction_pct
-            if f.sunward_obstruction_pct is not None
-            else f.cloud_low_pct
-        )
+        # Obstruction signal hierarchy: diagnosed canvas obstruction from real
+        # cloud layers (#31) > sunward-transect obstruction > raw low-cloud cover.
+        if f.diagnosed_obstruction_pct is not None:
+            obstruction = f.diagnosed_obstruction_pct
+        elif f.sunward_obstruction_pct is not None:
+            obstruction = f.sunward_obstruction_pct
+        else:
+            obstruction = f.cloud_low_pct
         if obstruction <= 20:
             return 1.0
         return max(0.0, 1.0 - (obstruction - 20) / 80.0)
