@@ -3,90 +3,66 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>火烧云预测 · Firecloud Forecast</title>
+<title>火烧云质量预测 · Firecloud Quality</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <style>
+  /* SunsetWx-style light, clean chrome around an interactive quality map. */
   :root{
-    --bg:#15110f; --panel:#1f1916; --panel2:#272019; --ink:#f3ece2; --soft:#b3a596;
-    --muted:#7c7062; --line:#3a2f26; --accent:#ff7a2f; --accent2:#ffd166;
+    --bg:#f4f6f8; --panel:#ffffff; --ink:#1c2530; --soft:#5c6773; --muted:#8a96a3;
+    --line:#dfe4ea; --accent:#f4622d;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;height:100%;}
-  body{background:var(--bg); color:var(--ink);
-    font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
-    height:100%; overflow:hidden;}
+  body{background:var(--bg); color:var(--ink); height:100%; overflow:hidden;
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;}
   #app{display:flex; flex-direction:column; height:100%;}
 
-  header{display:flex; align-items:center; gap:18px; padding:12px 20px;
-    background:linear-gradient(90deg,#1f1916,#2a201a); border-bottom:1px solid var(--line); z-index:1200;}
+  header{display:flex; align-items:center; gap:18px; padding:11px 20px;
+    background:var(--panel); border-bottom:1px solid var(--line); z-index:1200;}
   .brand{display:flex; align-items:baseline; gap:10px;}
   .brand .logo{font-size:20px;}
-  .brand h1{font-size:18px; margin:0; font-weight:700; letter-spacing:.02em;}
-  .brand .en{font-size:12px; color:var(--muted); letter-spacing:.18em; text-transform:uppercase;}
+  .brand h1{font-size:17px; margin:0; font-weight:700; letter-spacing:.01em;}
+  .brand .en{font-size:11px; color:var(--muted); letter-spacing:.16em; text-transform:uppercase;}
   header .spacer{flex:1;}
   .control{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--soft);}
-  header input[type=date]{background:var(--panel2); color:var(--ink); border:1px solid var(--line);
+  header input[type=date]{background:#fff; color:var(--ink); border:1px solid var(--line);
     border-radius:7px; padding:6px 10px; font-size:13px; font-family:inherit;}
-  .refresh{font-size:12px; color:var(--muted); text-align:right; line-height:1.5; min-width:130px;}
+  .refresh{font-size:12px; color:var(--muted); text-align:right; line-height:1.5; min-width:150px;}
   .refresh b{color:var(--soft); font-weight:600;}
 
   #main{flex:1; position:relative;}
   #map{position:absolute; inset:0; background:#e9edf0;}
   .leaflet-container{background:#e9edf0;}
 
-  #panel{position:absolute; top:14px; right:14px; width:340px; max-width:calc(100vw - 28px);
-    background:rgba(31,25,22,.95); backdrop-filter:blur(8px); border:1px solid var(--line);
-    border-radius:14px; z-index:1100; box-shadow:0 12px 40px rgba(0,0,0,.5); overflow:hidden;
-    transition:opacity .2s, transform .2s; max-height:calc(100% - 28px); display:flex; flex-direction:column;}
-  #panel.hidden{opacity:0; transform:translateY(-8px); pointer-events:none;}
-  .panel-head{padding:16px 18px 12px; border-bottom:1px solid var(--line);}
-  .panel-head .place{font-size:12px; color:var(--muted); margin-bottom:10px; font-variant-numeric:tabular-nums;}
-  .score-row{display:flex; align-items:center; gap:14px;}
-  .dial{--p:0; width:74px; height:74px; border-radius:50%; flex:none; position:relative;
-    background:conic-gradient(var(--accent) calc(var(--p)*1%), #342a22 0); display:grid; place-items:center;}
-  .dial::after{content:""; position:absolute; inset:7px; border-radius:50%; background:var(--panel);}
-  .dial .val{position:relative; z-index:1; font-size:21px; font-weight:800; font-variant-numeric:tabular-nums;}
-  .verdict .label{font-size:19px; font-weight:800; line-height:1.2;}
-  .verdict .sub{font-size:12.5px; color:var(--soft); margin-top:4px; line-height:1.5;}
+  /* SunsetWx-style title block baked over the map's top-left. */
+  #titlecard{position:absolute; left:14px; top:14px; z-index:1100; max-width:min(70vw,520px);
+    background:rgba(255,255,255,.92); border:1px solid var(--line); border-radius:12px;
+    padding:11px 15px; box-shadow:0 6px 24px rgba(20,30,45,.12);}
+  #titlecard .t{font-size:15px; font-weight:800; letter-spacing:.01em;}
+  #titlecard .v{font-size:12px; color:var(--soft); margin-top:4px; font-variant-numeric:tabular-nums;}
+  #titlecard .tag{font-size:11px; color:var(--muted); margin-top:5px;}
 
-  .panel-body{padding:14px 18px 18px; overflow-y:auto;}
-  .facts{display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; margin-bottom:16px;}
-  .fact .k{font-size:11px; color:var(--muted); letter-spacing:.04em;}
-  .fact .v{font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; margin-top:2px;}
-  .fact .v small{font-weight:400; color:var(--soft); font-size:12px;}
-  .section-t{font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin:6px 0 10px;}
-  .bars{display:flex; flex-direction:column; gap:7px;}
-  .bar{display:grid; grid-template-columns:96px 1fr 34px; align-items:center; gap:8px; font-size:12px;}
-  .bar .bn{color:var(--soft); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-  .bar .bn.gate::before{content:"▸ "; color:var(--accent);}
-  .bar .track{height:7px; background:#342a22; border-radius:4px; overflow:hidden;}
-  .bar .fill{height:100%; border-radius:4px;}
-  .bar .bv{text-align:right; color:var(--ink); font-variant-numeric:tabular-nums;}
-  .note{margin-top:14px; font-size:11.5px; color:var(--muted); line-height:1.6;}
-
-  #legend{position:absolute; left:14px; bottom:22px; z-index:1100;
-    background:rgba(31,25,22,.92); border:1px solid var(--line); border-radius:10px;
-    padding:10px 12px; font-size:11px; color:var(--soft);}
-  #legend .scale{height:9px; width:180px; border-radius:5px; margin:6px 0 4px;
-    background:linear-gradient(90deg,#ffffff,#ede3f3,#d7b8dd,#e58fc4,#e2599f,#bd2a7a); border:1px solid var(--line);}
-  #legend .ends{display:flex; justify-content:space-between; font-variant-numeric:tabular-nums;}
+  #legend{position:absolute; left:14px; bottom:20px; z-index:1100;
+    background:rgba(255,255,255,.94); border:1px solid var(--line); border-radius:10px;
+    padding:10px 13px; font-size:11px; color:var(--soft); box-shadow:0 6px 24px rgba(20,30,45,.12);}
+  #legend .cap{font-weight:600; color:var(--ink); font-size:11.5px;}
+  #legend .scale{height:10px; width:220px; border-radius:5px; margin:7px 0 4px; border:1px solid var(--line);
+    background:linear-gradient(90deg,#30123b,#4458cb,#3e9bfe,#18d6cb,#46f884,#a2fc3c,#e1dd37,#fea531,#f2611c,#c42503,#7a0403);}
+  #legend .ends{display:flex; justify-content:space-between;}
 
   #status{position:absolute; left:50%; top:16px; transform:translateX(-50%); z-index:1300;
-    background:rgba(31,25,22,.96); border:1px solid var(--line); border-radius:20px;
+    background:rgba(255,255,255,.97); border:1px solid var(--line); border-radius:20px;
     padding:8px 18px; font-size:13px; color:var(--ink); display:none; align-items:center; gap:9px;
-    box-shadow:0 6px 24px rgba(0,0,0,.4);}
+    box-shadow:0 6px 24px rgba(20,30,45,.18);}
   #status.show{display:flex;}
-  .spin{width:14px; height:14px; border:2px solid var(--muted); border-top-color:var(--accent);
+  .spin{width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--accent);
     border-radius:50%; animation:sp .7s linear infinite;}
   @keyframes sp{to{transform:rotate(360deg);}}
 
-  .crosshair-tip{position:absolute; left:50%; bottom:18px; transform:translateX(-50%); z-index:1050;
-    background:rgba(31,25,22,.9); border:1px solid var(--line); border-radius:20px;
-    padding:8px 16px; font-size:12.5px; color:var(--soft); pointer-events:none;}
   @media (max-width:560px){
-    #panel{left:10px; right:10px; width:auto; top:auto; bottom:10px; max-height:62%;}
-    #legend{bottom:auto; top:64px;}
+    #titlecard{max-width:calc(100vw - 28px);}
+    #legend .scale{width:150px;}
     .refresh{display:none;}
   }
 </style>
@@ -96,8 +72,8 @@
   <header>
     <div class="brand">
       <span class="logo">🌇</span>
-      <h1>火烧云预测</h1>
-      <span class="en">Firecloud Forecast · 中国</span>
+      <h1>火烧云质量预测</h1>
+      <span class="en">Firecloud Quality · 中国</span>
     </div>
     <div class="spacer"></div>
     <div class="control">
@@ -110,36 +86,17 @@
   <div id="main">
     <div id="map"></div>
     <div id="status"><span class="spin"></span><span id="status-text">计算中…</span></div>
-    <div class="crosshair-tip" id="tip">全国趋势概览 · 点击任意地点看精细详情</div>
 
-    <div id="panel" class="hidden">
-      <div class="panel-head">
-        <div class="place" id="p-place">—</div>
-        <div class="score-row">
-          <div class="dial" id="p-dial"><span class="val" id="p-val">—</span></div>
-          <div class="verdict">
-            <div class="label" id="p-verdict">—</div>
-            <div class="sub" id="p-sub">—</div>
-          </div>
-        </div>
-      </div>
-      <div class="panel-body">
-        <div class="facts">
-          <div class="fact"><div class="k">日落时间（本地）</div><div class="v" id="f-sunset">—</div></div>
-          <div class="fact"><div class="k">预计持续</div><div class="v" id="f-duration">—</div></div>
-          <div class="fact"><div class="k" id="f-air-label">空气洁净度</div><div class="v" id="f-vis">—</div></div>
-          <div class="fact"><div class="k">画布云覆盖</div><div class="v" id="f-cloud">—</div></div>
-        </div>
-        <div class="section-t">评分拆解（▸ = 必要条件）</div>
-        <div class="bars" id="p-bars"></div>
-        <div class="note" id="p-note"></div>
-      </div>
+    <div id="titlecard">
+      <div class="t">火烧云质量 · 全国概览</div>
+      <div class="v" id="valid">—</div>
+      <div class="tag">颜色越暖 = 火烧云条件越好 · firecloud-forecast</div>
     </div>
 
     <div id="legend">
-      火烧云条件指数
+      <div class="cap">火烧云条件指数</div>
       <div class="scale"></div>
-      <div class="ends"><span>0 低</span><span>高 1</span></div>
+      <div class="ends"><span>差</span><span>好</span></div>
     </div>
   </div>
 </div>
@@ -149,43 +106,27 @@
 <script>
 const API_BASE = location.protocol.startsWith('http') ? '' : 'http://127.0.0.1:8848';
 
-const MAGMA=[[0,0,4],[28,16,68],[79,18,123],[129,37,129],[181,54,122],[229,80,100],[251,135,97],[254,194,135],[252,253,191]];
-function magma(t){t=Math.max(0,Math.min(1,t));const x=t*(MAGMA.length-1),i=Math.floor(x),f=x-i;
-  const a=MAGMA[i],b=MAGMA[Math.min(i+1,MAGMA.length-1)];const c=a.map((v,k)=>Math.round(v+(b[k]-v)*f));
-  return `rgb(${c[0]},${c[1]},${c[2]})`;}
-const COMPONENT_LABELS={mid_high_cloud_presence:"中高云画布",low_cloud_obstruction:"低云通透",
-  solar_angle:"日落时机",clean_air:"空气洁净",humidity:"湿度",
-  cloud_altitude_preference:"云层高度",cloud_cover_sweet_spot:"云量甜区",
-  sunward_illumination:"日落方向入光",boundary_confidence:"云边界可信度"};
-const GATES=new Set(["mid_high_cloud_presence","low_cloud_obstruction","solar_angle","clean_air","sunward_illumination"]);
-function verdict(p){
-  if(p>=0.7)return["条件很好","关键条件齐备，值得守候"];
-  if(p>=0.45)return["值得一看","主要条件满足"];
-  if(p>=0.2)return["机会一般","部分条件不足"];
-  if(p>0)return["希望渺茫","关键条件偏弱"];
-  return["基本无望","某个必要条件未满足"];}
-
+// Interactive, draggable/zoomable Leaflet map (the only enhancement we keep
+// over a static SunsetWx-style image). No point-click analysis (#40).
 const map=L.map('map',{zoomControl:true,worldCopyJump:true}).setView([35,105],4);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
   {attribution:'© OpenStreetMap, © CARTO',subdomains:'abcd',maxZoom:19}).addTo(map);
 
-let overlay=null, marker=null, lastClick=null, fitted=false, refreshTimer=null;
-let overlayController=null, overlayRequestSeq=0, pointController=null, pointRequestSeq=0;
+let overlay=null, fitted=false, refreshTimer=null;
+let overlayController=null, overlayRequestSeq=0;
 const statusEl=document.getElementById('status'), statusText=document.getElementById('status-text');
-const tip=document.getElementById('tip'), panel=document.getElementById('panel');
 const dateInput=document.getElementById('date'), refreshEl=document.getElementById('refresh');
+const validEl=document.getElementById('valid');
+
 function chinaDateISO(){
   const parts=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
-  const value=Object.fromEntries(parts.map(p=>[p.type,p.value]));
-  return `${value.year}-${value.month}-${value.day}`;
+  const v=Object.fromEntries(parts.map(p=>[p.type,p.value]));
+  return `${v.year}-${v.month}-${v.day}`;
 }
 dateInput.value=chinaDateISO();
 function showStatus(m){statusText.textContent=m;statusEl.classList.add('show');}
 function hideStatus(){statusEl.classList.remove('show');}
 function hhmm(iso){return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));}
-function fmtChinaTime(iso){
-  return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
-}
 
 async function loadOverlay(){
   if(refreshTimer){clearTimeout(refreshTimer);refreshTimer=null;}
@@ -193,6 +134,7 @@ async function loadOverlay(){
   if(overlayController)overlayController.abort();
   const controller=new AbortController(); overlayController=controller;
   const date=dateInput.value;
+  validEl.textContent=`Valid ${date}（日落前约 10 分钟评估）`;
   showStatus('正在加载全国火烧云预测图…');
   try{
     const res=await fetch(`${API_BASE}/api/overlay/cn?date=${date}`,{signal:controller.signal}).then(r=>r.json());
@@ -206,9 +148,8 @@ async function loadOverlay(){
       return;
     }
     if(overlay){map.removeLayer(overlay);overlay=null;}
-    if(res.image){overlay=L.imageOverlay(res.image,res.bounds,{opacity:0.92,interactive:false}).addTo(map);}
+    if(res.image){overlay=L.imageOverlay(res.image,res.bounds,{opacity:0.85,interactive:false}).addTo(map);}
     if(!fitted && res.bounds){map.fitBounds(res.bounds);fitted=true;}
-    if(marker) marker.bringToFront();
     if(res.status==='stale'){
       refreshEl.innerHTML=`缓存 <b>${hhmm(res.generated_utc)}</b> · 正在更新`;
       showStatus('已显示最近缓存，正在后台更新…');
@@ -232,78 +173,7 @@ function scheduleRefresh(nextIso){
   if(ms>0 && ms<6*3600*1000) refreshTimer=setTimeout(loadOverlay, ms);
 }
 
-async function updatePoint(lat,lon){
-  const requestSeq=++pointRequestSeq;
-  if(pointController)pointController.abort();
-  const controller=new AbortController(); pointController=controller;
-  lastClick={lat,lon};
-  const date=dateInput.value;
-  if(marker) marker.setLatLng([lat,lon]);
-  else marker=L.circleMarker([lat,lon],{radius:6,color:'#fff',weight:2,fillColor:'#ff7a2f',fillOpacity:1}).addTo(map);
-  try{
-    const q=`lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&date=${date}`;
-    const p=await fetch(`${API_BASE}/api/forecast?${q}`,{signal:controller.signal}).then(r=>r.json());
-    if(requestSeq!==pointRequestSeq)return;
-    if(p.detail) throw new Error(p.detail);
-    renderPanel(p);
-  }catch(e){
-    if(e.name==='AbortError'||requestSeq!==pointRequestSeq)return;
-    showStatus('点位出错：'+e.message);setTimeout(hideStatus,3500);
-  }finally{
-    if(requestSeq===pointRequestSeq)pointController=null;
-  }
-}
-
-function renderPanel(p){
-  panel.classList.remove('hidden');
-  const pct=Math.round(p.probability*100);
-  document.getElementById('p-place').textContent=`${p.lat.toFixed(3)}, ${p.lon.toFixed(3)} · ${p.date}`;
-  const dial=document.getElementById('p-dial');
-  dial.style.background=`conic-gradient(${magma(p.probability)} ${pct}%, #342a22 0)`;
-  document.getElementById('p-val').textContent=pct;
-  const [vl,vs]=verdict(p.probability);
-  document.getElementById('p-verdict').textContent=vl;
-  document.getElementById('p-sub').textContent=vs;
-  document.getElementById('f-sunset').innerHTML=`${fmtChinaTime(p.sunset_utc)} <small>北京时间</small>`;
-  const dur=p.geometry.duration_min;
-  document.getElementById('f-duration').innerHTML=dur?`${Math.round(dur)} <small>分钟</small>`:'—';
-  const vis=p.inputs.visibility_m;
-  const aod=p.inputs.aerosol_optical_depth;
-  document.getElementById('f-air-label').textContent=aod!=null?'AOD（550 nm）':'能见度（AOD 缺失）';
-  document.getElementById('f-vis').innerHTML=aod!=null?`${aod.toFixed(2)}`:(vis!=null?`${(vis/1000).toFixed(0)} <small>km</small>`:'—');
-  const layerNames={low:'低云',mid:'中云',high:'高云'};
-  const canvas=Math.round(p.inputs.canvas_cloud_pct??Math.max(p.inputs.cloud_mid_pct,p.inputs.cloud_high_pct));
-  document.getElementById('f-cloud').innerHTML=`${layerNames[p.inputs.canvas_layer]||'—'} ${canvas}<small>%</small>`;
-  const bars=document.getElementById('p-bars'); bars.innerHTML='';
-  for(const key of ["mid_high_cloud_presence","sunward_illumination","low_cloud_obstruction","solar_angle","clean_air","boundary_confidence","cloud_cover_sweet_spot","cloud_altitude_preference","humidity"]){
-    if(!(key in p.components))continue; const v=p.components[key];
-    const row=document.createElement('div'); row.className='bar';
-    row.innerHTML=`<span class="bn ${GATES.has(key)?'gate':''}">${COMPONENT_LABELS[key]||key}</span>
-      <span class="track"><span class="fill" style="width:${Math.round(v*100)}%;background:${magma(v)}"></span></span>
-      <span class="bv">${v.toFixed(2)}</span>`;
-    bars.appendChild(row);
-  }
-  let note='';
-  if(p.gate_score===0){
-    const failed=Object.entries(p.components).filter(([k,v])=>GATES.has(k)&&v===0).map(([k])=>COMPONENT_LABELS[k]||k);
-    note=`当前规则中必要条件「${failed.join('、')}」未满足，因此条件指数归零。`;
-  }else{
-    note=`综合 = 必要条件(${p.gate_score.toFixed(2)}) × 增强条件(${p.modifier_score.toFixed(2)})。`;
-  }
-  if(p.spatial?.cloud_boundary_km!=null){
-    note+=` 日落方位 ${Math.round(p.spatial.sun_azimuth_deg)}°，云边界约 ${Math.round(p.spatial.cloud_boundary_km)} km。`;
-  }else if(p.spatial?.profile_max_km!=null){
-    note+=` 沿日落方向检查至 ${Math.round(p.spatial.profile_max_km)} km，未发现清晰云边界。`;
-  }else{
-    note+=' 本次仅有点位数据，未取得日落方向剖面。';
-  }
-  note+=' 数据源 Open-Meteo，日落前约 10 分钟评估；结果是规则指数，不是统计概率。';
-  document.getElementById('p-note').textContent=note;
-}
-
-map.on('click',e=>{tip.style.display='none';updatePoint(e.latlng.lat,((e.latlng.lng+540)%360)-180);});
-dateInput.addEventListener('change',()=>{loadOverlay();if(lastClick)updatePoint(lastClick.lat,lastClick.lon);});
-
+dateInput.addEventListener('change',loadOverlay);
 loadOverlay();
 </script>
 </body>
