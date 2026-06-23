@@ -170,27 +170,33 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
   {attribution:'© OpenStreetMap, © CARTO',subdomains:'abcd',maxZoom:19}).addTo(map);
 
 let overlay=null, marker=null, lastClick=null, fitted=false, refreshTimer=null;
+let overlayController=null, overlayRequestSeq=0, pointController=null, pointRequestSeq=0;
 const statusEl=document.getElementById('status'), statusText=document.getElementById('status-text');
 const tip=document.getElementById('tip'), panel=document.getElementById('panel');
 const dateInput=document.getElementById('date'), refreshEl=document.getElementById('refresh');
-function localDateISO(){
-  const now=new Date();
-  return new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
+function chinaDateISO(){
+  const parts=new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const value=Object.fromEntries(parts.map(p=>[p.type,p.value]));
+  return `${value.year}-${value.month}-${value.day}`;
 }
-dateInput.value=localDateISO();
+dateInput.value=chinaDateISO();
 function showStatus(m){statusText.textContent=m;statusEl.classList.add('show');}
 function hideStatus(){statusEl.classList.remove('show');}
-function hhmm(iso){const d=new Date(iso);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+function hhmm(iso){return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));}
 function fmtChinaTime(iso){
   return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
 }
 
 async function loadOverlay(){
   if(refreshTimer){clearTimeout(refreshTimer);refreshTimer=null;}
+  const requestSeq=++overlayRequestSeq;
+  if(overlayController)overlayController.abort();
+  const controller=new AbortController(); overlayController=controller;
   const date=dateInput.value;
   showStatus('正在加载全国火烧云预测图…');
   try{
-    const res=await fetch(`${API_BASE}/api/overlay/cn?date=${date}`).then(r=>r.json());
+    const res=await fetch(`${API_BASE}/api/overlay/cn?date=${date}`,{signal:controller.signal}).then(r=>r.json());
+    if(requestSeq!==overlayRequestSeq)return;
     if(res.detail) throw new Error(res.detail);
     if(res.status==='error') throw new Error(res.error||'预测图生成失败');
     if(res.status==='building'&&!res.image){
@@ -212,7 +218,12 @@ async function loadOverlay(){
       scheduleRefresh(res.next_refresh_utc);
       hideStatus();
     }
-  }catch(e){showStatus('出错：'+e.message);setTimeout(hideStatus,4000);}
+  }catch(e){
+    if(e.name==='AbortError'||requestSeq!==overlayRequestSeq)return;
+    showStatus('出错：'+e.message);setTimeout(hideStatus,4000);
+  }finally{
+    if(requestSeq===overlayRequestSeq)overlayController=null;
+  }
 }
 
 function scheduleRefresh(nextIso){
@@ -222,16 +233,25 @@ function scheduleRefresh(nextIso){
 }
 
 async function updatePoint(lat,lon){
+  const requestSeq=++pointRequestSeq;
+  if(pointController)pointController.abort();
+  const controller=new AbortController(); pointController=controller;
   lastClick={lat,lon};
   const date=dateInput.value;
   if(marker) marker.setLatLng([lat,lon]);
   else marker=L.circleMarker([lat,lon],{radius:6,color:'#fff',weight:2,fillColor:'#ff7a2f',fillOpacity:1}).addTo(map);
   try{
     const q=`lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&date=${date}`;
-    const p=await fetch(`${API_BASE}/api/forecast?${q}`).then(r=>r.json());
+    const p=await fetch(`${API_BASE}/api/forecast?${q}`,{signal:controller.signal}).then(r=>r.json());
+    if(requestSeq!==pointRequestSeq)return;
     if(p.detail) throw new Error(p.detail);
     renderPanel(p);
-  }catch(e){showStatus('点位出错：'+e.message);setTimeout(hideStatus,3500);}
+  }catch(e){
+    if(e.name==='AbortError'||requestSeq!==pointRequestSeq)return;
+    showStatus('点位出错：'+e.message);setTimeout(hideStatus,3500);
+  }finally{
+    if(requestSeq===pointRequestSeq)pointController=null;
+  }
 }
 
 function renderPanel(p){

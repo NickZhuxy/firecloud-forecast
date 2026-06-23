@@ -14,7 +14,7 @@ def _reset_cache(monkeypatch, tmp_path):
 def test_exact_slot_cache_returns_ready_without_starting_build(monkeypatch, tmp_path):
     _reset_cache(monkeypatch, tmp_path)
     now = datetime(2026, 6, 22, 10, 7, tzinfo=timezone.utc)
-    key = "cn-2026-06-22-20260622T0900"
+    key = "cn-v2-2026-06-22-20260622T0900"
     overlay._mem_cache[key] = {
         "country": "China",
         "date": "2026-06-22",
@@ -31,8 +31,8 @@ def test_exact_slot_cache_returns_ready_without_starting_build(monkeypatch, tmp_
     result = overlay.get_overlay(date(2026, 6, 22), object(), object(), now)
 
     assert result["status"] == "ready"
-    assert result["image"] == "/api/overlay/image/cn-2026-06-22-20260622T0900.png"
-    assert (tmp_path / "cn-2026-06-22-20260622T0900.png").read_bytes() == b"ready"
+    assert result["image"] == "/api/overlay/image/cn-v2-2026-06-22-20260622T0900.png"
+    assert (tmp_path / "cn-v2-2026-06-22-20260622T0900.png").read_bytes() == b"ready"
     assert result["generated_utc"] == "2026-06-22T09:00:00+00:00"
 
 
@@ -52,12 +52,12 @@ def test_cache_miss_returns_immediately_as_building(monkeypatch, tmp_path):
 
     assert result["status"] == "building"
     assert result["image"] is None
-    assert started == ["cn-2026-06-22-20260622T0900"]
+    assert started == ["cn-v2-2026-06-22-20260622T0900"]
 
 
 def test_cache_miss_serves_previous_slot_while_refreshing(monkeypatch, tmp_path):
     _reset_cache(monkeypatch, tmp_path)
-    overlay._mem_cache["cn-2026-06-22-20260622T0600"] = {
+    overlay._mem_cache["cn-v2-2026-06-22-20260622T0600"] = {
         "country": "China",
         "date": "2026-06-22",
         "bounds": [[17, 73], [54, 136]],
@@ -74,13 +74,13 @@ def test_cache_miss_serves_previous_slot_while_refreshing(monkeypatch, tmp_path)
     )
 
     assert result["status"] == "stale"
-    assert result["image"] == "/api/overlay/image/cn-2026-06-22-20260622T0600.png"
+    assert result["image"] == "/api/overlay/image/cn-v2-2026-06-22-20260622T0600.png"
     assert result["generated_utc"] == "2026-06-22T06:00:00+00:00"
 
 
 def test_recent_legacy_slot_is_adopted_without_refresh(monkeypatch, tmp_path):
     _reset_cache(monkeypatch, tmp_path)
-    overlay._mem_cache["cn-2026-06-22-20260622T0830"] = {
+    overlay._mem_cache["cn-v2-2026-06-22-20260622T0830"] = {
         "country": "China",
         "date": "2026-06-22",
         "bounds": [[17, 73], [54, 136]],
@@ -136,6 +136,32 @@ def test_build_selects_each_grid_points_sunset_window(monkeypatch):
     assert result["image"] == "image"
 
 
+def test_previous_schema_cache_is_ignored(monkeypatch, tmp_path):
+    _reset_cache(monkeypatch, tmp_path)
+    overlay._mem_cache["cn-v1-2026-06-22-20260622T0900"] = {
+        "country": "China",
+        "date": "2026-06-22",
+        "bounds": [[17, 73], [54, 136]],
+        "image": "data:image/png;base64,b2xk",
+        "max_probability": 0.9,
+    }
+    started = []
+    monkeypatch.setattr(
+        overlay, "_start_build", lambda *args, **kwargs: started.append(args[0])
+    )
+
+    result = overlay.get_overlay(
+        date(2026, 6, 22),
+        object(),
+        object(),
+        datetime(2026, 6, 22, 10, 7, tzinfo=timezone.utc),
+    )
+
+    assert result["status"] == "building"
+    assert result["image"] is None
+    assert started == ["cn-v2-2026-06-22-20260622T0900"]
+
+
 def test_axis_values_always_include_country_bounds():
     values = overlay._axis_values(17.0, 54.0, 4.0)
 
@@ -154,7 +180,7 @@ def test_refresh_slots_are_three_hourly():
 
 
 def test_failed_build_observes_retry_cooldown(monkeypatch):
-    key = "cn-2026-06-22-20260622T0900"
+    key = "cn-v2-2026-06-22-20260622T0900"
     overlay._building.clear()
     overlay._build_errors.clear()
     overlay._build_errors[key] = ("rate limited", overlay.time.monotonic() + 60)

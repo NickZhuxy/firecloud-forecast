@@ -34,6 +34,10 @@ from app.timing import SCORE_OFFSET, evening_instant
 
 CACHE_DIR = Path("research/data/cache/overlays")
 OVERLAY_FLOOR = 0.06
+# Increment whenever scoring inputs, rules, or rendering semantics change.
+# Keeping it in the key prevents a new deployment from serving an old image
+# produced by different forecast logic during the same refresh slot.
+CACHE_SCHEMA_VERSION = "v2"
 
 # China domain (a small margin around the border bounds).
 CN_BBOX = (17.0, 73.0, 54.0, 136.0)   # south, west, north, east
@@ -189,7 +193,13 @@ def _disk_path(key: str) -> Path:
     return CACHE_DIR / f"{key}.json"
 
 
-_CACHE_KEY_RE = re.compile(r"cn-\d{4}-\d{2}-\d{2}-\d{8}T\d{4}")
+_CACHE_KEY_RE = re.compile(
+    rf"cn-{re.escape(CACHE_SCHEMA_VERSION)}-\d{{4}}-\d{{2}}-\d{{2}}-\d{{8}}T\d{{4}}"
+)
+
+
+def _cache_prefix(d: date_cls) -> str:
+    return f"cn-{CACHE_SCHEMA_VERSION}-{d.isoformat()}-"
 
 
 def cached_image_path(key: str) -> Path | None:
@@ -224,7 +234,7 @@ def _load_disk(key: str) -> dict | None:
 
 
 def _latest_cached(d: date_cls) -> tuple[str, dict] | None:
-    prefix = f"cn-{d.isoformat()}-"
+    prefix = _cache_prefix(d)
     with _cache_lock:
         mem_keys = sorted((k for k in _mem_cache if k.startswith(prefix)), reverse=True)
         if mem_keys:
@@ -351,7 +361,7 @@ def get_overlay(d: date_cls, source, predictor, now_utc: datetime) -> dict:
     the HTTP request open for a country-wide Open-Meteo fetch.
     """
     slot = _refresh_slot(now_utc)
-    key = f"cn-{d.isoformat()}-{slot.strftime('%Y%m%dT%H%M')}"
+    key = f"{_cache_prefix(d)}{slot.strftime('%Y%m%dT%H%M')}"
 
     with _cache_lock:
         exact = _mem_cache.get(key)

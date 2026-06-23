@@ -477,6 +477,8 @@ def _detail_weather_payload(mid_cover: float) -> dict:
 
 
 def test_fetch_sunward_profile_batches_weather_and_aod_at_one_time():
+    import threading
+
     weather = [_detail_weather_payload(70.0 - i * 10.0) for i in range(8)]
     air = [
         {
@@ -491,9 +493,14 @@ def test_fetch_sunward_profile_batches_weather_and_aod_at_one_time():
     class RoutedSession:
         def __init__(self):
             self.calls = []
+            # A sequential implementation deadlocks the first request here and
+            # fails the test. Both worker requests must enter before either can
+            # return, proving actual overlap rather than merely flexible order.
+            self.both_started = threading.Barrier(2, timeout=2.0)
 
         def get(self, url, params=None, timeout=None):
             self.calls.append({"url": url, "params": params, "timeout": timeout})
+            self.both_started.wait()
             return _FakeResponse(air if "air-quality" in url else weather)
 
     session = RoutedSession()
