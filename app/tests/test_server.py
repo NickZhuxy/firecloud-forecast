@@ -58,6 +58,13 @@ def test_point_forecast_fetches_weather_for_sunset(monkeypatch):
     assert body["sunset_utc"] == sunset.isoformat()
     assert body["scored_utc"] == "2026-06-22T10:50:00+00:00"
     assert body["inputs"]["source"] == "fake@sunset-window"
+    # New-vs-old cloud-base provenance is observable in the response (#13). With
+    # no diagnosed layers and no source base, it falls back to the fixed estimate
+    # (high deck → 7000 m representative height) at lowered confidence.
+    geometry = body["geometry"]
+    assert geometry["cloud_base_source"] == "fixed_estimate"
+    assert geometry["cloud_base_fixed_m"] == 7000.0
+    assert geometry["cloud_base_confidence"] == 0.4
 
 
 def test_bad_date_returns_400():

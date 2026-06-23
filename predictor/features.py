@@ -220,6 +220,12 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None) 
     source_base = getattr(snapshot, "cloud_base_m", None)
     diagnosed_base = cloud_base_from_diagnosis(cloud_layers) if cloud_layers else None
 
+    # Note: canvas_layer / canvas_cloud_pct above remain derived from the
+    # three-tier snapshot percentages and may name a different deck than a
+    # diagnosed cloud_base_m (e.g. canvas_layer="mid" while the diagnosed base is
+    # a 7 km high deck). They drive the sunward-transect layer selection, which
+    # is independent of the vertical diagnosis; reconciling the two is a tracked
+    # follow-up. cloud_base_source records which base won.
     if diagnosed_base is not None:
         cloud_base_m = diagnosed_base
         cloud_base_source = "diagnosed"
