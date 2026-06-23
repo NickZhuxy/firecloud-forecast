@@ -10,6 +10,7 @@ from predictor.geometry import (
     characteristic_duration_min,
     compute_geometry,
     equivalent_cloud_base_m,
+    equivalent_cloud_base_from_aod_m,
     max_penetration_km,
     sunset_speed_km_min,
 )
@@ -139,6 +140,16 @@ def test_equivalent_cloud_base_custom_scale_height():
     # Note: if both floor at 0 this comparison still passes (0 == 0 is ok);
     # ensure larger scale height gives smaller or equal effective base.
     assert eff_large <= eff_small + 1e-9
+
+
+def test_equivalent_cloud_base_from_aod_unknown_is_unchanged():
+    assert equivalent_cloud_base_from_aod_m(7000.0, None) == 7000.0
+
+
+def test_equivalent_cloud_base_from_aod_reduces_height_as_column_dirties():
+    clean = equivalent_cloud_base_from_aod_m(7000.0, 0.1)
+    dirty = equivalent_cloud_base_from_aod_m(7000.0, 0.5)
+    assert 0.0 < dirty < clean < 7000.0
 
 
 # ---------------------------------------------------------------------------

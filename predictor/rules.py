@@ -1,14 +1,18 @@
 """Scoring rules and the rule-based predictor."""
 from __future__ import annotations
+import math
 from typing import Callable, Protocol
 from predictor.features import Features, derive
 from predictor.fetch import WeatherSource
+from predictor.geometry import equivalent_cloud_base_from_aod_m, max_penetration_km
 from predictor.score import Forecast
 
 
 class ScoringRule(Protocol):
     name: str
-    def evaluate(self, features: Features) -> float: ...   # returns 0.0–1.0
+    # None means the optional input is unavailable; the predictor omits that
+    # component instead of silently treating missing data as perfect or failed.
+    def evaluate(self, features: Features) -> float | None: ...
 
 
 def _trapezoid(x: float, low0: float, low1: float, high1: float, high0: float) -> float:
@@ -36,10 +40,12 @@ class MidHighCloudPresence:
     name = "mid_high_cloud_presence"
 
     def evaluate(self, f: Features) -> float:
-        avg = (f.cloud_mid_pct + f.cloud_high_pct) / 2.0
-        if avg <= 0:
+        # A single 40% mid deck is already a 40% canvas; averaging it with an
+        # absent high layer incorrectly halves the real cover.
+        canvas = max(f.cloud_mid_pct, f.cloud_high_pct)
+        if canvas <= 0:
             return 0.0
-        return min(1.0, avg / 20.0)
+        return min(1.0, canvas / 20.0)
 
 
 class LowCloudObstruction:
@@ -50,9 +56,14 @@ class LowCloudObstruction:
     name = "low_cloud_obstruction"
 
     def evaluate(self, f: Features) -> float:
-        if f.cloud_low_pct <= 20:
+        obstruction = (
+            f.sunward_obstruction_pct
+            if f.sunward_obstruction_pct is not None
+            else f.cloud_low_pct
+        )
+        if obstruction <= 20:
             return 1.0
-        return max(0.0, 1.0 - (f.cloud_low_pct - 20) / 80.0)
+        return max(0.0, 1.0 - (obstruction - 20) / 80.0)
 
 
 class SolarAngleAtSunset:
@@ -82,14 +93,36 @@ class HumidityFactor:
 class CleanAirGate:
     """Gate: is the troposphere clean enough to deliver red light to the canvas?
 
-    Uses surface visibility as an aerosol-loading proxy (HRRR and Open-Meteo
-    both carry it; AOD is unavailable). Score 1.0 at ≥ 20 km, ramping linearly
-    to 0 at ≤ 5 km. When visibility is unknown the gate is permissive (1.0) so
-    it never silently zeroes a forecast on missing data. See paper §2.4, §5.4.
+    Prefer 550 nm aerosol optical depth across the observer→sun transect, using
+    the manual's qualitative bands (≤0.1 excellent, 0.1–0.3 clean, 0.3–0.5
+    ordinary, 0.5–0.8 bad, >0.8 very bad). Surface visibility remains a
+    fallback only; it is sensitive to fog/humidity and does not describe the
+    whole aerosol column.
     """
     name = "clean_air"
 
     def evaluate(self, f: Features) -> float:
+        aod_candidates = [
+            v for v in (f.aerosol_optical_depth, f.sunward_aod_mean) if v is not None
+        ]
+        if aod_candidates:
+            aod = max(aod_candidates)
+            points = (
+                (0.00, 1.00),
+                (0.10, 1.00),
+                (0.20, 0.90),
+                (0.30, 0.75),
+                (0.50, 0.40),
+                (0.80, 0.00),
+            )
+            if aod <= points[0][0]:
+                return points[0][1]
+            for (x0, y0), (x1, y1) in zip(points, points[1:]):
+                if aod <= x1:
+                    fraction = (aod - x0) / (x1 - x0)
+                    return y0 + fraction * (y1 - y0)
+            return 0.0
+
         vis = f.visibility_m
         if vis is None:
             return 1.0
@@ -129,8 +162,71 @@ class CloudCoverSweetSpot:
     name = "cloud_cover_sweet_spot"
 
     def evaluate(self, f: Features) -> float:
-        avg = (f.cloud_mid_pct + f.cloud_high_pct) / 2.0
-        return _trapezoid(avg, low0=10, low1=40, high1=75, high0=95)
+        canvas = max(f.cloud_mid_pct, f.cloud_high_pct)
+        return _trapezoid(canvas, low0=10, low1=40, high1=75, high0=95)
+
+
+class SunwardIlluminationGate:
+    """Gate the canvas by the distance to its sunward cloud boundary.
+
+    A cloud deck can glow only if sunlight can enter from its sunward edge and
+    reach the observer's canvas before Earth curvature/aerosol extinction cuts
+    the ray off. The rule is optional because national overview samples do not
+    fetch an 800 km transect.
+    """
+
+    name = "sunward_illumination"
+
+    def evaluate(self, f: Features) -> float | None:
+        if f.sunward_profile_max_km is None or f.cloud_base_m is None:
+            return None
+        effective_base = equivalent_cloud_base_from_aod_m(
+            f.cloud_base_m, f.sunward_aod_mean
+        )
+        reach_km = max_penetration_km(effective_base)
+        if reach_km <= 0:
+            return 0.0
+
+        boundary_km = f.sunward_cloud_boundary_km
+        if boundary_km is None:
+            # We sampled beyond the physical reach and still found no edge:
+            # the sunlight has no clear entrance into this cloud deck.
+            return 0.0 if f.sunward_profile_max_km >= reach_km else None
+        ratio = boundary_km / reach_km
+        if ratio <= 0.70:
+            return 1.0
+        if ratio >= 1.0:
+            return 0.0
+        return (1.0 - ratio) / 0.30
+
+
+class BoundaryConfidence:
+    """Modifier for a sharp, slowly moving sunward cloud boundary.
+
+    The manual flags broad RH/cloud gradients and boundary-normal winds above
+    roughly 15–30 m/s as major uncertainty sources. A 1-D transect cannot infer
+    the boundary's horizontal orientation, so this component deliberately
+    limits itself to the two quantities we can support.
+    """
+
+    name = "boundary_confidence"
+
+    def evaluate(self, f: Features) -> float | None:
+        gradient = f.sunward_boundary_gradient_pct_per_km
+        if gradient is None:
+            return None
+        sharpness = max(0.0, min(1.0, (gradient - 0.10) / 0.70))
+
+        motion = f.boundary_motion_m_s
+        if motion is None:
+            return sharpness
+        if motion <= 15.0:
+            wind_score = 1.0
+        elif motion >= 45.0:
+            wind_score = 0.0
+        else:
+            wind_score = (45.0 - motion) / 30.0
+        return math.sqrt(sharpness * wind_score)
 
 
 # ---------------------------------------------------------------------------
@@ -228,12 +324,15 @@ STANDARD_WEIGHTS: dict[str, float] = {
     "humidity": 1.0,
     "cloud_altitude_preference": 1.0,
     "cloud_cover_sweet_spot": 1.5,
+    "sunward_illumination": 2.5,
+    "boundary_confidence": 1.0,
 }
 STANDARD_GATES: set[str] = {
     "mid_high_cloud_presence",
     "low_cloud_obstruction",
     "solar_angle",
     "clean_air",
+    "sunward_illumination",
 }
 
 
@@ -268,7 +367,11 @@ class RuleBasedPredictor:
         and then evaluate each without a per-point network round-trip.
         """
         feats = derive(snapshot, lat, lon, time)
-        components = {r.name: r.evaluate(feats) for r in self.rules}
+        components = {}
+        for rule in self.rules:
+            value = rule.evaluate(feats)
+            if value is not None:
+                components[rule.name] = value
 
         if self.gate_names is not None:
             gate, modifier = gate_modifier_parts(components, self.weights, self.gate_names)
@@ -305,12 +408,12 @@ class RuleBasedPredictor:
 
 
 def standard_predictor(source: WeatherSource) -> RuleBasedPredictor:
-    """Build the full physics-motivated predictor (7 rules, gate × modifier).
+    """Build the full physics-motivated predictor (7 local + 2 spatial rules).
 
     This is the canonical configuration consumed by the web app, notebook, and
-    figures: four necessary-condition gates (mid/high canvas, low-cloud horizon,
-    solar timing, clean air) and three enhancing modifiers (humidity, cloud
-    altitude, cover sweet spot), combined per paper §6.2.
+    figures: four local necessary-condition gates and three local modifiers.
+    Detailed point snapshots add the optional sunward-illumination gate and
+    boundary-confidence modifier; overview snapshots omit them cleanly.
     """
     return RuleBasedPredictor(
         rules=[
@@ -321,6 +424,8 @@ def standard_predictor(source: WeatherSource) -> RuleBasedPredictor:
             HumidityFactor(),
             CloudAltitudePreference(),
             CloudCoverSweetSpot(),
+            SunwardIlluminationGate(),
+            BoundaryConfidence(),
         ],
         weights=STANDARD_WEIGHTS,
         source=source,

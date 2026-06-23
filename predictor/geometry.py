@@ -83,6 +83,28 @@ def equivalent_cloud_base_m(
     return max(0.0, cloud_base_m - h_x_m)
 
 
+def equivalent_cloud_base_from_aod_m(
+    cloud_base_m: float,
+    aerosol_optical_depth: float | None,
+    scale_height_m: float = _DEFAULT_AEROSOL_SCALE_HEIGHT_M,
+) -> float:
+    """AOD-based equivalent cloud base from the manual's exponential profile.
+
+    For ``beta(z)=beta_0*exp(-z/H)``, the column optical depth is
+    ``AOD=beta_0*H``. This lets us estimate the equivalent opaque-ground height
+    without treating fog-sensitive surface visibility as a column aerosol
+    measurement. Unknown AOD leaves the cloud base unchanged.
+    """
+    if aerosol_optical_depth is None or aerosol_optical_depth <= 0:
+        return cloud_base_m
+    scale_height_km = scale_height_m / 1000.0
+    beta_0 = aerosol_optical_depth / scale_height_km
+    if beta_0 <= _BETA_X_KM_INV:
+        return cloud_base_m
+    h_x_m = scale_height_m * math.log(beta_0 / _BETA_X_KM_INV)
+    return max(0.0, cloud_base_m - h_x_m)
+
+
 def characteristic_duration_min(cloud_base_eff_m: float, lat: float) -> float:
     """Characteristic fire-cloud illumination window (minutes).
 
@@ -105,6 +127,8 @@ def compute_geometry(
     visibility_m: float | None,
     lat: float,
     scale_height_m: float = _DEFAULT_AEROSOL_SCALE_HEIGHT_M,
+    *,
+    aerosol_optical_depth: float | None = None,
 ) -> GeometryResult:
     """Assemble the geometric enrichment for one location.
 
@@ -116,7 +140,13 @@ def compute_geometry(
     if cloud_base_m is None:
         return GeometryResult(None, None, None, None, v)
 
-    eff = equivalent_cloud_base_m(cloud_base_m, visibility_m, scale_height_m)
+    eff = (
+        equivalent_cloud_base_from_aod_m(
+            cloud_base_m, aerosol_optical_depth, scale_height_m
+        )
+        if aerosol_optical_depth is not None
+        else equivalent_cloud_base_m(cloud_base_m, visibility_m, scale_height_m)
+    )
     return GeometryResult(
         cloud_base_m=cloud_base_m,
         equivalent_cloud_base_m=eff,

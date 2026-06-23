@@ -4,11 +4,14 @@ from datetime import datetime, timezone, timedelta
 
 from predictor.fetch import FakeSource, WeatherSnapshot
 from predictor.rules import (
+    BoundaryConfidence,
+    CleanAirGate,
     HumidityFactor,
     LowCloudObstruction,
     MidHighCloudPresence,
     RuleBasedPredictor,
     SolarAngleAtSunset,
+    SunwardIlluminationGate,
 )
 
 
@@ -89,6 +92,73 @@ def test_humidity_too_dry(base_features):
 def test_humidity_too_wet(base_features):
     f = replace(base_features, humidity_pct=100)
     assert HumidityFactor().evaluate(f) == 0.0
+
+
+def test_clean_air_prefers_aod_over_good_surface_visibility(base_features):
+    f = replace(
+        base_features,
+        visibility_m=30_000.0,
+        aerosol_optical_depth=0.8,
+    )
+    assert CleanAirGate().evaluate(f) == 0.0
+
+
+def test_clean_air_uses_worst_of_local_and_sunward_aod(base_features):
+    f = replace(
+        base_features,
+        aerosol_optical_depth=0.1,
+        sunward_aod_mean=0.5,
+    )
+    assert abs(CleanAirGate().evaluate(f) - 0.4) < 1e-9
+
+
+def test_low_cloud_obstruction_uses_sunward_path_when_available(base_features):
+    f = replace(
+        base_features,
+        cloud_low_pct=5.0,
+        sunward_obstruction_pct=100.0,
+    )
+    assert LowCloudObstruction().evaluate(f) == 0.0
+
+
+def test_sunward_illumination_passes_near_boundary(base_features):
+    f = replace(
+        base_features,
+        cloud_base_m=7000.0,
+        sunward_aod_mean=0.1,
+        sunward_profile_max_km=800.0,
+        sunward_cloud_boundary_km=150.0,
+    )
+    assert SunwardIlluminationGate().evaluate(f) == 1.0
+
+
+def test_sunward_illumination_fails_when_no_edge_within_physical_reach(base_features):
+    f = replace(
+        base_features,
+        cloud_base_m=3500.0,
+        sunward_aod_mean=None,
+        sunward_profile_max_km=800.0,
+        sunward_cloud_boundary_km=None,
+    )
+    assert SunwardIlluminationGate().evaluate(f) == 0.0
+
+
+def test_sunward_illumination_skips_without_profile(base_features):
+    assert SunwardIlluminationGate().evaluate(base_features) is None
+
+
+def test_boundary_confidence_penalizes_fuzzy_fast_boundary(base_features):
+    sharp_slow = replace(
+        base_features,
+        sunward_boundary_gradient_pct_per_km=1.0,
+        boundary_motion_m_s=5.0,
+    )
+    fuzzy_fast = replace(
+        base_features,
+        sunward_boundary_gradient_pct_per_km=0.2,
+        boundary_motion_m_s=35.0,
+    )
+    assert BoundaryConfidence().evaluate(sharp_slow) > BoundaryConfidence().evaluate(fuzzy_fast)
 
 
 # Task 10: RuleBasedPredictor tests

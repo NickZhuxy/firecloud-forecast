@@ -4,13 +4,20 @@ Defines a WeatherSource protocol so callers can swap HRRR / GFS / OpenMeteo.
 Real implementations live alongside FakeSource (used by tests).
 """
 from __future__ import annotations
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
 import numpy as np
 import xarray as xr
+
+from predictor.spatial import (
+    DEFAULT_SUNWARD_DISTANCES_KM,
+    SunwardProfile,
+    sunward_coordinates,
+)
 
 # Note: herbie is heavy; import lazily inside fetch() so unit tests don't pay the cost.
 
@@ -25,8 +32,23 @@ class WeatherSnapshot:
     retrieved_at: datetime
     # Optional fields — older sources (HRRR cloud/RH only) may not supply them.
     visibility_m: float | None = None   # surface horizontal visibility, metres
-    cloud_base_m: float | None = None   # lowest cloud-layer base height, metres
+    cloud_base_m: float | None = None   # illuminated canvas base height, metres
     sunset_time: datetime | None = None  # source-reported local sunset (if any)
+    # AOD at 550 nm is a column aerosol measurement. It is a much closer match
+    # to the manual method than surface visibility, which is also degraded by
+    # fog and near-surface humidity.
+    aerosol_optical_depth: float | None = None
+    # Pressure-level winds used to estimate cloud-boundary motion. Open-Meteo
+    # returns meteorological direction (where the wind comes from).
+    wind_speed_850_m_s: float | None = None
+    wind_direction_850_deg: float | None = None
+    wind_speed_700_m_s: float | None = None
+    wind_direction_700_deg: float | None = None
+    wind_speed_400_m_s: float | None = None
+    wind_direction_400_deg: float | None = None
+    # Present only for detailed point forecasts. National overview snapshots
+    # remain small and continue to use the cheap local-only request.
+    sunward_profile: SunwardProfile | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -62,68 +84,273 @@ class OpenMeteoSource:
     """
 
     ENDPOINT = "https://api.open-meteo.com/v1/forecast"
+    AIR_QUALITY_ENDPOINT = "https://air-quality-api.open-meteo.com/v1/air-quality"
     HOURLY = "cloud_cover_low,cloud_cover_mid,cloud_cover_high,visibility,relative_humidity_2m"
+    DETAIL_HOURLY = HOURLY + (
+        ",wind_speed_850hPa,wind_direction_850hPa"
+        ",wind_speed_700hPa,wind_direction_700hPa"
+        ",wind_speed_400hPa,wind_direction_400hPa"
+    )
 
     def __init__(self, session=None, timeout: float = 15.0):
         self._session = session
         self._timeout = timeout
 
     def fetch(self, lat: float, lon: float, time: datetime) -> WeatherSnapshot:
-        from datetime import timezone
-
-        from datetime import timedelta
-
-        if time.tzinfo is None:
-            time = time.replace(tzinfo=timezone.utc)
-        query_utc = time.astimezone(timezone.utc)
+        query_utc = self._as_utc(time)
 
         # Request a ±1 day window: near sunset the UTC date rolls over relative
         # to the local evening (e.g. 20:24 EDT = 00:24Z next day), so a single
         # UTC date would return the wrong evening's sunset. We pick the sunset
         # and hour nearest the query time across the window.
-        params = {
-            "latitude": f"{lat:.4f}",
-            "longitude": f"{lon:.4f}",
-            "hourly": self.HOURLY,
-            "daily": "sunset",
-            "timezone": "UTC",
-            "start_date": (query_utc - timedelta(days=1)).strftime("%Y-%m-%d"),
-            "end_date": (query_utc + timedelta(days=1)).strftime("%Y-%m-%d"),
-        }
+        params = self._params([(lat, lon)], query_utc, window_days=1)
         data = self._get_json(self.ENDPOINT, params)
         return self._snapshot_from_payload(data, query_utc)
+
+    def fetch_for_sunset(
+        self,
+        lat: float,
+        lon: float,
+        evening_hint: datetime,
+        score_offset: timedelta = timedelta(minutes=10),
+    ) -> WeatherSnapshot:
+        """Fetch one point and select weather at its sunset minus ``score_offset``.
+
+        The response already contains the complete hourly series and daily
+        sunset values. Selecting the target hour from that same payload avoids
+        the old two-request probe/refetch sequence without accidentally scoring
+        the rough 18:00 hint instead of the real fire-cloud window.
+        """
+        query_utc = self._as_utc(evening_hint)
+        params = self._params([(lat, lon)], query_utc, window_days=1)
+        data = self._get_json(self.ENDPOINT, params)
+        return self._snapshot_for_sunset(data, query_utc, score_offset)
+
+    # Max coordinates per request: the multi-coordinate API is a GET, so too
+    # many coords overflow the URL length limit (HTTP 414). ~289 worked, ~484
+    # failed; 280 leaves headroom. Larger grids are split across requests.
+    MAX_COORDS_PER_REQUEST = 280
 
     def fetch_many(
         self, coords: list[tuple[float, float]], time: datetime
     ) -> list[WeatherSnapshot]:
-        """Fetch many points in a single request (Open-Meteo multi-coordinate API).
+        """Fetch many points via the Open-Meteo multi-coordinate API.
 
         Open-Meteo accepts comma-separated latitude/longitude lists and returns
-        one result object per location, which turns a whole map grid into one
-        HTTP round-trip instead of N. Returns snapshots in the same order as
-        ``coords``.
+        one result object per location, turning a map grid into one HTTP
+        round-trip (or a few, when the grid exceeds the URL-length limit).
+        Returns snapshots in the same order as ``coords``.
         """
-        from datetime import timedelta, timezone
+        return self._fetch_many(coords, time)
 
+    def fetch_many_for_sunset(
+        self,
+        coords: list[tuple[float, float]],
+        evening_hint: datetime,
+        score_offset: timedelta = timedelta(minutes=10),
+        *,
+        window_days: int = 1,
+    ) -> list[WeatherSnapshot]:
+        """Batch variant of :meth:`fetch_for_sunset`.
+
+        Every result is evaluated against its own reported sunset. This matters
+        for a country-wide grid: western and eastern China differ by several
+        hours of solar time even though they share one batched HTTP request.
+        """
+        return self._fetch_many(
+            coords,
+            evening_hint,
+            sunset_offset=score_offset,
+            window_days=window_days,
+        )
+
+    def fetch_sunward_profile(
+        self,
+        lat: float,
+        lon: float,
+        time: datetime,
+        azimuth_deg: float,
+        distances_km: tuple[float, ...] | list[float] = DEFAULT_SUNWARD_DISTANCES_KM,
+    ) -> WeatherSnapshot:
+        """Fetch the detailed observer-to-sun cross-section at one instant.
+
+        All samples use the observer's scoring time; using each sample's own
+        sunset would shear an 800 km cross-section across different instants.
+        Weather and pressure-level winds come from one multi-coordinate
+        forecast request. AOD comes from one auxiliary Air Quality request and
+        degrades gracefully to ``None`` if that service is unavailable.
+        """
+        if not distances_km or distances_km[0] != 0:
+            raise ValueError("sunward profile distances must start at 0 km")
+
+        target_utc = self._as_utc(time)
+        distances = [float(d) for d in distances_km]
+        coords = sunward_coordinates(lat, lon, azimuth_deg, distances)
+
+        # Weather and air-quality are independent upstream endpoints; fetch them
+        # concurrently so a point forecast pays one round-trip of latency, not two.
+        def _fetch_weather():
+            return self._get_json(
+                self.ENDPOINT,
+                self._params(
+                    coords,
+                    target_utc,
+                    window_days=0,
+                    hourly=self.DETAIL_HOURLY,
+                    extra={"wind_speed_unit": "ms"},
+                ),
+            )
+
+        def _fetch_air():
+            # AOD improves the forecast but must not make point forecasts fail;
+            # CleanAirGate falls back to visibility when it is absent.
+            try:
+                return self._get_json(
+                    self.AIR_QUALITY_ENDPOINT,
+                    self._air_quality_params(coords, target_utc),
+                )
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            weather_future = pool.submit(_fetch_weather)
+            air_future = pool.submit(_fetch_air)
+            weather_payload = weather_future.result()
+            air_payload = air_future.result()
+
+        weather_results = (
+            weather_payload if isinstance(weather_payload, list) else [weather_payload]
+        )
+        if len(weather_results) != len(coords):
+            raise ValueError("Open-Meteo returned an incomplete sunward profile")
+        snapshots = [
+            self._snapshot_from_payload(item, target_utc, weather_time_utc=target_utc)
+            for item in weather_results
+        ]
+
+        aod_values: list[float | None] = [None] * len(coords)
+        if air_payload is not None:
+            air_results = air_payload if isinstance(air_payload, list) else [air_payload]
+            if len(air_results) == len(coords):
+                aod_values = [self._aod_at_time(item, target_utc) for item in air_results]
+
+        for snapshot, aod in zip(snapshots, aod_values):
+            snapshot.aerosol_optical_depth = aod
+
+        centre = snapshots[0]
+        centre.sunward_profile = SunwardProfile(
+            azimuth_deg=float(azimuth_deg) % 360.0,
+            distances_km=distances,
+            cloud_low_pct=[s.cloud_low_pct for s in snapshots],
+            cloud_mid_pct=[s.cloud_mid_pct for s in snapshots],
+            cloud_high_pct=[s.cloud_high_pct for s in snapshots],
+            aerosol_optical_depth=aod_values,
+            wind_speed_850_m_s=[s.wind_speed_850_m_s for s in snapshots],
+            wind_direction_850_deg=[s.wind_direction_850_deg for s in snapshots],
+            wind_speed_700_m_s=[s.wind_speed_700_m_s for s in snapshots],
+            wind_direction_700_deg=[s.wind_direction_700_deg for s in snapshots],
+            wind_speed_400_m_s=[s.wind_speed_400_m_s for s in snapshots],
+            wind_direction_400_deg=[s.wind_direction_400_deg for s in snapshots],
+        )
+        return centre
+
+    def _fetch_many(
+        self,
+        coords: list[tuple[float, float]],
+        time: datetime,
+        *,
+        sunset_offset: timedelta | None = None,
+        window_days: int = 1,
+    ) -> list[WeatherSnapshot]:
         if not coords:
             return []
+        query_utc = self._as_utc(time)
+
+        out: list[WeatherSnapshot] = []
+        for i in range(0, len(coords), self.MAX_COORDS_PER_REQUEST):
+            chunk = coords[i:i + self.MAX_COORDS_PER_REQUEST]
+            payload = self._get_json(
+                self.ENDPOINT,
+                self._params(chunk, query_utc, window_days=window_days),
+            )
+            results = payload if isinstance(payload, list) else [payload]
+            if sunset_offset is None:
+                out.extend(self._snapshot_from_payload(r, query_utc) for r in results)
+            else:
+                out.extend(
+                    self._snapshot_for_sunset(r, query_utc, sunset_offset)
+                    for r in results
+                )
+        return out
+
+    @staticmethod
+    def _as_utc(time: datetime) -> datetime:
         if time.tzinfo is None:
             time = time.replace(tzinfo=timezone.utc)
-        query_utc = time.astimezone(timezone.utc)
+        return time.astimezone(timezone.utc)
 
+    @classmethod
+    def _params(
+        cls,
+        coords: list[tuple[float, float]],
+        query_utc: datetime,
+        *,
+        window_days: int,
+        hourly: str | None = None,
+        extra: dict | None = None,
+    ) -> dict:
         params = {
             "latitude": ",".join(f"{lat:.4f}" for lat, _ in coords),
             "longitude": ",".join(f"{lon:.4f}" for _, lon in coords),
-            "hourly": self.HOURLY,
+            "hourly": hourly or cls.HOURLY,
             "daily": "sunset",
             "timezone": "UTC",
-            "start_date": (query_utc - timedelta(days=1)).strftime("%Y-%m-%d"),
-            "end_date": (query_utc + timedelta(days=1)).strftime("%Y-%m-%d"),
+            "start_date": (query_utc - timedelta(days=window_days)).strftime("%Y-%m-%d"),
+            "end_date": (query_utc + timedelta(days=window_days)).strftime("%Y-%m-%d"),
         }
-        payload = self._get_json(self.ENDPOINT, params)
-        # Multi-location responses are a JSON array; single-location is an object.
-        results = payload if isinstance(payload, list) else [payload]
-        return [self._snapshot_from_payload(r, query_utc) for r in results]
+        if extra:
+            params.update(extra)
+        return params
+
+    @staticmethod
+    def _air_quality_params(
+        coords: list[tuple[float, float]], query_utc: datetime
+    ) -> dict:
+        day = query_utc.strftime("%Y-%m-%d")
+        return {
+            "latitude": ",".join(f"{lat:.4f}" for lat, _ in coords),
+            "longitude": ",".join(f"{lon:.4f}" for _, lon in coords),
+            "hourly": "aerosol_optical_depth",
+            "timezone": "UTC",
+            "start_date": day,
+            "end_date": day,
+        }
+
+    @staticmethod
+    def _aod_at_time(data: dict, query_utc: datetime) -> float | None:
+        from datetime import datetime as _dt
+
+        hourly = data.get("hourly") or {}
+        times_raw = hourly.get("time") or []
+        values = hourly.get("aerosol_optical_depth") or []
+        if not times_raw or not values:
+            return None
+        times = []
+        for value in times_raw:
+            parsed = _dt.fromisoformat(value)
+            parsed = (
+                parsed.replace(tzinfo=timezone.utc)
+                if parsed.tzinfo is None
+                else parsed.astimezone(timezone.utc)
+            )
+            times.append(parsed)
+        idx = min(
+            range(len(times)),
+            key=lambda i: abs((times[i] - query_utc).total_seconds()),
+        )
+        if idx >= len(values) or values[idx] is None:
+            return None
+        return float(values[idx])
 
     def _get_json(self, url: str, params: dict):
         if self._session is not None:
@@ -131,25 +358,74 @@ class OpenMeteoSource:
             resp.raise_for_status()
             return resp.json()
         import json
+        import time as time_module
+        from urllib.error import HTTPError
         from urllib.parse import urlencode
         from urllib.request import urlopen
 
-        with urlopen(f"{url}?{urlencode(params)}", timeout=self._timeout) as fh:
-            return json.loads(fh.read().decode("utf-8"))
+        request_url = f"{url}?{urlencode(params)}"
+        for attempt in range(3):
+            try:
+                with urlopen(request_url, timeout=self._timeout) as fh:
+                    return json.loads(fh.read().decode("utf-8"))
+            except HTTPError as exc:
+                if exc.code != 429 or attempt == 2:
+                    raise
+                retry_header = exc.headers.get("Retry-After")
+                try:
+                    delay = float(retry_header) if retry_header else 1.5 * (attempt + 1)
+                except ValueError:
+                    delay = 1.5 * (attempt + 1)
+                time_module.sleep(min(delay, 10.0))
+
+        raise RuntimeError("unreachable")
+
+    @classmethod
+    def _snapshot_for_sunset(
+        cls,
+        data: dict,
+        query_utc: datetime,
+        score_offset: timedelta,
+    ) -> WeatherSnapshot:
+        sunset = cls._nearest_sunset(data, query_utc)
+        weather_time = (sunset or query_utc) - score_offset
+        return cls._snapshot_from_payload(data, query_utc, weather_time_utc=weather_time)
 
     @staticmethod
-    def _snapshot_from_payload(data: dict, query_utc: datetime) -> WeatherSnapshot:
+    def _nearest_sunset(data: dict, query_utc: datetime) -> datetime | None:
+        from datetime import datetime as _dt
+
+        daily = data.get("daily") or {}
+        sunsets = [s for s in (daily.get("sunset") or []) if s is not None]
+        if not sunsets:
+            return None
+        sunset_times = [
+            _dt.fromisoformat(s).replace(tzinfo=timezone.utc) for s in sunsets
+        ]
+        return min(sunset_times, key=lambda s: abs((s - query_utc).total_seconds()))
+
+    @classmethod
+    def _snapshot_from_payload(
+        cls,
+        data: dict,
+        query_utc: datetime,
+        *,
+        weather_time_utc: datetime | None = None,
+    ) -> WeatherSnapshot:
         """Pure transform: pick the hour nearest the query time, assemble snapshot."""
-        from datetime import datetime as _dt, timezone
+        from datetime import datetime as _dt
 
         hourly = data["hourly"]
         times = [
             _dt.fromisoformat(t).replace(tzinfo=timezone.utc) for t in hourly["time"]
         ]
-        # Index of the hour closest to the query time.
+        # Index of the hour closest to the requested weather instant. Sunset
+        # selection may use a separate reference instant (the rough evening
+        # hint) so the correct local date is retained around UTC rollovers.
+        target_utc = weather_time_utc or query_utc
         idx = min(
             range(len(times)),
-            key=lambda i: abs((times[i] - query_utc).total_seconds()),
+            key=lambda i: abs((times[i] - target_utc).total_seconds()),
         )
 
         def at(key: str) -> float | None:
@@ -158,16 +434,7 @@ class OpenMeteoSource:
                 return None
             return float(seq[idx])
 
-        sunset_time = None
-        daily = data.get("daily") or {}
-        sunsets = [s for s in (daily.get("sunset") or []) if s is not None]
-        if sunsets:
-            sunset_times = [
-                _dt.fromisoformat(s).replace(tzinfo=timezone.utc) for s in sunsets
-            ]
-            sunset_time = min(
-                sunset_times, key=lambda s: abs((s - query_utc).total_seconds())
-            )
+        sunset_time = cls._nearest_sunset(data, query_utc)
 
         return WeatherSnapshot(
             cloud_low_pct=at("cloud_cover_low") or 0.0,
@@ -179,6 +446,12 @@ class OpenMeteoSource:
             visibility_m=at("visibility"),
             cloud_base_m=None,
             sunset_time=sunset_time,
+            wind_speed_850_m_s=at("wind_speed_850hPa"),
+            wind_direction_850_deg=at("wind_direction_850hPa"),
+            wind_speed_700_m_s=at("wind_speed_700hPa"),
+            wind_direction_700_deg=at("wind_direction_700hPa"),
+            wind_speed_400_m_s=at("wind_speed_400hPa"),
+            wind_direction_400_deg=at("wind_direction_400hPa"),
         )
 
 

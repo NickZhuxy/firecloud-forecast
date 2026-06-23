@@ -371,6 +371,177 @@ def test_open_meteo_fetch_many_single_coord_wrapped_in_list():
     assert isinstance(snaps[0], WeatherSnapshot)
 
 
+def test_fetch_for_sunset_selects_weather_nearest_score_window():
+    """The rough evening hint must not become the weather observation time."""
+    payload = _open_meteo_payload(
+        times=("2026-05-20T22:00", "2026-05-20T23:00", "2026-05-21T00:00"),
+        cloud_mid=(10.0, 70.0, 20.0),
+        sunsets=("2026-05-20T23:30",),
+    )
+    session = _FakeSession(payload)
+    src = OpenMeteoSource(session=session)
+
+    snap = src.fetch_for_sunset(
+        lat=42.36,
+        lon=-71.06,
+        evening_hint=datetime(2026, 5, 20, 22, 0, tzinfo=timezone.utc),
+        score_offset=timedelta(minutes=10),
+    )
+
+    # Sunset - 10 min = 23:20, so 23:00 is closer than the 22:00 hint.
+    assert snap.cloud_mid_pct == 70.0
+    assert snap.source_label == "open-meteo@2026-05-20T23Z"
+    assert snap.sunset_time == datetime(2026, 5, 20, 23, 30, tzinfo=timezone.utc)
+
+
+def test_fetch_many_for_sunset_uses_each_locations_own_sunset():
+    east = _open_meteo_payload(
+        cloud_mid=(11.0, 12.0, 13.0),
+        sunsets=("2026-05-20T22:10",),
+    )
+    west = _open_meteo_payload(
+        cloud_mid=(21.0, 22.0, 23.0),
+        sunsets=("2026-05-20T23:10",),
+    )
+    session = _FakeSession([east, west])
+    src = OpenMeteoSource(session=session)
+
+    snaps = src.fetch_many_for_sunset(
+        coords=[(31.0, 121.0), (31.0, 91.0)],
+        evening_hint=datetime(2026, 5, 20, 22, 0, tzinfo=timezone.utc),
+        score_offset=timedelta(minutes=10),
+        window_days=0,
+    )
+
+    # East targets 22:00; west targets 23:00 from the same batched response.
+    assert [s.cloud_mid_pct for s in snaps] == [11.0, 22.0]
+    params = session.calls[0]["params"]
+    assert params["start_date"] == params["end_date"] == "2026-05-20"
+
+
+def test_open_meteo_retries_http_429(monkeypatch):
+    import json
+    from urllib.error import HTTPError
+    import time as time_module
+    import urllib.request
+
+    payload = _open_meteo_payload()
+    calls = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps(payload).encode()
+
+    def fake_urlopen(url, timeout):
+        calls.append(url)
+        if len(calls) == 1:
+            raise HTTPError(url, 429, "rate limited", {"Retry-After": "0"}, None)
+        return Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(time_module, "sleep", lambda _: None)
+
+    result = OpenMeteoSource()._get_json("https://example.test", {"x": "1"})
+
+    assert result == payload
+    assert len(calls) == 2
+
+
+def _detail_weather_payload(mid_cover: float) -> dict:
+    payload = _open_meteo_payload(
+        times=("2026-06-22T10:00",),
+        cloud_low=(10.0,),
+        cloud_mid=(mid_cover,),
+        cloud_high=(30.0,),
+        visibility=(25_000.0,),
+        humidity=(60.0,),
+        sunsets=("2026-06-22T11:00",),
+    )
+    payload["hourly"].update(
+        {
+            "wind_speed_850hPa": [5.0],
+            "wind_direction_850hPa": [90.0],
+            "wind_speed_700hPa": [20.0],
+            "wind_direction_700hPa": [90.0],
+            "wind_speed_400hPa": [30.0],
+            "wind_direction_400hPa": [90.0],
+        }
+    )
+    return payload
+
+
+def test_fetch_sunward_profile_batches_weather_and_aod_at_one_time():
+    weather = [_detail_weather_payload(70.0 - i * 10.0) for i in range(8)]
+    air = [
+        {
+            "hourly": {
+                "time": ["2026-06-22T10:00"],
+                "aerosol_optical_depth": [0.10 + i * 0.01],
+            }
+        }
+        for i in range(8)
+    ]
+
+    class RoutedSession:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, params=None, timeout=None):
+            self.calls.append({"url": url, "params": params, "timeout": timeout})
+            return _FakeResponse(air if "air-quality" in url else weather)
+
+    session = RoutedSession()
+    src = OpenMeteoSource(session=session)
+    snapshot = src.fetch_sunward_profile(
+        31.23,
+        121.47,
+        datetime(2026, 6, 22, 10, 50, tzinfo=timezone.utc),
+        270.0,
+    )
+
+    # Weather and air-quality are fetched concurrently, so identify each call by
+    # its URL rather than by ordering.
+    assert len(session.calls) == 2
+    weather_call = next(c for c in session.calls if c["url"] == OpenMeteoSource.ENDPOINT)
+    air_calls = [c for c in session.calls if c["url"] == OpenMeteoSource.AIR_QUALITY_ENDPOINT]
+    assert weather_call["params"]["start_date"] == "2026-06-22"
+    assert weather_call["params"]["end_date"] == "2026-06-22"
+    assert weather_call["params"]["wind_speed_unit"] == "ms"
+    assert len(air_calls) == 1
+    assert snapshot.aerosol_optical_depth == 0.10
+    assert snapshot.sunward_profile is not None
+    assert len(snapshot.sunward_profile.distances_km) == 8
+    assert snapshot.sunward_profile.cloud_mid_pct[-1] == 0.0
+    assert snapshot.sunward_profile.aerosol_optical_depth[-1] == 0.17
+
+
+def test_fetch_sunward_profile_survives_aod_service_failure():
+    weather = [_detail_weather_payload(50.0) for _ in range(8)]
+
+    class WeatherOnlySession:
+        def get(self, url, params=None, timeout=None):
+            if "air-quality" in url:
+                raise RuntimeError("air quality unavailable")
+            return _FakeResponse(weather)
+
+    snapshot = OpenMeteoSource(session=WeatherOnlySession()).fetch_sunward_profile(
+        31.23,
+        121.47,
+        datetime(2026, 6, 22, 10, 50, tzinfo=timezone.utc),
+        270.0,
+    )
+
+    assert snapshot.sunward_profile is not None
+    assert snapshot.aerosol_optical_depth is None
+    assert all(v is None for v in snapshot.sunward_profile.aerosol_optical_depth)
+
+
 @pytest.mark.integration
 def test_hrrr_source_real_fetch_for_boston(tmp_path):
     """Hits the network (AWS S3). Run manually with: pytest -m integration."""

@@ -1,116 +1,140 @@
 """FastAPI backend for the firecloud-forecast web app.
 
-Serves a Leaflet map frontend and two JSON endpoints:
+Endpoints:
 
-    GET /api/forecast?lat&lon&date         single-point forecast at that
-                                           location's sunset
-    GET /api/forecast/grid?lat&lon&date    a probability grid around the point,
-        &radius_deg&step_deg               fetched in one batch call
+    GET /api/overlay/cn?date     precomputed national fire-cloud overlay image
+                                 (fixed geographic grid, clipped to China's
+                                 border, cached per refresh slot)
+    GET /api/forecast?lat&lon&date   single-point detail for the click panel
 
-The predictor is the full physics-motivated gate × modifier model
-(predictor.standard_predictor) fed by the free, global, key-less Open-Meteo
-point-forecast API. Forecasts are evaluated at ~10 minutes before the local
-sunset of the requested date, which is the heart of the fire-cloud window.
+The overlay is a fixed function of (lat, lon, date) — independent of the map
+viewport — so zoom/pan never changes it or triggers recomputation. The point
+endpoint backs the on-click detail panel. Both use the gate × modifier
+predictor (predictor.standard_predictor) over Open-Meteo data, evaluated ~10
+minutes before local sunset.
 """
 from __future__ import annotations
 
-import base64
-import io
-from datetime import date as date_cls, datetime, time as time_cls, timedelta, timezone
+from collections import OrderedDict
+from datetime import date as date_cls, datetime, timezone
 from pathlib import Path
-
-import matplotlib
-matplotlib.use("Agg")  # headless render, before pyplot import
-import matplotlib.pyplot as plt
-import numpy as np
-from matplotlib.colors import LinearSegmentedColormap
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from astral import Observer
+from astral.sun import azimuth, sun
 
+import app.overlay as overlay_mod
+from app.timing import SCORE_OFFSET, evening_instant
 from predictor.features import derive
 from predictor.fetch import OpenMeteoSource
 from predictor.geometry import compute_geometry
 from predictor.rules import standard_predictor
 
 STATIC_DIR = Path(__file__).parent / "static"
-SCORE_OFFSET = timedelta(minutes=10)  # score this long before sunset
-OVERLAY_FLOOR = 0.06  # probabilities below this render transparent
+CHINA_TZ = ZoneInfo("Asia/Shanghai")
 
-# Sunset-glow palette: transparent at the low end, deepening through lilac and
-# pink to magenta — mirrors the reference "vividness index" maps. Alpha ramps in
-# so the field reads as colour painted onto a light basemap only where clouds matter.
-_SUNSET_CMAP = LinearSegmentedColormap.from_list(
-    "sunset_pink",
-    [
-        (0.00, (1.00, 1.00, 1.00, 0.00)),
-        (0.18, (0.92, 0.89, 0.96, 0.55)),
-        (0.38, (0.84, 0.72, 0.88, 0.70)),
-        (0.58, (0.90, 0.56, 0.78, 0.80)),
-        (0.78, (0.89, 0.35, 0.65, 0.88)),
-        (1.00, (0.74, 0.16, 0.48, 0.94)),
-    ],
-)
+app = FastAPI(title="Firecloud Forecast", version="0.2.0")
 
-app = FastAPI(title="Firecloud Forecast", version="0.1.0")
-
-# Allow the page to call the API even when opened standalone (file:// preview
-# panel, or a different host). This is a local single-user tool, so a permissive
-# policy is appropriate.
+# Local single-user tool: permissive CORS so the page works even opened
+# standalone (file:// preview) against this server.
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET"],
-    allow_headers=["*"],
+    CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"]
 )
 
 _source = OpenMeteoSource()
 _predictor = standard_predictor(_source)
 
+# Small LRU for point lookups (the overlay has its own slot cache in overlay.py).
+_POINT_CACHE_MAX = 512
+_point_cache: "OrderedDict[tuple, dict]" = OrderedDict()
+
+
+def _point_cache_get(key: tuple):
+    if key in _point_cache:
+        _point_cache.move_to_end(key)
+        return _point_cache[key]
+    return None
+
+
+def _point_cache_put(key: tuple, value: dict) -> None:
+    _point_cache[key] = value
+    _point_cache.move_to_end(key)
+    while len(_point_cache) > _POINT_CACHE_MAX:
+        _point_cache.popitem(last=False)
+
 
 # --------------------------------------------------------------------------- #
-# Time helpers
+# Helpers
 # --------------------------------------------------------------------------- #
 def _parse_date(date_str: str | None) -> date_cls:
     if not date_str:
-        return datetime.now(timezone.utc).date()
+        return datetime.now(CHINA_TZ).date()
     try:
         return date_cls.fromisoformat(date_str)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"bad date: {date_str!r} (want YYYY-MM-DD)")
 
 
-def _evening_instant(lon: float, d: date_cls) -> datetime:
-    """A UTC instant near local evening (≈18:00 local) for date ``d``.
-
-    Uses longitude to approximate the local-to-UTC offset, avoiding a timezone
-    database. Good enough to land Open-Meteo's nearest-sunset pick on the
-    correct evening.
-    """
-    base = datetime.combine(d, time_cls(18, 0), tzinfo=timezone.utc)
-    return base - timedelta(hours=lon / 15.0)
+def _astral_sunset(lat: float, lon: float, d: date_cls) -> datetime:
+    """Exact sunset for the requested China-calendar date, returned in UTC."""
+    observer = Observer(latitude=lat, longitude=lon)
+    local_sunset = sun(observer, date=d, tzinfo=CHINA_TZ)["sunset"]
+    return local_sunset.astimezone(timezone.utc)
 
 
-def _resolve_sunset(lat: float, lon: float, d: date_cls) -> datetime:
-    """Return the sunset instant for the local evening of date ``d``."""
-    evening = _evening_instant(lon, d)
-    probe = _source.fetch(lat, lon, evening)
-    return probe.sunset_time or evening
-
-
-# --------------------------------------------------------------------------- #
-# Forecast assembly
-# --------------------------------------------------------------------------- #
 def _point_forecast(lat: float, lon: float, d: date_cls) -> dict:
-    sunset = _resolve_sunset(lat, lon, d)
+    evening = evening_instant(lon, d)
+    try:
+        sunset = _astral_sunset(lat, lon, d)
+    except ValueError:
+        # Polar day/night or an unsupported out-of-domain location: retain the
+        # source-based path so the endpoint fails gracefully rather than during
+        # the local astronomy pre-computation.
+        sunset = None
+    t_score = (sunset or evening) - SCORE_OFFSET
+
+    observer = Observer(latitude=lat, longitude=lon)
+    used_spatial_profile = False
+    if sunset is not None and hasattr(_source, "fetch_sunward_profile"):
+        sunset_azimuth = azimuth(observer, sunset)
+        try:
+            snap = _source.fetch_sunward_profile(
+                lat, lon, t_score, sunset_azimuth
+            )
+            used_spatial_profile = True
+        except Exception:
+            # A detailed transect is an enhancement. If its weather request is
+            # unavailable, retain the established local-only forecast.
+            snap = _source.fetch_for_sunset(lat, lon, evening, SCORE_OFFSET)
+    else:
+        snap = _source.fetch_for_sunset(lat, lon, evening, SCORE_OFFSET)
+
+    if not used_spatial_profile and snap.sunset_time is not None:
+        sunset = snap.sunset_time
+    sunset = sunset or evening
+    snap.sunset_time = sunset
     t_score = sunset - SCORE_OFFSET
 
-    snap = _source.fetch(lat, lon, t_score)
     feats = derive(snap, lat, lon, t_score)
     forecast = _predictor.score_snapshot(snap, lat, lon, t_score)
-    geo = compute_geometry(feats.cloud_base_m, feats.visibility_m, lat)
+    path_aod = (
+        feats.sunward_aod_mean
+        if feats.sunward_aod_mean is not None
+        else feats.aerosol_optical_depth
+    )
+    # Geometry uses column AOD when available. Visibility is deliberately not
+    # substituted here: the manual warns that fog/humidity can lower surface
+    # visibility without representing aerosol extinction through the full path.
+    geo = compute_geometry(
+        feats.cloud_base_m,
+        None,
+        lat,
+        aerosol_optical_depth=path_aod,
+    )
 
     return {
         "lat": lat,
@@ -119,15 +143,64 @@ def _point_forecast(lat: float, lon: float, d: date_cls) -> dict:
         "sunset_utc": sunset.isoformat(),
         "scored_utc": t_score.isoformat(),
         "probability": round(forecast.probability, 4),
-        "gate_score": round(forecast.gate_score, 4) if forecast.gate_score is not None else None,
-        "modifier_score": round(forecast.modifier_score, 4) if forecast.modifier_score is not None else None,
+        "gate_score": (
+            round(forecast.gate_score, 4)
+            if forecast.gate_score is not None
+            else None
+        ),
+        "modifier_score": (
+            round(forecast.modifier_score, 4)
+            if forecast.modifier_score is not None
+            else None
+        ),
         "components": {k: round(v, 4) for k, v in forecast.components.items()},
         "explanation": forecast.explanation,
         "geometry": {
             "cloud_base_m": geo.cloud_base_m,
-            "equivalent_cloud_base_m": round(geo.equivalent_cloud_base_m) if geo.equivalent_cloud_base_m is not None else None,
-            "max_reach_km": round(geo.max_reach_km, 1) if geo.max_reach_km is not None else None,
-            "duration_min": round(geo.duration_min, 1) if geo.duration_min is not None else None,
+            "equivalent_cloud_base_m": (
+                round(geo.equivalent_cloud_base_m)
+                if geo.equivalent_cloud_base_m is not None
+                else None
+            ),
+            "max_reach_km": (
+                round(geo.max_reach_km, 1) if geo.max_reach_km is not None else None
+            ),
+            "duration_min": (
+                round(geo.duration_min, 1) if geo.duration_min is not None else None
+            ),
+        },
+        "spatial": {
+            "sun_azimuth_deg": (
+                round(feats.sun_azimuth_deg, 1)
+                if feats.sun_azimuth_deg is not None
+                else None
+            ),
+            "cloud_boundary_km": (
+                round(feats.sunward_cloud_boundary_km, 1)
+                if feats.sunward_cloud_boundary_km is not None
+                else None
+            ),
+            "profile_max_km": feats.sunward_profile_max_km,
+            "boundary_gradient_pct_per_km": (
+                round(feats.sunward_boundary_gradient_pct_per_km, 3)
+                if feats.sunward_boundary_gradient_pct_per_km is not None
+                else None
+            ),
+            "boundary_motion_m_s": (
+                round(feats.boundary_motion_m_s, 1)
+                if feats.boundary_motion_m_s is not None
+                else None
+            ),
+            "obstruction_pct": (
+                round(feats.sunward_obstruction_pct, 1)
+                if feats.sunward_obstruction_pct is not None
+                else None
+            ),
+            "aod_mean": (
+                round(feats.sunward_aod_mean, 3)
+                if feats.sunward_aod_mean is not None
+                else None
+            ),
         },
         "inputs": {
             "cloud_low_pct": snap.cloud_low_pct,
@@ -135,118 +208,11 @@ def _point_forecast(lat: float, lon: float, d: date_cls) -> dict:
             "cloud_high_pct": snap.cloud_high_pct,
             "humidity_pct": snap.humidity_pct,
             "visibility_m": snap.visibility_m,
+            "aerosol_optical_depth": snap.aerosol_optical_depth,
+            "canvas_layer": feats.canvas_layer,
+            "canvas_cloud_pct": feats.canvas_cloud_pct,
             "source": snap.source_label,
         },
-    }
-
-
-def _grid_field(
-    lat: float, lon: float, d: date_cls, radius_deg: float, step_deg: float
-):
-    """Score a regular grid around (lat, lon) at the center's sunset.
-
-    Returns (lats, lons, P) where P[i][j] is the probability at (lats[i],
-    lons[j]), plus the sunset instant. One Open-Meteo batch call for the grid.
-    """
-    sunset = _resolve_sunset(lat, lon, d)
-    t_score = sunset - SCORE_OFFSET
-
-    lats: list[float] = []
-    v = -radius_deg
-    while v <= radius_deg + 1e-9:
-        lats.append(round(lat + v, 4))
-        v += step_deg
-    lons: list[float] = []
-    v = -radius_deg
-    while v <= radius_deg + 1e-9:
-        lons.append(round(lon + v, 4))
-        v += step_deg
-
-    coords = [(la, lo) for la in lats for lo in lons]
-    if len(coords) > 500:
-        raise HTTPException(status_code=400, detail="grid too large; increase step_deg")
-
-    snaps = _source.fetch_many(coords, t_score)
-    P = [[0.0] * len(lons) for _ in range(len(lats))]
-    for k, ((la, lo), snap) in enumerate(zip(coords, snaps)):
-        f = _predictor.score_snapshot(snap, la, lo, t_score)
-        P[k // len(lons)][k % len(lons)] = round(f.probability, 4)
-    return lats, lons, P, sunset
-
-
-def _grid_forecast(
-    lat: float, lon: float, d: date_cls, radius_deg: float, step_deg: float
-) -> dict:
-    lats, lons, P, sunset = _grid_field(lat, lon, d, radius_deg, step_deg)
-    cells = [
-        {"lat": lats[i], "lon": lons[j], "probability": P[i][j]}
-        for i in range(len(lats))
-        for j in range(len(lons))
-    ]
-    return {
-        "center": {"lat": lat, "lon": lon},
-        "date": d.isoformat(),
-        "sunset_utc": sunset.isoformat(),
-        "radius_deg": radius_deg,
-        "step_deg": step_deg,
-        "cells": cells,
-    }
-
-
-def _smooth(arr: np.ndarray, passes: int = 2) -> np.ndarray:
-    """Light 5-point smoothing (edge-padded), no SciPy dependency.
-
-    Rounds off the contours so the filled field reads as a smooth cloud band
-    rather than a faceted grid.
-    """
-    a = np.asarray(arr, dtype=float)
-    for _ in range(passes):
-        p = np.pad(a, 1, mode="edge")
-        a = (p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:] + 4 * p[1:-1, 1:-1]) / 8.0
-    return a
-
-
-def _render_overlay_png(lats: list[float], lons: list[float], P: list[list[float]]) -> str | None:
-    """Render the probability field as a transparent filled-contour PNG.
-
-    Returns a base64 data URI, or None when the field is everywhere below the
-    floor (nothing to paint). The image maps 1:1 onto the lat/lon bounding box
-    for Leaflet's imageOverlay.
-    """
-    arr = _smooth(np.array(P, dtype=float), passes=2)
-    if float(np.nanmax(arr)) < OVERLAY_FLOOR:
-        return None
-    field = np.ma.masked_less(arr, OVERLAY_FLOOR)
-
-    nlat, nlon = field.shape
-    fig = plt.figure(figsize=(nlon / 24, nlat / 24), dpi=200)
-    ax = fig.add_axes([0, 0, 1, 1])
-    ax.set_axis_off()
-    ax.set_xlim(lons[0], lons[-1])
-    ax.set_ylim(lats[0], lats[-1])
-
-    levels = np.linspace(0.0, 1.0, 21)
-    ax.contourf(lons, lats, field, levels=levels, cmap=_SUNSET_CMAP, extend="max", antialiased=True)
-    # Subtle contour lines for a weather-map feel.
-    ax.contour(lons, lats, field, levels=np.linspace(0.2, 1.0, 5),
-               colors="#7a3a64", linewidths=0.35, alpha=0.5)
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", transparent=True)
-    plt.close(fig)
-    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
-
-
-def _overlay(lat: float, lon: float, d: date_cls, radius_deg: float, step_deg: float) -> dict:
-    lats, lons, P, sunset = _grid_field(lat, lon, d, radius_deg, step_deg)
-    image = _render_overlay_png(lats, lons, P)
-    return {
-        "center": {"lat": lat, "lon": lon},
-        "date": d.isoformat(),
-        "sunset_utc": sunset.isoformat(),
-        "bounds": [[lats[0], lons[0]], [lats[-1], lons[-1]]],  # [[S,W],[N,E]]
-        "image": image,
-        "max_probability": round(float(np.nanmax(np.array(P))), 4),
     }
 
 
@@ -258,6 +224,25 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/api/overlay/cn")
+def api_overlay_cn(date: str | None = Query(None)) -> dict:
+    d = _parse_date(date)
+    try:
+        return overlay_mod.get_overlay(d, _source, _predictor, datetime.now(timezone.utc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"overlay failed: {exc}")
+
+
+@app.get("/api/overlay/image/{cache_key}.png")
+def api_overlay_image(cache_key: str) -> FileResponse:
+    path = overlay_mod.cached_image_path(cache_key)
+    if path is None:
+        raise HTTPException(status_code=404, detail="overlay image not found")
+    return FileResponse(path, media_type="image/png")
+
+
 @app.get("/api/forecast")
 def api_forecast(
     lat: float = Query(..., ge=-90, le=90),
@@ -265,46 +250,27 @@ def api_forecast(
     date: str | None = Query(None),
 ) -> dict:
     d = _parse_date(date)
+    now_utc = datetime.now(timezone.utc)
+    cache_slot = now_utc.replace(
+        minute=(now_utc.minute // 15) * 15,
+        second=0,
+        microsecond=0,
+    )
+    # Keep cache coordinates aligned with the four decimal places accepted by
+    # the frontend; coarser rounding can return another click's coordinates and
+    # weather snapshot in the response body.
+    key = (round(lat, 4), round(lon, 4), d.isoformat(), cache_slot)
+    cached = _point_cache_get(key)
+    if cached is not None:
+        return cached
     try:
-        return _point_forecast(lat, lon, d)
+        result = _point_forecast(lat, lon, d)
     except HTTPException:
         raise
-    except Exception as exc:  # upstream/data failure
+    except Exception as exc:
         raise HTTPException(status_code=502, detail=f"forecast failed: {exc}")
-
-
-@app.get("/api/forecast/grid")
-def api_forecast_grid(
-    lat: float = Query(..., ge=-90, le=90),
-    lon: float = Query(..., ge=-180, le=180),
-    date: str | None = Query(None),
-    radius_deg: float = Query(2.0, gt=0, le=6),
-    step_deg: float = Query(0.5, gt=0, le=2),
-) -> dict:
-    d = _parse_date(date)
-    try:
-        return _grid_forecast(lat, lon, d, radius_deg, step_deg)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"grid forecast failed: {exc}")
-
-
-@app.get("/api/forecast/overlay")
-def api_forecast_overlay(
-    lat: float = Query(..., ge=-90, le=90),
-    lon: float = Query(..., ge=-180, le=180),
-    date: str | None = Query(None),
-    radius_deg: float = Query(3.0, gt=0, le=6),
-    step_deg: float = Query(0.375, gt=0, le=2),
-) -> dict:
-    d = _parse_date(date)
-    try:
-        return _overlay(lat, lon, d, radius_deg, step_deg)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"overlay failed: {exc}")
+    _point_cache_put(key, result)
+    return result
 
 
 @app.get("/")
