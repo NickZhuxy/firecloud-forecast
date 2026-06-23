@@ -3,11 +3,17 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 import app.server as server
+from predictor.clouds import CloudLayer
 from predictor.fetch import WeatherSnapshot
 from predictor.spatial import SunwardProfile
 
 
 client = TestClient(server.app)
+
+
+def _no_gfs(monkeypatch):
+    """Stub the slow GFS diagnosis so point tests stay offline and deterministic."""
+    monkeypatch.setattr(server, "_diagnose_cloud_layers", lambda lat, lon, t: None)
 
 
 def test_index_uses_national_overlay_endpoint():
@@ -45,6 +51,7 @@ def test_point_forecast_fetches_weather_for_sunset(monkeypatch):
             return snapshot
 
     monkeypatch.setattr(server, "_source", Source())
+    _no_gfs(monkeypatch)
     server._point_cache.clear()
 
     response = client.get(
@@ -107,6 +114,7 @@ def test_point_forecast_exposes_sunward_boundary_and_aod(monkeypatch):
             return snapshot
 
     monkeypatch.setattr(server, "_source", Source())
+    _no_gfs(monkeypatch)
     server._point_cache.clear()
 
     response = client.get(
@@ -120,6 +128,63 @@ def test_point_forecast_exposes_sunward_boundary_and_aod(monkeypatch):
     assert body["inputs"]["aerosol_optical_depth"] == 0.12
     assert "sunward_illumination" in body["components"]
     assert "boundary_confidence" in body["components"]
+
+
+def _simple_source(snapshot):
+    class Source:
+        def fetch_for_sunset(self, lat, lon, evening_hint, score_offset):
+            return snapshot
+
+    return Source()
+
+
+def _plain_snapshot():
+    return WeatherSnapshot(
+        cloud_low_pct=10, cloud_mid_pct=50, cloud_high_pct=60, humidity_pct=55,
+        source_label="fake@sunset-window",
+        retrieved_at=datetime(2026, 6, 22, tzinfo=timezone.utc),
+        visibility_m=25_000, sunset_time=datetime(2026, 6, 22, 11, 0, tzinfo=timezone.utc),
+    )
+
+
+def test_detailed_point_uses_diagnosed_cloud_base(monkeypatch):
+    monkeypatch.setattr(server, "_source", _simple_source(_plain_snapshot()))
+    # GFS diagnosis returns a high deck → its base drives cloud_base_m (#30/#13).
+    high = CloudLayer(8000.0, 10000.0, 2000.0, "ice", 0.77, "condensate", signal_margin=10.0)
+    monkeypatch.setattr(server, "_diagnose_cloud_layers", lambda lat, lon, t: [high])
+    server._point_cache.clear()
+
+    body = client.get(
+        "/api/forecast", params={"lat": 31.23, "lon": 121.47, "date": "2026-06-22"}
+    ).json()
+    geo = body["geometry"]
+    assert geo["cloud_base_source"] == "diagnosed"
+    assert geo["cloud_base_m"] == 8000.0
+    assert geo["cloud_base_confidence"] == 0.77
+    # Old fixed estimate (high deck → 7000 m) retained for comparison.
+    assert geo["cloud_base_fixed_m"] == 7000.0
+
+
+def test_detailed_point_falls_back_when_gfs_unavailable(monkeypatch):
+    monkeypatch.setattr(server, "_source", _simple_source(_plain_snapshot()))
+    monkeypatch.setattr(server, "_diagnose_cloud_layers", lambda lat, lon, t: None)
+    server._point_cache.clear()
+
+    geo = client.get(
+        "/api/forecast", params={"lat": 31.23, "lon": 121.47, "date": "2026-06-22"}
+    ).json()["geometry"]
+    assert geo["cloud_base_source"] != "diagnosed"
+    assert geo["cloud_base_source"] == "fixed_estimate"
+
+
+def test_gfs_diagnosis_helper_degrades_to_none_on_failure(monkeypatch):
+    # _diagnose_cloud_layers must swallow GFS failures (network/unavailable).
+    class Boom:
+        def fetch_profile(self, lat, lon, t):
+            raise RuntimeError("gfs down")
+
+    monkeypatch.setattr(server, "_gfs_source", Boom())
+    assert server._diagnose_cloud_layers(31.23, 121.47, datetime(2026, 6, 22, 11, tzinfo=timezone.utc)) is None
 
 
 def test_overlay_image_rejects_unknown_cache_key():

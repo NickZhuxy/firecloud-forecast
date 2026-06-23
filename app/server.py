@@ -29,9 +29,12 @@ from astral.sun import azimuth, sun
 
 import app.overlay as overlay_mod
 from app.timing import SCORE_OFFSET, evening_instant
+from predictor.clouds import diagnose_clouds
 from predictor.features import derive
 from predictor.fetch import OpenMeteoSource
 from predictor.geometry import compute_geometry
+from predictor.gfs import GFSSource
+from predictor.normalize import normalize
 from predictor.rules import standard_predictor
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -47,6 +50,24 @@ app.add_middleware(
 
 _source = OpenMeteoSource()
 _predictor = standard_predictor(_source)
+
+# GFS pressure-level source for the single-point DETAILED forecast only. It is
+# slow (GRIB download/parse) so the national overview grid deliberately does not
+# use it; the per-instance dataset cache makes repeat same-cycle points cheap.
+_gfs_source = GFSSource()
+
+
+def _diagnose_cloud_layers(lat: float, lon: float, t_score: datetime):
+    """Best-effort diagnosed cloud layers for the detail panel (#30).
+
+    Returns a CloudLayer list, or None if GFS is unavailable — in which case the
+    forecast degrades gracefully to the source-reported / fixed-estimate base.
+    """
+    try:
+        profile = _gfs_source.fetch_profile(lat, lon, t_score)
+        return diagnose_clouds(normalize(profile))
+    except Exception:
+        return None
 
 # Small LRU for point lookups (the overlay has its own slot cache in overlay.py).
 _POINT_CACHE_MAX = 512
@@ -119,8 +140,11 @@ def _point_forecast(lat: float, lon: float, d: date_cls) -> dict:
     snap.sunset_time = sunset
     t_score = sunset - SCORE_OFFSET
 
-    feats = derive(snap, lat, lon, t_score)
-    forecast = _predictor.score_snapshot(snap, lat, lon, t_score)
+    # Single-point detail upgrades the canvas base to diagnosed cloud geometry
+    # when GFS is reachable; the national grid path never calls this (#30).
+    cloud_layers = _diagnose_cloud_layers(lat, lon, t_score)
+    feats = derive(snap, lat, lon, t_score, cloud_layers=cloud_layers)
+    forecast = _predictor.score_snapshot(snap, lat, lon, t_score, cloud_layers=cloud_layers)
     path_aod = (
         feats.sunward_aod_mean
         if feats.sunward_aod_mean is not None

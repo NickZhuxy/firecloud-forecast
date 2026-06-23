@@ -360,13 +360,17 @@ class RuleBasedPredictor:
         snapshot = self.source.fetch(lat, lon, time)
         return self.score_snapshot(snapshot, lat, lon, time)
 
-    def score_snapshot(self, snapshot, lat: float, lon: float, time) -> Forecast:
+    def score_snapshot(self, snapshot, lat: float, lon: float, time, cloud_layers=None) -> Forecast:
         """Score a pre-fetched snapshot (the compute half, no IO).
 
         Lets batch callers (e.g. the map grid) fetch many points in one request
         and then evaluate each without a per-point network round-trip.
+
+        ``cloud_layers`` (diagnosed CloudLayer list, #10) is optional: when given
+        it upgrades the canvas base from the fixed three-tier height to the real
+        diagnosed base (#13). Batch/grid callers omit it to stay fast.
         """
-        feats = derive(snapshot, lat, lon, time)
+        feats = derive(snapshot, lat, lon, time, cloud_layers=cloud_layers)
         components = {}
         for rule in self.rules:
             value = rule.evaluate(feats)
