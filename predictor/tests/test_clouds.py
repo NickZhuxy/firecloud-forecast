@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 
 import numpy as np
+import pytest
 
 from predictor.clouds import CloudLayer, diagnose_clouds
 from predictor.profiles import NormalizedProfile
@@ -126,6 +127,16 @@ def test_rh_path_still_interpolates_the_crossing():
     layer = diagnose_clouds(p)[0]
     # Signal genuinely ramps for RH → interpolate, not a midpoint (which is 1000).
     assert 1350 < layer.base_m < 1450
+
+
+def test_signal_margin_is_populated():
+    p = _profile(
+        [500, 1500, 3000, 4000, 5000, 8000],
+        clw=[0, 0, 1e-4, 1e-4, 0, 0], ice=[0, 0, 0, 0, 0, 0],
+    )
+    layer = diagnose_clouds(p)[0]
+    # Peak condensate 1e-4 over threshold 1e-6 → margin ×100.
+    assert layer.signal_margin == pytest.approx(100.0)
 
 
 def test_single_level_layer_has_reduced_confidence():

@@ -32,6 +32,10 @@ class CloudLayer:
     phase_hint: str    # "liquid" | "ice" | "mixed"
     confidence: float  # 0–1
     source: str        # "condensate" | "rh"
+    # Peak in-layer signal as a multiple of the detection threshold (≥1 inside a
+    # layer). Near 1 means the layer barely crossed the threshold (edge case);
+    # large means a robust detection. NaN when unset. Consumed by #11.
+    signal_margin: float = float("nan")
 
 
 @dataclass(frozen=True)
@@ -108,6 +112,7 @@ def diagnose_clouds(
 
     layers: list[CloudLayer] = []
     for i0, i1, base, top in merged:
+        peak = float(np.max(signal[i0:i1 + 1]))
         layers.append(
             CloudLayer(
                 base_m=float(base),
@@ -116,6 +121,7 @@ def diagnose_clouds(
                 phase_hint=_phase_hint(clw[i0:i1 + 1], ice[i0:i1 + 1], temp[i0:i1 + 1], source, config),
                 confidence=_confidence(i0, i1, n, source, config),
                 source=source,
+                signal_margin=peak / threshold if threshold else float("nan"),
             )
         )
     return layers
