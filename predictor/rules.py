@@ -147,7 +147,17 @@ class CloudAltitudePreference:
     """
     name = "cloud_altitude_preference"
 
+    # Altitude quality by canvas tier, used when a canvas is diagnosed (#32).
+    _TIER_QUALITY = {"high": 1.0, "mid": 0.5, "low": 0.1}
+
     def evaluate(self, f: Features) -> float:
+        # When the canvas is diagnosed from real vertical structure, the altitude
+        # preference follows that canvas tier rather than the snapshot mid/high
+        # coverage blend — so the diagnosed base is not the only height signal
+        # that moves the score (#32). The coverage path is unchanged otherwise.
+        if f.cloud_base_source == "diagnosed" and f.canvas_layer is not None:
+            return self._TIER_QUALITY.get(f.canvas_layer, 0.1)
+
         mid, high = f.cloud_mid_pct, f.cloud_high_pct
         total = mid + high
         if total <= 0:
