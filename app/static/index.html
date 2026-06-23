@@ -9,55 +9,42 @@
 <style>
   :root{
     --bg:#15110f; --panel:#1f1916; --panel2:#272019; --ink:#f3ece2; --soft:#b3a596;
-    --muted:#7c7062; --line:#3a2f26; --accent:#ff7a2f; --accent2:#ffd166; --good:#ffe08a;
+    --muted:#7c7062; --line:#3a2f26; --accent:#ff7a2f; --accent2:#ffd166;
   }
   *{box-sizing:border-box;}
   html,body{margin:0;height:100%;}
-  body{
-    background:var(--bg); color:var(--ink);
+  body{background:var(--bg); color:var(--ink);
     font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif;
-    height:100%; overflow:hidden;
-  }
+    height:100%; overflow:hidden;}
   #app{display:flex; flex-direction:column; height:100%;}
 
-  header{
-    display:flex; align-items:center; gap:18px; padding:12px 20px;
-    background:linear-gradient(90deg,#1f1916, #2a201a);
-    border-bottom:1px solid var(--line); z-index:1200;
-  }
+  header{display:flex; align-items:center; gap:18px; padding:12px 20px;
+    background:linear-gradient(90deg,#1f1916,#2a201a); border-bottom:1px solid var(--line); z-index:1200;}
   .brand{display:flex; align-items:baseline; gap:10px;}
   .brand .logo{font-size:20px;}
   .brand h1{font-size:18px; margin:0; font-weight:700; letter-spacing:.02em;}
   .brand .en{font-size:12px; color:var(--muted); letter-spacing:.18em; text-transform:uppercase;}
   header .spacer{flex:1;}
   .control{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--soft);}
-  header input[type=date]{
-    background:var(--panel2); color:var(--ink); border:1px solid var(--line);
-    border-radius:7px; padding:6px 10px; font-size:13px; font-family:inherit;
-  }
-  .hint{font-size:12px; color:var(--muted);}
+  header input[type=date]{background:var(--panel2); color:var(--ink); border:1px solid var(--line);
+    border-radius:7px; padding:6px 10px; font-size:13px; font-family:inherit;}
+  .refresh{font-size:12px; color:var(--muted); text-align:right; line-height:1.5; min-width:130px;}
+  .refresh b{color:var(--soft); font-weight:600;}
 
   #main{flex:1; position:relative;}
   #map{position:absolute; inset:0; background:#e9edf0;}
   .leaflet-container{background:#e9edf0;}
 
-  /* result panel */
-  #panel{
-    position:absolute; top:14px; right:14px; width:340px; max-width:calc(100vw - 28px);
-    background:rgba(31,25,22,.95); backdrop-filter:blur(8px);
-    border:1px solid var(--line); border-radius:14px; z-index:1100;
-    box-shadow:0 12px 40px rgba(0,0,0,.5); overflow:hidden;
-    transition:opacity .2s, transform .2s; max-height:calc(100% - 28px); display:flex; flex-direction:column;
-  }
+  #panel{position:absolute; top:14px; right:14px; width:340px; max-width:calc(100vw - 28px);
+    background:rgba(31,25,22,.95); backdrop-filter:blur(8px); border:1px solid var(--line);
+    border-radius:14px; z-index:1100; box-shadow:0 12px 40px rgba(0,0,0,.5); overflow:hidden;
+    transition:opacity .2s, transform .2s; max-height:calc(100% - 28px); display:flex; flex-direction:column;}
   #panel.hidden{opacity:0; transform:translateY(-8px); pointer-events:none;}
   .panel-head{padding:16px 18px 12px; border-bottom:1px solid var(--line);}
   .panel-head .place{font-size:12px; color:var(--muted); margin-bottom:10px; font-variant-numeric:tabular-nums;}
   .score-row{display:flex; align-items:center; gap:14px;}
-  .dial{
-    --p:0; width:74px; height:74px; border-radius:50%; flex:none; position:relative;
-    background:conic-gradient(var(--accent) calc(var(--p)*1%), #342a22 0);
-    display:grid; place-items:center;
-  }
+  .dial{--p:0; width:74px; height:74px; border-radius:50%; flex:none; position:relative;
+    background:conic-gradient(var(--accent) calc(var(--p)*1%), #342a22 0); display:grid; place-items:center;}
   .dial::after{content:""; position:absolute; inset:7px; border-radius:50%; background:var(--panel);}
   .dial .val{position:relative; z-index:1; font-size:21px; font-weight:800; font-variant-numeric:tabular-nums;}
   .verdict .label{font-size:19px; font-weight:800; line-height:1.2;}
@@ -68,7 +55,6 @@
   .fact .k{font-size:11px; color:var(--muted); letter-spacing:.04em;}
   .fact .v{font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; margin-top:2px;}
   .fact .v small{font-weight:400; color:var(--soft); font-size:12px;}
-
   .section-t{font-size:11px; letter-spacing:.18em; text-transform:uppercase; color:var(--muted); margin:6px 0 10px;}
   .bars{display:flex; flex-direction:column; gap:7px;}
   .bar{display:grid; grid-template-columns:96px 1fr 34px; align-items:center; gap:8px; font-size:12px;}
@@ -79,37 +65,29 @@
   .bar .bv{text-align:right; color:var(--ink); font-variant-numeric:tabular-nums;}
   .note{margin-top:14px; font-size:11.5px; color:var(--muted); line-height:1.6;}
 
-  /* legend */
-  #legend{
-    position:absolute; left:14px; bottom:22px; z-index:1100;
+  #legend{position:absolute; left:14px; bottom:22px; z-index:1100;
     background:rgba(31,25,22,.92); border:1px solid var(--line); border-radius:10px;
-    padding:10px 12px; font-size:11px; color:var(--soft);
-  }
+    padding:10px 12px; font-size:11px; color:var(--soft);}
   #legend .scale{height:9px; width:180px; border-radius:5px; margin:6px 0 4px;
-    background:linear-gradient(90deg,#ffffff,#ede3f3,#d7b8dd,#e58fc4,#e2599f,#bd2a7a);
-    border:1px solid var(--line);}
+    background:linear-gradient(90deg,#ffffff,#ede3f3,#d7b8dd,#e58fc4,#e2599f,#bd2a7a); border:1px solid var(--line);}
   #legend .ends{display:flex; justify-content:space-between; font-variant-numeric:tabular-nums;}
 
-  /* loading + toast */
-  #status{
-    position:absolute; left:50%; top:16px; transform:translateX(-50%); z-index:1300;
+  #status{position:absolute; left:50%; top:16px; transform:translateX(-50%); z-index:1300;
     background:rgba(31,25,22,.96); border:1px solid var(--line); border-radius:20px;
     padding:8px 18px; font-size:13px; color:var(--ink); display:none; align-items:center; gap:9px;
-    box-shadow:0 6px 24px rgba(0,0,0,.4);
-  }
+    box-shadow:0 6px 24px rgba(0,0,0,.4);}
   #status.show{display:flex;}
   .spin{width:14px; height:14px; border:2px solid var(--muted); border-top-color:var(--accent);
     border-radius:50%; animation:sp .7s linear infinite;}
   @keyframes sp{to{transform:rotate(360deg);}}
 
-  .crosshair-tip{
-    position:absolute; left:50%; bottom:18px; transform:translateX(-50%); z-index:1050;
+  .crosshair-tip{position:absolute; left:50%; bottom:18px; transform:translateX(-50%); z-index:1050;
     background:rgba(31,25,22,.9); border:1px solid var(--line); border-radius:20px;
-    padding:8px 16px; font-size:12.5px; color:var(--soft); pointer-events:none;
-  }
+    padding:8px 16px; font-size:12.5px; color:var(--soft); pointer-events:none;}
   @media (max-width:560px){
     #panel{left:10px; right:10px; width:auto; top:auto; bottom:10px; max-height:62%;}
     #legend{bottom:auto; top:64px;}
+    .refresh{display:none;}
   }
 </style>
 </head>
@@ -119,21 +97,20 @@
     <div class="brand">
       <span class="logo">🌇</span>
       <h1>火烧云预测</h1>
-      <span class="en">Firecloud Forecast</span>
+      <span class="en">Firecloud Forecast · 中国</span>
     </div>
     <div class="spacer"></div>
     <div class="control">
       <label for="date">日期</label>
       <input type="date" id="date">
     </div>
-    <div class="hint">点击地图任意位置 →</div>
+    <div class="refresh" id="refresh">—</div>
   </header>
 
   <div id="main">
     <div id="map"></div>
-
     <div id="status"><span class="spin"></span><span id="status-text">计算中…</span></div>
-    <div class="crosshair-tip" id="tip">点击地图选择地点，预测当晚日落火烧云</div>
+    <div class="crosshair-tip" id="tip">全国趋势概览 · 点击任意地点看精细详情</div>
 
     <div id="panel" class="hidden">
       <div class="panel-head">
@@ -150,19 +127,17 @@
         <div class="facts">
           <div class="fact"><div class="k">日落时间（本地）</div><div class="v" id="f-sunset">—</div></div>
           <div class="fact"><div class="k">预计持续</div><div class="v" id="f-duration">—</div></div>
-          <div class="fact"><div class="k">能见度</div><div class="v" id="f-vis">—</div></div>
-          <div class="fact"><div class="k">中/高云覆盖</div><div class="v" id="f-cloud">—</div></div>
+          <div class="fact"><div class="k" id="f-air-label">空气洁净度</div><div class="v" id="f-vis">—</div></div>
+          <div class="fact"><div class="k">画布云覆盖</div><div class="v" id="f-cloud">—</div></div>
         </div>
-
         <div class="section-t">评分拆解（▸ = 必要条件）</div>
         <div class="bars" id="p-bars"></div>
-
         <div class="note" id="p-note"></div>
       </div>
     </div>
 
     <div id="legend">
-      火烧云概率
+      火烧云条件指数
       <div class="scale"></div>
       <div class="ends"><span>0 低</span><span>高 1</span></div>
     </div>
@@ -172,157 +147,144 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
-// ---- API base ----
-// When the page is served by the FastAPI server, relative URLs work. When it's
-// opened standalone (file:// preview panel), relative fetch can't resolve, so
-// fall back to the local server origin (CORS is enabled server-side).
 const API_BASE = location.protocol.startsWith('http') ? '' : 'http://127.0.0.1:8848';
 
-// ---- magma colormap ----
-const MAGMA = [[0,0,4],[28,16,68],[79,18,123],[129,37,129],[181,54,122],[229,80,100],[251,135,97],[254,194,135],[252,253,191]];
-function magma(t){
-  t = Math.max(0, Math.min(1, t));
-  const x = t*(MAGMA.length-1), i = Math.floor(x), f = x-i;
-  const a = MAGMA[i], b = MAGMA[Math.min(i+1, MAGMA.length-1)];
-  const c = a.map((v,k)=>Math.round(v+(b[k]-v)*f));
-  return `rgb(${c[0]},${c[1]},${c[2]})`;
-}
-const COMPONENT_LABELS = {
-  mid_high_cloud_presence:"中高云画布", low_cloud_obstruction:"低云通透",
-  solar_angle:"日落时机", clean_air:"空气洁净", humidity:"湿度",
-  cloud_altitude_preference:"云层高度", cloud_cover_sweet_spot:"云量甜区",
-};
-const GATES = new Set(["mid_high_cloud_presence","low_cloud_obstruction","solar_angle","clean_air"]);
-
+const MAGMA=[[0,0,4],[28,16,68],[79,18,123],[129,37,129],[181,54,122],[229,80,100],[251,135,97],[254,194,135],[252,253,191]];
+function magma(t){t=Math.max(0,Math.min(1,t));const x=t*(MAGMA.length-1),i=Math.floor(x),f=x-i;
+  const a=MAGMA[i],b=MAGMA[Math.min(i+1,MAGMA.length-1)];const c=a.map((v,k)=>Math.round(v+(b[k]-v)*f));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;}
+const COMPONENT_LABELS={mid_high_cloud_presence:"中高云画布",low_cloud_obstruction:"低云通透",
+  solar_angle:"日落时机",clean_air:"空气洁净",humidity:"湿度",
+  cloud_altitude_preference:"云层高度",cloud_cover_sweet_spot:"云量甜区",
+  sunward_illumination:"日落方向入光",boundary_confidence:"云边界可信度"};
+const GATES=new Set(["mid_high_cloud_presence","low_cloud_obstruction","solar_angle","clean_air","sunward_illumination"]);
 function verdict(p){
-  if(p>=0.7) return ["极有希望","条件齐备，今晚很可能烧"];
-  if(p>=0.45) return ["值得一看","主要条件满足，有机会"];
-  if(p>=0.2) return ["机会一般","部分条件不足"];
-  if(p>0) return ["希望渺茫","关键条件偏弱"];
-  return ["基本无望","某个必要条件未满足"];
+  if(p>=0.7)return["条件很好","关键条件齐备，值得守候"];
+  if(p>=0.45)return["值得一看","主要条件满足"];
+  if(p>=0.2)return["机会一般","部分条件不足"];
+  if(p>0)return["希望渺茫","关键条件偏弱"];
+  return["基本无望","某个必要条件未满足"];}
+
+const map=L.map('map',{zoomControl:true,worldCopyJump:true}).setView([35,105],4);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+  {attribution:'© OpenStreetMap, © CARTO',subdomains:'abcd',maxZoom:19}).addTo(map);
+
+let overlay=null, marker=null, lastClick=null, fitted=false, refreshTimer=null;
+const statusEl=document.getElementById('status'), statusText=document.getElementById('status-text');
+const tip=document.getElementById('tip'), panel=document.getElementById('panel');
+const dateInput=document.getElementById('date'), refreshEl=document.getElementById('refresh');
+function localDateISO(){
+  const now=new Date();
+  return new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
+}
+dateInput.value=localDateISO();
+function showStatus(m){statusText.textContent=m;statusEl.classList.add('show');}
+function hideStatus(){statusEl.classList.remove('show');}
+function hhmm(iso){const d=new Date(iso);return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');}
+function fmtChinaTime(iso){
+  return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso));
 }
 
-// ---- map setup ----
-const map = L.map('map', {zoomControl:true, worldCopyJump:true}).setView([31.23,121.47], 7);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-  attribution:'© OpenStreetMap, © CARTO', subdomains:'abcd', maxZoom:19,
-}).addTo(map);
-
-let overlay = null;       // L.imageOverlay of the contour field
-let marker = null;
-let lastClick = null;
-
-const statusEl = document.getElementById('status');
-const statusText = document.getElementById('status-text');
-const tip = document.getElementById('tip');
-const panel = document.getElementById('panel');
-const dateInput = document.getElementById('date');
-dateInput.value = new Date().toISOString().slice(0,10);
-
-function showStatus(msg){ statusText.textContent = msg; statusEl.classList.add('show'); }
-function hideStatus(){ statusEl.classList.remove('show'); }
-
-function fmtLocal(iso, lon){
-  // approximate local time from UTC iso using longitude
-  const d = new Date(iso);
-  const localMs = d.getTime() + lon/15*3600*1000;
-  const l = new Date(localMs);
-  const hh = String(l.getUTCHours()).padStart(2,'0');
-  const mm = String(l.getUTCMinutes()).padStart(2,'0');
-  return `${hh}:${mm}`;
-}
-
-async function runForecast(lat, lon){
-  lastClick = {lat, lon};
-  const date = dateInput.value;
-  tip.style.display='none';
-  if(marker) marker.setLatLng([lat,lon]); else {
-    marker = L.circleMarker([lat,lon], {radius:6, color:'#fff', weight:2, fillColor:'#ff7a2f', fillOpacity:1}).addTo(map);
-  }
-  showStatus('拉取气象数据并计算…');
+async function loadOverlay(){
+  if(refreshTimer){clearTimeout(refreshTimer);refreshTimer=null;}
+  const date=dateInput.value;
+  showStatus('正在加载全国火烧云预测图…');
   try{
-    const q = `lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&date=${date}`;
-    const [pointRes, overlayRes] = await Promise.all([
-      fetch(`${API_BASE}/api/forecast?${q}`).then(r=>r.json()),
-      fetch(`${API_BASE}/api/forecast/overlay?${q}&radius_deg=3.0&step_deg=0.375`).then(r=>r.json()),
-    ]);
-    if(pointRes.detail) throw new Error(pointRes.detail);
-    renderOverlay(overlayRes);
-    renderPanel(pointRes);
-    hideStatus();
-  }catch(e){
-    showStatus('出错：'+e.message);
-    setTimeout(hideStatus, 3500);
-  }
+    const res=await fetch(`${API_BASE}/api/overlay/cn?date=${date}`).then(r=>r.json());
+    if(res.detail) throw new Error(res.detail);
+    if(res.status==='error') throw new Error(res.error||'预测图生成失败');
+    if(res.status==='building'&&!res.image){
+      refreshEl.textContent='全国图后台生成中…';
+      showStatus('首次生成全国图，完成后会自动显示…');
+      refreshTimer=setTimeout(loadOverlay,(res.retry_after_seconds||4)*1000);
+      return;
+    }
+    if(overlay){map.removeLayer(overlay);overlay=null;}
+    if(res.image){overlay=L.imageOverlay(res.image,res.bounds,{opacity:0.92,interactive:false}).addTo(map);}
+    if(!fitted && res.bounds){map.fitBounds(res.bounds);fitted=true;}
+    if(marker) marker.bringToFront();
+    if(res.status==='stale'){
+      refreshEl.innerHTML=`缓存 <b>${hhmm(res.generated_utc)}</b> · 正在更新`;
+      showStatus('已显示最近缓存，正在后台更新…');
+      refreshTimer=setTimeout(loadOverlay,(res.retry_after_seconds||4)*1000);
+    }else{
+      refreshEl.innerHTML=`数据 <b>${hhmm(res.generated_utc)}</b> · 下次 <b>${hhmm(res.next_refresh_utc)}</b>`;
+      scheduleRefresh(res.next_refresh_utc);
+      hideStatus();
+    }
+  }catch(e){showStatus('出错：'+e.message);setTimeout(hideStatus,4000);}
 }
 
-function renderOverlay(o){
-  if(overlay){ map.removeLayer(overlay); overlay = null; }
-  if(o && o.image){
-    overlay = L.imageOverlay(o.image, o.bounds, {opacity:0.9, interactive:false}).addTo(map);
-  }
-  if(marker) marker.bringToFront();
+function scheduleRefresh(nextIso){
+  if(refreshTimer) clearTimeout(refreshTimer);
+  const ms=new Date(nextIso).getTime()-Date.now()+8000;
+  if(ms>0 && ms<6*3600*1000) refreshTimer=setTimeout(loadOverlay, ms);
+}
+
+async function updatePoint(lat,lon){
+  lastClick={lat,lon};
+  const date=dateInput.value;
+  if(marker) marker.setLatLng([lat,lon]);
+  else marker=L.circleMarker([lat,lon],{radius:6,color:'#fff',weight:2,fillColor:'#ff7a2f',fillOpacity:1}).addTo(map);
+  try{
+    const q=`lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&date=${date}`;
+    const p=await fetch(`${API_BASE}/api/forecast?${q}`).then(r=>r.json());
+    if(p.detail) throw new Error(p.detail);
+    renderPanel(p);
+  }catch(e){showStatus('点位出错：'+e.message);setTimeout(hideStatus,3500);}
 }
 
 function renderPanel(p){
   panel.classList.remove('hidden');
-  const pct = Math.round(p.probability*100);
-  document.getElementById('p-place').textContent =
-    `${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}  ·  ${p.date}`;
-  const dial = document.getElementById('p-dial');
-  dial.style.setProperty('--p', pct);
-  dial.style.background = `conic-gradient(${magma(p.probability)} ${pct}%, #342a22 0)`;
-  document.getElementById('p-val').textContent = pct;
-  const [vlabel, vsub] = verdict(p.probability);
-  document.getElementById('p-verdict').textContent = vlabel;
-  document.getElementById('p-sub').textContent = vsub;
-
-  document.getElementById('f-sunset').innerHTML =
-    `${fmtLocal(p.sunset_utc, p.lon)} <small>当地</small>`;
-  const dur = p.geometry.duration_min;
-  document.getElementById('f-duration').innerHTML =
-    dur ? `${Math.round(dur)} <small>分钟</small>` : '—';
-  const vis = p.inputs.visibility_m;
-  document.getElementById('f-vis').innerHTML =
-    vis!=null ? `${(vis/1000).toFixed(0)} <small>km</small>` : '—';
-  const mh = Math.round((p.inputs.cloud_mid_pct + p.inputs.cloud_high_pct)/2);
-  document.getElementById('f-cloud').innerHTML = `${mh}<small>%</small>`;
-
-  const bars = document.getElementById('p-bars');
-  bars.innerHTML = '';
-  const order = ["mid_high_cloud_presence","low_cloud_obstruction","solar_angle","clean_air",
-                 "cloud_cover_sweet_spot","cloud_altitude_preference","humidity"];
-  for(const key of order){
-    if(!(key in p.components)) continue;
-    const v = p.components[key];
-    const row = document.createElement('div');
-    row.className='bar';
-    row.innerHTML = `<span class="bn ${GATES.has(key)?'gate':''}">${COMPONENT_LABELS[key]||key}</span>
+  const pct=Math.round(p.probability*100);
+  document.getElementById('p-place').textContent=`${p.lat.toFixed(3)}, ${p.lon.toFixed(3)} · ${p.date}`;
+  const dial=document.getElementById('p-dial');
+  dial.style.background=`conic-gradient(${magma(p.probability)} ${pct}%, #342a22 0)`;
+  document.getElementById('p-val').textContent=pct;
+  const [vl,vs]=verdict(p.probability);
+  document.getElementById('p-verdict').textContent=vl;
+  document.getElementById('p-sub').textContent=vs;
+  document.getElementById('f-sunset').innerHTML=`${fmtChinaTime(p.sunset_utc)} <small>北京时间</small>`;
+  const dur=p.geometry.duration_min;
+  document.getElementById('f-duration').innerHTML=dur?`${Math.round(dur)} <small>分钟</small>`:'—';
+  const vis=p.inputs.visibility_m;
+  const aod=p.inputs.aerosol_optical_depth;
+  document.getElementById('f-air-label').textContent=aod!=null?'AOD（550 nm）':'能见度（AOD 缺失）';
+  document.getElementById('f-vis').innerHTML=aod!=null?`${aod.toFixed(2)}`:(vis!=null?`${(vis/1000).toFixed(0)} <small>km</small>`:'—');
+  const layerNames={low:'低云',mid:'中云',high:'高云'};
+  const canvas=Math.round(p.inputs.canvas_cloud_pct??Math.max(p.inputs.cloud_mid_pct,p.inputs.cloud_high_pct));
+  document.getElementById('f-cloud').innerHTML=`${layerNames[p.inputs.canvas_layer]||'—'} ${canvas}<small>%</small>`;
+  const bars=document.getElementById('p-bars'); bars.innerHTML='';
+  for(const key of ["mid_high_cloud_presence","sunward_illumination","low_cloud_obstruction","solar_angle","clean_air","boundary_confidence","cloud_cover_sweet_spot","cloud_altitude_preference","humidity"]){
+    if(!(key in p.components))continue; const v=p.components[key];
+    const row=document.createElement('div'); row.className='bar';
+    row.innerHTML=`<span class="bn ${GATES.has(key)?'gate':''}">${COMPONENT_LABELS[key]||key}</span>
       <span class="track"><span class="fill" style="width:${Math.round(v*100)}%;background:${magma(v)}"></span></span>
       <span class="bv">${v.toFixed(2)}</span>`;
     bars.appendChild(row);
   }
-
-  let note = '';
+  let note='';
   if(p.gate_score===0){
-    const failed = Object.entries(p.components)
-      .filter(([k,v])=>GATES.has(k) && v===0).map(([k])=>COMPONENT_LABELS[k]||k);
-    note = `必要条件「${failed.join('、')}」为 0 — 物理上今晚此地无法形成火烧云，因此总概率归零（这正是本系统区别于简单加权预报之处）。`;
-  } else {
-    note = `综合 = 必要条件(${p.gate_score.toFixed(2)}) × 增强条件(${p.modifier_score.toFixed(2)})。数据源 Open-Meteo，日落前约 10 分钟评估。`;
+    const failed=Object.entries(p.components).filter(([k,v])=>GATES.has(k)&&v===0).map(([k])=>COMPONENT_LABELS[k]||k);
+    note=`当前规则中必要条件「${failed.join('、')}」未满足，因此条件指数归零。`;
+  }else{
+    note=`综合 = 必要条件(${p.gate_score.toFixed(2)}) × 增强条件(${p.modifier_score.toFixed(2)})。`;
   }
-  document.getElementById('p-note').textContent = note;
+  if(p.spatial?.cloud_boundary_km!=null){
+    note+=` 日落方位 ${Math.round(p.spatial.sun_azimuth_deg)}°，云边界约 ${Math.round(p.spatial.cloud_boundary_km)} km。`;
+  }else if(p.spatial?.profile_max_km!=null){
+    note+=` 沿日落方向检查至 ${Math.round(p.spatial.profile_max_km)} km，未发现清晰云边界。`;
+  }else{
+    note+=' 本次仅有点位数据，未取得日落方向剖面。';
+  }
+  note+=' 数据源 Open-Meteo，日落前约 10 分钟评估；结果是规则指数，不是统计概率。';
+  document.getElementById('p-note').textContent=note;
 }
 
-map.on('click', e => runForecast(e.latlng.lat, ((e.latlng.lng+540)%360)-180));
-dateInput.addEventListener('change', ()=>{ if(lastClick) runForecast(lastClick.lat, lastClick.lon); });
+map.on('click',e=>{tip.style.display='none';updatePoint(e.latlng.lat,((e.latlng.lng+540)%360)-180);});
+dateInput.addEventListener('change',()=>{loadOverlay();if(lastClick)updatePoint(lastClick.lat,lastClick.lon);});
 
-// try geolocation to center the map nicely
-if(navigator.geolocation){
-  navigator.geolocation.getCurrentPosition(
-    pos => map.setView([pos.coords.latitude, pos.coords.longitude], 8),
-    ()=>{}, {timeout:4000});
-}
+loadOverlay();
 </script>
 </body>
 </html>
