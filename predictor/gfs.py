@@ -144,10 +144,16 @@ class GFSSource:
         )
         # Subset to our variables on pressure (mb) levels. cfgrib may split into
         # several datasets by step/type; merge into one isobaric dataset.
+        # join="outer" is explicit (not the deprecated default): GFS variables
+        # like CLWMR/ICMR are reported on fewer levels than TMP, so the union of
+        # levels must be kept (missing levels NaN-filled), and a future xarray
+        # default of join="exact" would otherwise raise on the mismatch.
         search = r":(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLWMR|ICMR):\d+ mb:"
         parsed = H.xarray(search)
         if isinstance(parsed, list):
-            return xr.merge(parsed, compat="override", combine_attrs="override")
+            return xr.merge(
+                parsed, compat="override", combine_attrs="override", join="outer"
+            )
         return parsed
 
     # ---- pure transform (tested with synthetic xarray) -----------------
