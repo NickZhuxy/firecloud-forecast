@@ -1,5 +1,7 @@
 # Firecloud Forecast Phase 1 Implementation Plan
 
+> **历史归档：** 本计划已经完成；其中依靠个人观察日志积累 ML 训练集的路线已废弃。当前算法路线以公开数值预报、物理/人工预报规则和离线情景测试为主。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the Phase 1 deliverable of firecloud-forecast — a Jupyter notebook that calls a rule-based `Predictor` and renders a fire-cloud-probability heatmap on a US map for any given date/time.

@@ -1,9 +1,9 @@
-# apps/web — 阶段二占位
+# apps/web — 阶段二说明
 
-Phase 2 Web app 占位。计划：
+Phase 2 Web 应用已经实现在项目根目录的 `app/`：
 
-- 后端：FastAPI 包装 `predictor.score()`
-- 前端：React + Mapbox/Leaflet 渲染概率热力图
-- 部署：Vercel / Fly.io
+- `app/server.py`：FastAPI API 与静态入口
+- `app/overlay.py`：中国区全国叠图生成与缓存
+- `app/static/index.html`：Leaflet 交互地图
 
-详见 `docs/superpowers/specs/` 中阶段二的设计文档（待写）。
+运行方式见项目根目录 `README.md`。本目录保留为阶段历史入口，不再放置第二份 Web 实现。

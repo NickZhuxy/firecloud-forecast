@@ -1,12 +1,12 @@
 # Firecloud Forecast
 
-火烧云（sunset glow / 朝霞晚霞）概率预测。两个板块：研究 + 应用。
+火烧云（sunset glow / 朝霞晚霞）条件预测。两个板块：研究 + 应用。
 
-**当前阶段：Phase 2 — 交互式地图 Web 应用。** 在地图上点任意地点，即出该地当晚日落的火烧云概率 + 周边热力图 + 评分拆解。
+**当前阶段：Phase 2 — 中国区交互式地图 Web 应用。** 首页显示全国条件指数叠图；点击任意地点，可查看该地当晚日落的评分拆解。
 
 ## 板块
 
-- `research/` — 气象/光学原理笔记、论文（`research/paper/`）、面向非专业读者的说明（`research/explainer.html`）、探索 notebook、观察日志
+- `research/` — 气象/光学原理笔记、论文（`research/paper/`）、《人工火烧云预报速成》、说明与探索 notebook
 - `predictor/` — 可复用的 Python 包：`Forecast`, `Predictor`, `ScoringRule`, `RuleBasedPredictor`, `standard_predictor`，数据源 `HRRRSource` / `OpenMeteoSource`，几何 `geometry`
 - `app/` — Web 应用：FastAPI 后端（`app/server.py`）+ Leaflet 前端（`app/static/index.html`）
 - `apps/` — Phase 1 notebook（CONUS 热力图）
@@ -23,14 +23,14 @@ uv run uvicorn app.server:app --port 8848
 
 然后浏览器打开 <http://127.0.0.1:8848/>，点击地图任意位置即可。日期默认今天，可改。
 
-工作原理：选定地点 → 解析该地当晚日落 → 在日落前约 10 分钟、用 `standard_predictor`（gate × modifier，论文 §6.2）对一个网格批量打分（Open-Meteo 多坐标单次请求）→ 地图叠加 magma 概率热力图 + 右侧面板给出概率、必要/增强拆解、几何（持续时长、最大穿透距离）。
+工作原理：全国约 190 点的固定网格批量获取 Open-Meteo 小时预报 → 每个坐标分别定位自己的日落前 10 分钟 → 用 `standard_predictor`（gate × modifier，论文 §6.2）打分 → 插值生成裁切到中国国界的趋势概览。全国图每 3 小时缓存刷新，缓存过期时先返回旧图、在后台生成新图。点击点位会沿真实日落方位取 0–800 km 的剖面，分析云边界距离、下层云遮挡、550 nm AOD 和云层高度风，再返回精细拆解与几何信息。更高分辨率的全国图需要后续接入真正的 GFS/ICON 格点数据源，不能继续把点查询 API 当栅格服务使用。
 
 API：
 
 | 端点 | 说明 |
 |---|---|
-| `GET /api/forecast?lat&lon&date` | 单点：当晚日落的火烧云概率 + 拆解 + 几何 |
-| `GET /api/forecast/grid?lat&lon&date&radius_deg&step_deg` | 周边网格概率（一次批量请求） |
+| `GET /api/overlay/cn?date` | 中国区全国条件指数叠图；可能返回 `ready` / `stale` / `building` 状态 |
+| `GET /api/forecast?lat&lon&date` | 单点：当晚日落的条件指数 + 拆解 + 几何 |
 
 ## 快速开始
 
@@ -65,8 +65,10 @@ uv run jupyter lab apps/notebook/forecast-map.ipynb
 
 ## 已知限制（Phase 2）
 
-- 几何模块的"等效云底"修正较激进：能见度低于约 196 km 即削减云底高度，加上云底按"最低有云层"估计，所以**持续时长/穿透距离只在干净的中高云天空才显示**，有低云或雾霾时常为空。概率打分不受此影响（规则不依赖几何）。
-- 规则权重与阈值仍是文献+直觉的取值，尚未用观察数据拟合校准。
+- API 为兼容现有调用仍使用字段名 `probability`，产品界面将它称为“条件指数”，不解释为统计概率。
+- AOD 缺失时，洁净空气规则会退回地面能见度；几何计算不会把能见度直接当作整层气溶胶，以免雾和近地湿度造成过度修正。
+- 规则权重与阈值来自文献和《人工火烧云预报速成》的定性区间；不规划依靠个人观察日志训练或校准模型。
+- 日落方向剖面仍是 8 个离散样点，能判断主要云边界，但无法可靠恢复边界的二维朝向和公里级云洞。
 - 数据源是单点/网格预报，未做时间序列（"今晚几点最旺"曲线）——可作为下一步。
 
 ## Obsidian 集成
