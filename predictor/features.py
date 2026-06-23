@@ -11,7 +11,6 @@ from predictor.illumination import (
     assess_layer_contributions,
     canvas_layer_from_diagnosis,
     canvas_obstruction_fraction,
-    cloud_base_from_diagnosis,
 )
 
 
@@ -86,6 +85,19 @@ def estimate_cloud_base_m(
     """
     layer = select_canvas_layer(cloud_low_pct, cloud_mid_pct, cloud_high_pct)
     return _LAYER_BASE_M[layer] if layer is not None else None
+
+
+def tier_from_height(base_m: float) -> str:
+    """Map a cloud-base height (m) to a WMO étage tier.
+
+    Boundaries follow the standard étages: low < 2 km, mid 2–6 km, high > 6 km.
+    Used to make canvas_layer follow a diagnosed canvas height (#32).
+    """
+    if base_m < 2000.0:
+        return "low"
+    if base_m < 6000.0:
+        return "mid"
+    return "high"
 
 
 def _layer_values(profile: SunwardProfile, layer: str) -> list[float]:
@@ -213,9 +225,17 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None) 
         else compute_sunset(lat, lon, time)
     )
 
-    canvas_layer = select_canvas_layer(
-        snapshot.cloud_low_pct, snapshot.cloud_mid_pct, snapshot.cloud_high_pct
-    )
+    # #32: when a canvas is diagnosed, derive canvas_layer from its real height
+    # so the field, the sunward obstruction-layer selection, and the altitude
+    # modifier all stay coherent with the diagnosed cloud_base_m — instead of a
+    # three-tier guess that could name a different deck.
+    diagnosed_canvas = canvas_layer_from_diagnosis(cloud_layers) if cloud_layers else None
+    if diagnosed_canvas is not None:
+        canvas_layer = tier_from_height(diagnosed_canvas.base_m)
+    else:
+        canvas_layer = select_canvas_layer(
+            snapshot.cloud_low_pct, snapshot.cloud_mid_pct, snapshot.cloud_high_pct
+        )
     canvas_cloud_pct = (
         getattr(snapshot, f"cloud_{canvas_layer}_pct") if canvas_layer else 0.0
     )
@@ -224,19 +244,11 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None) 
         snapshot.cloud_low_pct, snapshot.cloud_mid_pct, snapshot.cloud_high_pct
     )
     source_base = getattr(snapshot, "cloud_base_m", None)
-    diagnosed_base = cloud_base_from_diagnosis(cloud_layers) if cloud_layers else None
 
-    # Note: canvas_layer / canvas_cloud_pct above remain derived from the
-    # three-tier snapshot percentages and may name a different deck than a
-    # diagnosed cloud_base_m (e.g. canvas_layer="mid" while the diagnosed base is
-    # a 7 km high deck). They drive the sunward-transect layer selection, which
-    # is independent of the vertical diagnosis; reconciling the two is a tracked
-    # follow-up. cloud_base_source records which base won.
-    if diagnosed_base is not None:
-        cloud_base_m = diagnosed_base
+    if diagnosed_canvas is not None:
+        cloud_base_m = diagnosed_canvas.base_m
         cloud_base_source = "diagnosed"
-        canvas = canvas_layer_from_diagnosis(cloud_layers)
-        cloud_base_confidence = canvas.confidence if canvas is not None else None
+        cloud_base_confidence = diagnosed_canvas.confidence
     elif source_base is not None:
         cloud_base_m = source_base
         cloud_base_source = "source_reported"
