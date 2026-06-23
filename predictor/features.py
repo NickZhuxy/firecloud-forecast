@@ -52,6 +52,11 @@ class Features:
     # (0–100%), and the full per-layer breakdown (#31). None without diagnosis.
     diagnosed_obstruction_pct: float | None = None
     layer_contributions: list | None = None
+    # GFS's own mid/high cloud cover (%), max(MCDC, HCDC) (#35): the same-source
+    # mid/high-canvas coverage used by the presence/sweet-spot rules instead of a
+    # possibly-disagreeing Open-Meteo value. Independent of which tier is the
+    # canvas. None without diagnosis or GFS cover.
+    diagnosed_mid_high_cover_pct: float | None = None
 
 
 def select_canvas_layer(
@@ -203,7 +208,7 @@ def compute_sunset(lat: float, lon: float, dt: datetime) -> datetime:
     return sun(observer, date=dt.date(), tzinfo=dt.tzinfo)["sunset"]
 
 
-def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None) -> Features:
+def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, cloud_cover=None) -> Features:
     """Build a Features instance from a WeatherSnapshot + location + query time.
 
     `snapshot` is duck-typed — it must expose cloud_low_pct, cloud_mid_pct,
@@ -239,6 +244,17 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None) 
     canvas_cloud_pct = (
         getattr(snapshot, f"cloud_{canvas_layer}_pct") if canvas_layer else 0.0
     )
+
+    # #35: when the canvas is diagnosed from GFS, score it against GFS's own étage
+    # cover (LCDC/MCDC/HCDC) so structure and coverage share a source. The
+    # mid/high-presence signal is GFS's own max(MCDC, HCDC) — independent of which
+    # tier is the canvas, so a low canvas does not wrongly erase real mid/high
+    # cloud that GFS itself reports. canvas_cloud_pct shows the canvas deck's own
+    # cover for the detail panel.
+    diagnosed_mid_high_cover_pct = None
+    if diagnosed_canvas is not None and cloud_cover is not None and canvas_layer:
+        canvas_cloud_pct = cloud_cover.for_tier(canvas_layer)
+        diagnosed_mid_high_cover_pct = max(cloud_cover.mid_pct, cloud_cover.high_pct)
 
     fixed_base = estimate_cloud_base_m(
         snapshot.cloud_low_pct, snapshot.cloud_mid_pct, snapshot.cloud_high_pct
@@ -295,5 +311,6 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None) 
         cloud_base_confidence=cloud_base_confidence,
         diagnosed_obstruction_pct=diagnosed_obstruction_pct,
         layer_contributions=layer_contributions,
+        diagnosed_mid_high_cover_pct=diagnosed_mid_high_cover_pct,
         **spatial,
     )

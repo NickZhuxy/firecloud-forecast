@@ -18,7 +18,26 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from predictor.profiles import PROFILE_VARS, AtmosphericCube
+from dataclasses import dataclass
+
+from predictor.profiles import (
+    PROFILE_VARS,
+    AtmosphericCube,
+    _nearest_index,
+    _nearest_lon_index,
+)
+
+
+@dataclass
+class EtageCloudCover:
+    """GFS three-tier (étage) cloud cover at a point, percent (0–100)."""
+
+    low_pct: float
+    mid_pct: float
+    high_pct: float
+
+    def for_tier(self, tier: str) -> float:
+        return {"low": self.low_pct, "mid": self.mid_pct, "high": self.high_pct}[tier]
 
 # GFS cfgrib shortname -> our profile field name.
 GFS_VAR_MAP: dict[str, str] = {
@@ -61,9 +80,10 @@ class GFSSource:
         self.cache_dir = Path(cache_dir or self.DEFAULT_CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.levels = tuple(levels) if levels else self.DEFAULT_LEVELS_HPA
-        # Per-instance in-memory cache of parsed datasets keyed by (run_dt, fxx),
-        # mirroring HRRRSource: avoids re-parsing for repeated same-cycle queries.
+        # Per-instance in-memory caches keyed by (run_dt, fxx), mirroring
+        # HRRRSource: avoids re-parsing for repeated same-cycle queries.
         self._ds_cache: dict[tuple[datetime, int], xr.Dataset] = {}
+        self._cover_cache: dict[tuple[datetime, int], xr.Dataset] = {}
 
     # ---- public API -----------------------------------------------------
 
@@ -92,6 +112,20 @@ class GFSSource:
             retrieved_at=datetime.now(timezone.utc),
         )
 
+    def fetch_cloud_cover(
+        self, lat: float, lon: float, valid_time: datetime
+    ) -> EtageCloudCover:
+        """GFS three-tier cloud cover (LCDC/MCDC/HCDC) at a point.
+
+        GFS reports its own étage cloud covers, so a canvas diagnosed from GFS
+        can be scored against GFS coverage instead of a possibly-disagreeing
+        Open-Meteo value (#35).
+        """
+        valid_utc = _as_utc(valid_time)
+        run_dt, fxx = self._select_cycle(valid_utc)
+        ds, _run, _fxx = self._load_with_fallback(run_dt, fxx, self._load_cover)
+        return self._cover_from_dataset(ds, lat, lon)
+
     # ---- cycle selection / loading -------------------------------------
 
     @staticmethod
@@ -105,8 +139,9 @@ class GFSSource:
         return run, fxx
 
     def _load_with_fallback(
-        self, run_dt: datetime, fxx: int
+        self, run_dt: datetime, fxx: int, loader=None
     ) -> tuple[xr.Dataset, datetime, int]:
+        loader = loader or self._load_dataset
         last_exc: Exception | None = None
         for step in range(self.MAX_CYCLE_FALLBACK + 1):
             run = run_dt - timedelta(hours=CYCLE_HOURS * step)
@@ -114,7 +149,7 @@ class GFSSource:
             # hour grows by one cycle length per step.
             f = fxx + CYCLE_HOURS * step
             try:
-                return self._load_dataset(run, f), run, f
+                return loader(run, f), run, f
             except Exception as exc:  # noqa: BLE001 — try the previous cycle
                 last_exc = exc
         raise GFSUnavailable(
@@ -131,17 +166,30 @@ class GFSSource:
         self._ds_cache[key] = ds
         return ds
 
-    def _download_dataset(self, run_dt: datetime, fxx: int) -> xr.Dataset:
-        """Download + parse the GFS pressure-level subset via Herbie (network)."""
+    def _load_cover(self, run_dt: datetime, fxx: int) -> xr.Dataset:
+        key = (run_dt, fxx)
+        cached = self._cover_cache.get(key)
+        if cached is not None:
+            return cached
+        ds = self._download_cover(run_dt, fxx)
+        self._cover_cache[key] = ds
+        return ds
+
+    def _herbie(self, run_dt: datetime, fxx: int):
+        """Construct a Herbie handle for a GFS 0.25° cycle (network on .xarray)."""
         from herbie import Herbie
 
-        H = Herbie(
+        return Herbie(
             run_dt.strftime("%Y-%m-%d %H:%M"),
             model="gfs",
             product="pgrb2.0p25",
             fxx=fxx,
             save_dir=self.cache_dir,
         )
+
+    def _download_dataset(self, run_dt: datetime, fxx: int) -> xr.Dataset:
+        """Download + parse the GFS pressure-level subset via Herbie (network)."""
+        H = self._herbie(run_dt, fxx)
         # Subset to our variables on pressure (mb) levels. cfgrib may split into
         # several datasets by step/type; merge into one isobaric dataset.
         # join="outer" is explicit (not the deprecated default): GFS variables
@@ -155,6 +203,54 @@ class GFSSource:
                 parsed, compat="override", combine_attrs="override", join="outer"
             )
         return parsed
+
+    def _download_cover(self, run_dt: datetime, fxx: int) -> xr.Dataset:
+        """Download the GFS three-tier cloud covers (LCDC/MCDC/HCDC) via Herbie."""
+        H = self._herbie(run_dt, fxx)
+        # Each étage cover sits on its own cloud-layer level type, so Herbie
+        # returns one dataset per cover; merge them on the shared lat/lon grid.
+        parsed = H.xarray(r":(?:LCDC|MCDC|HCDC):")
+        if isinstance(parsed, list):
+            return xr.merge(parsed, compat="override", combine_attrs="override")
+        return parsed
+
+    # cfgrib shortnames: LCDC→lcc, MCDC→mcc, HCDC→hcc.
+    _COVER_SHORTNAMES = ("lcc", "mcc", "hcc")
+
+    @classmethod
+    def _cover_from_dataset(cls, ds: xr.Dataset, lat: float, lon: float) -> EtageCloudCover:
+        """Nearest-grid-point three-tier cover.
+
+        A missing single tier defaults to 0%, but if *none* of the expected
+        shortnames are present (a parse/shortname mismatch) we raise, so the
+        caller degrades to the Open-Meteo coverage instead of silently scoring
+        every tier as 0% (which would wrongly zero the presence gate).
+        """
+        present = [s for s in cls._COVER_SHORTNAMES if s in ds.data_vars]
+        if not present:
+            raise GFSUnavailable(
+                f"GFS cover dataset has none of {cls._COVER_SHORTNAMES}; "
+                f"got {list(ds.data_vars)}"
+            )
+
+        lats = np.asarray(ds["latitude"].values, dtype=float)
+        lons = np.asarray(ds["longitude"].values, dtype=float)
+        yi = _nearest_index(lats, lat)
+        xi = _nearest_lon_index(lons, lon)
+
+        def cover(short: str) -> float:
+            if short not in ds.data_vars:
+                return 0.0
+            # Squeeze any residual (step/level) dims so extraction is robust.
+            arr = np.asarray(ds[short].isel(latitude=yi, longitude=xi).values).ravel()
+            if arr.size == 0:
+                return 0.0
+            value = float(arr[0])
+            return value if np.isfinite(value) else 0.0
+
+        return EtageCloudCover(
+            low_pct=cover("lcc"), mid_pct=cover("mcc"), high_pct=cover("hcc")
+        )
 
     # ---- pure transform (tested with synthetic xarray) -----------------
 

@@ -69,6 +69,18 @@ def _diagnose_cloud_layers(lat: float, lon: float, t_score: datetime):
     except Exception:
         return None
 
+
+def _diagnose_cloud_cover(lat: float, lon: float, t_score: datetime):
+    """Best-effort GFS étage cloud cover for the detail panel (#35).
+
+    Returns an EtageCloudCover, or None if GFS is unavailable — the gates then
+    fall back to the Open-Meteo coverage.
+    """
+    try:
+        return _gfs_source.fetch_cloud_cover(lat, lon, t_score)
+    except Exception:
+        return None
+
 # Small LRU for point lookups (the overlay has its own slot cache in overlay.py).
 _POINT_CACHE_MAX = 512
 _point_cache: "OrderedDict[tuple, dict]" = OrderedDict()
@@ -141,10 +153,14 @@ def _point_forecast(lat: float, lon: float, d: date_cls) -> dict:
     t_score = sunset - SCORE_OFFSET
 
     # Single-point detail upgrades the canvas base to diagnosed cloud geometry
-    # when GFS is reachable; the national grid path never calls this (#30).
+    # (#30) and scores its coverage against GFS's own étage cover (#35) when GFS
+    # is reachable; the national grid path never calls this.
     cloud_layers = _diagnose_cloud_layers(lat, lon, t_score)
-    feats = derive(snap, lat, lon, t_score, cloud_layers=cloud_layers)
-    forecast = _predictor.score_snapshot(snap, lat, lon, t_score, cloud_layers=cloud_layers)
+    cloud_cover = _diagnose_cloud_cover(lat, lon, t_score) if cloud_layers else None
+    feats = derive(snap, lat, lon, t_score, cloud_layers=cloud_layers, cloud_cover=cloud_cover)
+    forecast = _predictor.score_snapshot(
+        snap, lat, lon, t_score, cloud_layers=cloud_layers, cloud_cover=cloud_cover
+    )
     path_aod = (
         feats.sunward_aod_mean
         if feats.sunward_aod_mean is not None

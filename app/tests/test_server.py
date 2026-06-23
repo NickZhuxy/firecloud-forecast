@@ -14,6 +14,7 @@ client = TestClient(server.app)
 def _no_gfs(monkeypatch):
     """Stub the slow GFS diagnosis so point tests stay offline and deterministic."""
     monkeypatch.setattr(server, "_diagnose_cloud_layers", lambda lat, lon, t: None)
+    monkeypatch.setattr(server, "_diagnose_cloud_cover", lambda lat, lon, t: None)
 
 
 def test_index_uses_national_overlay_endpoint():
@@ -152,6 +153,7 @@ def test_detailed_point_uses_diagnosed_cloud_base(monkeypatch):
     # GFS diagnosis returns a high deck → its base drives cloud_base_m (#30/#13).
     high = CloudLayer(8000.0, 10000.0, 2000.0, "ice", 0.77, "condensate", signal_margin=10.0)
     monkeypatch.setattr(server, "_diagnose_cloud_layers", lambda lat, lon, t: [high])
+    monkeypatch.setattr(server, "_diagnose_cloud_cover", lambda lat, lon, t: None)
     server._point_cache.clear()
 
     body = client.get(
@@ -176,6 +178,7 @@ def test_detailed_point_surfaces_graded_obstruction(monkeypatch):
     low = CloudLayer(800.0, 2800.0, 2000.0, "liquid", 1.0, "condensate", signal_margin=10.0)
     high = CloudLayer(8000.0, 10000.0, 2000.0, "ice", 1.0, "condensate", signal_margin=10.0)
     monkeypatch.setattr(server, "_diagnose_cloud_layers", lambda lat, lon, t: [low, high])
+    monkeypatch.setattr(server, "_diagnose_cloud_cover", lambda lat, lon, t: None)
     server._point_cache.clear()
 
     diagnosed = client.get(
