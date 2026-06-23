@@ -65,10 +65,11 @@ def test_two_layers_separated_by_large_gap():
 
 def test_small_gap_is_merged():
     p = _profile(
-        [500, 1000, 1200, 1500],
+        [500, 800, 1000, 1300],
         clw=[1e-4, 0, 1e-4, 1e-4], ice=[0, 0, 0, 0],
     )
-    # Gap 1000→1200 is 200 m < merge_gap (300 m) → single merged layer.
+    # One clear level at 800 m; midpoint boundaries leave a 250 m gap
+    # (< merge_gap 300 m) → single merged layer.
     layers = diagnose_clouds(p)
     assert len(layers) == 1
 
@@ -102,6 +103,29 @@ def test_ice_phase_hint_from_dominant_ice_condensate():
     layers = diagnose_clouds(p)
     assert len(layers) == 1
     assert layers[0].phase_hint == "ice"
+
+
+def test_condensate_boundaries_use_midpoint_not_threshold_crossing():
+    # Condensate is a step (0 → large), so a near-zero threshold crossing would
+    # pin the edge onto the adjacent clear level and inflate thickness. The
+    # boundary should instead sit at the half-gap midpoint.
+    p = _profile(
+        [500, 1500, 3000, 4000, 5000, 8000],
+        clw=[0, 0, 1e-4, 1e-4, 0, 0], ice=[0, 0, 0, 0, 0, 0],
+    )
+    layer = diagnose_clouds(p)[0]
+    assert layer.base_m == 2250.0   # midpoint(1500, 3000)
+    assert layer.top_m == 4500.0    # midpoint(4000, 5000)
+
+
+def test_rh_path_still_interpolates_the_crossing():
+    p = _profile(
+        [500, 1500, 3000, 4000, 5000],
+        rh=[40, 95, 95, 40, 40],
+    )
+    layer = diagnose_clouds(p)[0]
+    # Signal genuinely ramps for RH → interpolate, not a midpoint (which is 1000).
+    assert 1350 < layer.base_m < 1450
 
 
 def test_single_level_layer_has_reduced_confidence():

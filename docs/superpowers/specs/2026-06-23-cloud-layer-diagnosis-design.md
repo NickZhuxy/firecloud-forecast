@@ -26,7 +26,9 @@ Parent epic: #4 · Milestone: v0.2 · Branch: `codex/10-cloud-diagnosis`
 2. 选信号:凝结物可用 → `clw+ice`(阈值 1e-6,source=condensate);否则 RH
    (阈值 90%,source=rh)。
 3. `signal >= threshold` 取连续段。
-4. 段边界**线性插值**阈值穿越高度(段在廓线端点则用端点高度)。
+4. 段边界:RH 路径(信号平滑渐变)**线性插值**阈值穿越高度;凝结物路径(阶跃
+   信号,阈值远低于云内值)用**半格距 midpoint**,避免边界被钉到相邻无云层而
+   夸大厚度。段在廓线端点则用端点高度。
 5. 合并"下层 base − 上层 top < 合并间隙"的相邻层。
 6. 相态:凝结物 → 冰占比 >0.7 ice / <0.3 liquid / 否则 mixed;RH 回退 → 按层平均温度。
 7. 置信度:condensate 0.8 / rh 0.5;单层 ×0.6;触廓线端点 ×0.9(extent 未知)。
