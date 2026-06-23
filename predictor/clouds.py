@@ -88,10 +88,14 @@ def diagnose_clouds(
 
     # Build raw layers with interpolated edges, then merge those separated by a
     # gap (next base − previous top) shorter than merge_gap_m.
+    # Condensate is a step signal (≈0 → in-cloud value): a near-zero threshold
+    # crossing would pin the edge onto the adjacent clear level and inflate
+    # thickness, so use a half-gap midpoint. RH ramps smoothly, so interpolate.
+    step_like = source == "condensate"
     raw: list[list] = []  # [i0, i1, base, top]
     for i0, i1 in _true_spans(cloudy):
-        base = _interp_base(h, signal, threshold, i0)
-        top = _interp_top(h, signal, threshold, i1, n)
+        base = _interp_base(h, signal, threshold, i0, step_like)
+        top = _interp_top(h, signal, threshold, i1, n, step_like)
         raw.append([i0, i1, base, top])
 
     merged: list[list] = []
@@ -132,9 +136,11 @@ def _true_spans(mask: np.ndarray) -> list[tuple[int, int]]:
     return spans
 
 
-def _interp_base(h: np.ndarray, signal: np.ndarray, threshold: float, i0: int) -> float:
+def _interp_base(h: np.ndarray, signal: np.ndarray, threshold: float, i0: int, step_like: bool) -> float:
     if i0 == 0:
         return h[0]
+    if step_like:
+        return (h[i0 - 1] + h[i0]) / 2.0
     s_below, s_in = signal[i0 - 1], signal[i0]
     if s_in == s_below:
         return h[i0]
@@ -142,9 +148,11 @@ def _interp_base(h: np.ndarray, signal: np.ndarray, threshold: float, i0: int) -
     return h[i0 - 1] + frac * (h[i0] - h[i0 - 1])
 
 
-def _interp_top(h: np.ndarray, signal: np.ndarray, threshold: float, i1: int, n: int) -> float:
+def _interp_top(h: np.ndarray, signal: np.ndarray, threshold: float, i1: int, n: int, step_like: bool) -> float:
     if i1 == n - 1:
         return h[i1]
+    if step_like:
+        return (h[i1] + h[i1 + 1]) / 2.0
     s_in, s_above = signal[i1], signal[i1 + 1]
     if s_in == s_above:
         return h[i1]
