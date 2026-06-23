@@ -25,7 +25,6 @@ import matplotlib
 matplotlib.use("Agg")
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.figure import Figure
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path as MplPath
@@ -37,7 +36,7 @@ OVERLAY_FLOOR = 0.06
 # Increment whenever scoring inputs, rules, or rendering semantics change.
 # Keeping it in the key prevents a new deployment from serving an old image
 # produced by different forecast logic during the same refresh slot.
-CACHE_SCHEMA_VERSION = "v2"
+CACHE_SCHEMA_VERSION = "v3"  # v3: SunsetWx-style turbo quality colormap (#40)
 
 # China domain (a small margin around the border bounds).
 CN_BBOX = (17.0, 73.0, 54.0, 136.0)   # south, west, north, east
@@ -47,17 +46,11 @@ CN_BBOX = (17.0, 73.0, 54.0, 136.0)   # south, west, north, east
 # coordinates. A true dense national field needs a gridded GFS/ICON source.
 CN_STEP = 4.0                          # grid spacing in degrees (fixed grid)
 
-_SUNSET_CMAP = LinearSegmentedColormap.from_list(
-    "sunset_pink",
-    [
-        (0.00, (1.00, 1.00, 1.00, 0.00)),
-        (0.18, (0.92, 0.89, 0.96, 0.55)),
-        (0.38, (0.84, 0.72, 0.88, 0.72)),
-        (0.58, (0.90, 0.56, 0.78, 0.82)),
-        (0.78, (0.89, 0.35, 0.65, 0.90)),
-        (1.00, (0.74, 0.16, 0.48, 0.95)),
-    ],
-)
+# SunsetWx-style quality scale: a "better sunset is denoted by warmer colors",
+# i.e. the perceptual turbo ramp deep-blue (low) → cyan → green → yellow →
+# orange → red (high). Masked no-data cells stay transparent over the basemap.
+_QUALITY_CMAP = matplotlib.colormaps["turbo"].copy()
+_QUALITY_CMAP.set_bad(alpha=0.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -143,13 +136,11 @@ def _render_clipped_png(lats, lons, P, geom) -> str | None:
     ax.add_patch(clip_patch)
 
     levels = np.linspace(0.0, 1.0, 25)
-    cf = ax.contourf(lon_fine, lat_fine, field, levels=levels, cmap=_SUNSET_CMAP,
-                     extend="max", antialiased=True)
-    cl = ax.contour(lon_fine, lat_fine, field, levels=np.linspace(0.2, 1.0, 5),
-                    colors="#7a3a64", linewidths=0.4, alpha=0.45)
-    # matplotlib ≥3.8: the ContourSet is itself a clippable artist.
+    cf = ax.contourf(lon_fine, lat_fine, field, levels=levels, cmap=_QUALITY_CMAP,
+                     vmin=0.0, vmax=1.0, extend="max", antialiased=True)
+    # matplotlib ≥3.8: the ContourSet is itself a clippable artist. No contour
+    # lines — SunsetWx's quality field is a smooth, line-free gradient.
     cf.set_clip_path(clip_patch)
-    cl.set_clip_path(clip_patch)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", transparent=True)
