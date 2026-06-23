@@ -67,6 +67,52 @@ class AtmosphericProfile:
 
 
 @dataclass
+class NormalizedProfile:
+    """A standardized single column: physically derived, height-sorted.
+
+    Unlike the raw ``AtmosphericProfile``, levels are strictly ordered by
+    geometric height (duplicates and unusable levels removed), relative humidity
+    and dewpoint are filled by canonical thermodynamics, and both height
+    definitions are kept explicit:
+
+    - ``geopotential_height_m`` — the model's energy-based height (GFS HGT).
+    - ``geometric_height_m`` — true altitude above the surface.
+    """
+
+    lat: float
+    lon: float
+    pressure_hpa: np.ndarray            # descending pressure == ascending height
+    geometric_height_m: np.ndarray      # strictly increasing
+    geopotential_height_m: np.ndarray
+    temperature_k: np.ndarray
+    relative_humidity_pct: np.ndarray   # 0–100
+    dewpoint_k: np.ndarray
+    specific_humidity_kg_kg: np.ndarray
+    u_wind_m_s: np.ndarray
+    v_wind_m_s: np.ndarray
+    vertical_velocity_pa_s: np.ndarray
+    cloud_water_kg_kg: np.ndarray
+    cloud_ice_kg_kg: np.ndarray
+    run_time: datetime
+    valid_time: datetime
+    source_label: str
+    retrieved_at: datetime
+    missing: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        out: dict = {}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, np.ndarray):
+                out[f.name] = value.tolist()
+            elif isinstance(value, datetime):
+                out[f.name] = value.isoformat()
+            else:
+                out[f.name] = value
+        return out
+
+
+@dataclass
 class AtmosphericCube:
     """A bbox-cropped region grid: one value per (level, lat, lon)."""
 
