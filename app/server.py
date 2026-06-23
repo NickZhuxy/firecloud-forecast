@@ -231,6 +231,27 @@ def _point_forecast(lat: float, lon: float, d: date_cls) -> dict:
                 else None
             ),
         },
+        # Diagnosed vertical structure (#31): graded canvas obstruction by lower
+        # decks plus the per-layer breakdown. Null when GFS diagnosis is absent.
+        "diagnosed": {
+            "obstruction_pct": (
+                round(feats.diagnosed_obstruction_pct, 1)
+                if feats.diagnosed_obstruction_pct is not None
+                else None
+            ),
+            "layers": [
+                {
+                    "base_m": round(c.base_m),
+                    "top_m": round(c.top_m),
+                    "phase_hint": c.phase_hint,
+                    "confidence": c.confidence,
+                    "duration_min": round(c.duration_min, 1),
+                    "obstruction_fraction": round(c.obstruction_fraction, 3),
+                    "is_canvas": c.is_canvas,
+                }
+                for c in (feats.layer_contributions or [])
+            ],
+        },
         "inputs": {
             "cloud_low_pct": snap.cloud_low_pct,
             "cloud_mid_pct": snap.cloud_mid_pct,

@@ -11,10 +11,18 @@ with a graceful fallback to the three-tier estimate when no layers are given.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from predictor.clouds import CloudLayer
 from predictor.geometry import characteristic_duration_min
+
+
+# Opacity proxy for grazing sunlight that lights the canvas. A layer this thick
+# is treated as fully opaque; thinner layers attenuate proportionally. Liquid
+# attenuates most, glaciated (ice) cirrus least, mixed in between.
+_FULL_OPACITY_THICKNESS_M = 2000.0
+_PHASE_OPACITY = {"liquid": 1.0, "mixed": 0.7, "ice": 0.4}
 
 
 @dataclass
@@ -23,9 +31,50 @@ class LayerContribution:
     top_m: float
     phase_hint: str
     confidence: float
-    duration_min: float   # characteristic lit window from this deck's height
-    obstructed: bool      # a lower diagnosed layer sits beneath it
-    is_canvas: bool       # the deck selected as the colour canvas
+    duration_min: float        # characteristic lit window from this deck's height
+    obstructed: bool           # any lower diagnosed layer sits beneath it
+    obstruction_fraction: float  # graded 0–1: light blocked by the layers below
+    is_canvas: bool            # the deck selected as the colour canvas
+
+
+def _layer_opacity(layer: CloudLayer) -> float:
+    """Opacity (0–1) of a single layer from its thickness, phase, and confidence.
+
+    Confidence weights the opacity so an uncertain (e.g. RH-fallback,
+    single-level) deck cannot, on its own, drive the LowCloudObstruction gate to
+    zero the whole forecast — a shaky diagnosis hedges rather than vetoes.
+    """
+    thickness_m = layer.thickness_m
+    if not math.isfinite(thickness_m) or thickness_m <= 0:
+        return 0.0
+    thickness = min(1.0, thickness_m / _FULL_OPACITY_THICKNESS_M)
+    phase = _PHASE_OPACITY.get(layer.phase_hint, _PHASE_OPACITY["mixed"])
+    confidence = layer.confidence if math.isfinite(layer.confidence) else 0.0
+    confidence = min(1.0, max(0.0, confidence))
+    return thickness * phase * confidence
+
+
+def _obstruction_below(layer: CloudLayer, layers: list[CloudLayer]) -> float:
+    """Graded fraction of light blocked by all layers below ``layer``.
+
+    Precondition: ``layers`` are vertically disjoint (as ``diagnose_clouds``
+    emits) — the transmittance product ``1 − Π(1 − opacity)`` only holds for
+    non-overlapping decks. "Below" is a base-height comparison; a hand-built deck
+    that interpenetrates the canvas would be overcounted.
+    """
+    clear = 1.0
+    for other in layers:
+        if other.base_m < layer.base_m:
+            clear *= 1.0 - _layer_opacity(other)
+    return 1.0 - clear
+
+
+def canvas_obstruction_fraction(layers: list[CloudLayer]) -> float | None:
+    """Graded obstruction (0–1) of the canvas layer, or None without layers."""
+    canvas = canvas_layer_from_diagnosis(layers)
+    if canvas is None:
+        return None
+    return _obstruction_below(canvas, layers)
 
 
 def canvas_layer_from_diagnosis(layers: list[CloudLayer]) -> CloudLayer | None:
@@ -48,7 +97,7 @@ def assess_layer_contributions(
     canvas = canvas_layer_from_diagnosis(layers)
     contributions: list[LayerContribution] = []
     for layer in layers:
-        obstructed = any(other.base_m < layer.base_m for other in layers)
+        fraction = _obstruction_below(layer, layers)
         contributions.append(
             LayerContribution(
                 base_m=layer.base_m,
@@ -56,7 +105,8 @@ def assess_layer_contributions(
                 phase_hint=layer.phase_hint,
                 confidence=layer.confidence,
                 duration_min=characteristic_duration_min(layer.base_m, lat),
-                obstructed=obstructed,
+                obstructed=any(other.base_m < layer.base_m for other in layers),
+                obstruction_fraction=fraction,
                 is_canvas=layer is canvas,
             )
         )
