@@ -11,6 +11,7 @@ with a graceful fallback to the three-tier estimate when no layers are given.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from predictor.clouds import CloudLayer
@@ -37,13 +38,30 @@ class LayerContribution:
 
 
 def _layer_opacity(layer: CloudLayer) -> float:
-    """Opacity (0–1) of a single layer from its thickness and phase."""
-    thickness = min(1.0, max(0.0, layer.thickness_m) / _FULL_OPACITY_THICKNESS_M)
-    return thickness * _PHASE_OPACITY.get(layer.phase_hint, 0.7)
+    """Opacity (0–1) of a single layer from its thickness, phase, and confidence.
+
+    Confidence weights the opacity so an uncertain (e.g. RH-fallback,
+    single-level) deck cannot, on its own, drive the LowCloudObstruction gate to
+    zero the whole forecast — a shaky diagnosis hedges rather than vetoes.
+    """
+    thickness_m = layer.thickness_m
+    if not math.isfinite(thickness_m) or thickness_m <= 0:
+        return 0.0
+    thickness = min(1.0, thickness_m / _FULL_OPACITY_THICKNESS_M)
+    phase = _PHASE_OPACITY.get(layer.phase_hint, _PHASE_OPACITY["mixed"])
+    confidence = layer.confidence if math.isfinite(layer.confidence) else 0.0
+    confidence = min(1.0, max(0.0, confidence))
+    return thickness * phase * confidence
 
 
 def _obstruction_below(layer: CloudLayer, layers: list[CloudLayer]) -> float:
-    """Graded fraction of light blocked by all layers below ``layer`` (overlap-combined)."""
+    """Graded fraction of light blocked by all layers below ``layer``.
+
+    Precondition: ``layers`` are vertically disjoint (as ``diagnose_clouds``
+    emits) — the transmittance product ``1 − Π(1 − opacity)`` only holds for
+    non-overlapping decks. "Below" is a base-height comparison; a hand-built deck
+    that interpenetrates the canvas would be overcounted.
+    """
     clear = 1.0
     for other in layers:
         if other.base_m < layer.base_m:
