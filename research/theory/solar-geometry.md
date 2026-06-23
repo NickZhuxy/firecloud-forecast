@@ -145,14 +145,14 @@ $$\Delta t(h) \approx \frac{2 \cdot d(h)}{|d\alpha/dt|}$$
    - 线性降到 0 在 $\alpha = -6°$（civil twilight 结束）或 $\alpha = +6°$（高度太高、光路不够长）
    - 这样窗口长度自动随纬度/季节调整。`astral` / `pvlib` 都能直接给 `solar_elevation_deg`，已在 [features.py](../../predictor/features.py) 里有 `solar_elevation_deg` 字段。
 
-3. **新增 `Airmass` 派生特征**：直接计算 $m(\mathrm{SZA})$ 作为 features 之一。下游可以暴露给 ML 阶段使用，或作为 atmospheric-optics 三机制消光的乘子。
+3. **新增 `Airmass` 派生特征**：直接计算 $m(\mathrm{SZA})$ 作为 features 之一，作为 atmospheric-optics 三机制消光的乘子和诊断输出。
 
 4. **`CloudAltitudePreference` 的权重应反映直射窗口长度**：
    - 高云 ($h \approx 10$ km，$\Delta t \approx 32$ min)：权重 1.0
    - 中云 ($h \approx 5$ km，$\Delta t \approx 23$ min)：权重 0.7
    - 低云 ($h \approx 1$ km，$\Delta t \approx 10$ min)：权重 0.3
 
-5. **HRRR 数据时间分辨率限制**：HRRR 是逐小时输出，但 fire cloud 时间窗只有 ~30 min。意味着我们一次预报应该绑定**最接近 sunset 的那个整点**，而不是任意时刻——`HRRRSource` 当前实现按查询时间往前 2 小时取 cycle，可以改为"取离 sunset 最近的可用 cycle"。
+5. **模式时间分辨率限制**：火烧云窗口通常只有约 30 分钟，而不同数据源的输出间隔可能更粗。预报必须记录距目标日落时刻最近的有效时次及其偏差；不能把模式 run time、valid time 和日落时刻混为一谈。
 
 ## 论文章节种子
 

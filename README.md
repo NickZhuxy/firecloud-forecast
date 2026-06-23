@@ -1,88 +1,57 @@
 # Firecloud Forecast
 
-火烧云（sunset glow / 朝霞晚霞）条件预测。两个板块：研究 + 应用。
+面向中国地区的火烧云条件预测项目。系统以公开数值预报、物理规则和人工预报经验为基础，输出可解释的**条件指数**；该数值尚未经过统计校准，不应解释为真实概率。
 
-**当前阶段：Phase 2 — 中国区交互式地图 Web 应用。** 首页显示全国条件指数叠图；点击任意地点，可查看该地当晚日落的评分拆解。
+## 当前能力
 
-## 板块
+- 中国区 Leaflet 地图与 FastAPI 后端。
+- 单点预报定位当地日落前 10 分钟，并沿真实日落方位分析 0–800 km 的 8 个样点。
+- gate × modifier 评分：中高云画布、低云遮挡、太阳时机、洁净空气和照明几何为必要条件；湿度、云高、云量甜区和边界置信度负责调节强度。
+- 全国概览使用约 4° 的固定网格、三小时刷新和版本化缓存；它只表达大尺度趋势。
 
-- `research/` — 气象/光学原理笔记、论文（`research/paper/`）、《人工火烧云预报速成》、说明与探索 notebook
-- `predictor/` — 可复用的 Python 包：`Forecast`, `Predictor`, `ScoringRule`, `RuleBasedPredictor`, `standard_predictor`，数据源 `HRRRSource` / `OpenMeteoSource`，几何 `geometry`
-- `app/` — Web 应用：FastAPI 后端（`app/server.py`）+ Leaflet 前端（`app/static/index.html`）
-- `apps/` — Phase 1 notebook（CONUS 热力图）
-- `docs/superpowers/` — 设计文档与实现计划
-
-## 运行 Web 应用
-
-数据源用 [Open-Meteo](https://open-meteo.com/)（免费、无需 API key、全球、秒级），所以 Web 应用**不需要** HRRR 那套系统依赖。
+## 运行
 
 ```bash
 uv sync
-uv run uvicorn app.server:app --port 8848
+uv run uvicorn app.server:app --host 127.0.0.1 --port 8848
 ```
 
-然后浏览器打开 <http://127.0.0.1:8848/>，点击地图任意位置即可。日期默认今天，可改。
+打开 <http://127.0.0.1:8848/>。
 
-工作原理：全国约 190 点的固定网格批量获取 Open-Meteo 小时预报 → 每个坐标分别定位自己的日落前 10 分钟 → 用 `standard_predictor`（gate × modifier，论文 §6.2）打分 → 插值生成裁切到中国国界的趋势概览。全国图每 3 小时缓存刷新，缓存过期时先返回旧图、在后台生成新图。点击点位会沿真实日落方位取 0–800 km 的剖面，分析云边界距离、下层云遮挡、550 nm AOD 和云层高度风，再返回精细拆解与几何信息。更高分辨率的全国图需要后续接入真正的 GFS/ICON 格点数据源，不能继续把点查询 API 当栅格服务使用。
-
-API：
-
-| 端点 | 说明 |
+| API | 说明 |
 |---|---|
-| `GET /api/overlay/cn?date` | 中国区全国条件指数叠图；可能返回 `ready` / `stale` / `building` 状态 |
-| `GET /api/forecast?lat&lon&date` | 单点：当晚日落的条件指数 + 拆解 + 几何 |
+| `GET /api/forecast?lat&lon&date` | 单点条件指数、分项、时间与几何诊断 |
+| `GET /api/overlay/cn?date` | 中国区全国概览及缓存状态 |
 
-## 快速开始
+## 测试
 
-### 系统依赖（macOS）
+```bash
+uv run pytest -m "not integration"  # 默认：不访问外网
+uv run pytest -m integration        # 手动：真实数据源检查
+```
+
+GRIB/HRRR/GFS 开发在 macOS 上还需要系统库：
 
 ```bash
 brew install eccodes geos proj
 ```
 
-### Python 环境
+## 目录
 
-```bash
-uv sync
-```
+- `app/` — Web API、全国叠图、前端和应用测试。
+- `predictor/` — 数据源、物理特征、空间几何、评分规则和单元测试。
+- `research/theory/` — 气象与大气光学依据。
+- `research/paper/` — 历史 CONUS 案例论文的 LaTeX 源文件与图表。
+- `AGENTS.md` — 多 Agent 协作规则；实时认领记录在本地 `.agent-progress.md`。
 
-### 跑测试
+## 数据路线与限制
 
-```bash
-uv run pytest -m "not integration"        # 单元测试
-uv run pytest -m integration              # 真实 HRRR 网络测试（手动跑）
-```
+当前 Web 应用使用 Open-Meteo 天气和空气质量接口。它适合单点查询，但不适合作为高分辨率全国格点服务；下一步将接入免费 GFS 0.25° 压力层数据，诊断真实云底、云顶和厚度，再构建日落方向垂直剖面与卫星临近订正。
 
-### 跑 Phase 1 notebook（HRRR / CONUS，需上面的 brew 依赖）
+项目不规划依靠个人长期观察积累训练集。验证优先使用公开模式/卫星资料、离线物理情景、专业观测和同时次人工交叉检查。
 
-```bash
-uv run jupyter lab apps/notebook/forecast-map.ipynb
-```
+## 规划
 
-顶部 cell 改 `QUERY_TIME` / `BBOX` / `GRID_RES`，依次 run all。默认 `GRID_RES=3.0` 是 MVP 折中（约 200 个 grid 点，10 分钟内跑完）；更细的 1.5 度网格需要先优化 `HRRRSource` 的 in-memory 缓存。
-
-> 注：Web 应用（上文）用 Open-Meteo，不需要 brew 依赖；只有 HRRR notebook 和 `pytest -m integration` 才需要 `eccodes/geos/proj`。
-
-## 已知限制（Phase 2）
-
-- API 为兼容现有调用仍使用字段名 `probability`，产品界面将它称为“条件指数”，不解释为统计概率。
-- AOD 缺失时，洁净空气规则会退回地面能见度；几何计算不会把能见度直接当作整层气溶胶，以免雾和近地湿度造成过度修正。
-- 规则权重与阈值来自文献和《人工火烧云预报速成》的定性区间；不规划依靠个人观察日志训练或校准模型。
-- 日落方向剖面仍是 8 个离散样点，能判断主要云边界，但无法可靠恢复边界的二维朝向和公里级云洞。
-- 数据源是单点/网格预报，未做时间序列（"今晚几点最旺"曲线）——可作为下一步。
-
-## Obsidian 集成
-
-项目目录通过软链接接入 Obsidian vault：
-
-```bash
-ln -s /Users/nickzhu/Desktop/Projects/firecloud-forecast \
-      "/Users/nickzhu/Documents/Nick's Second Brain/Projects/firecloud-forecast"
-```
-
-Markdown 笔记享有 wikilinks / graph view 等能力；`.ipynb` / `.py` 在 Obsidian 中不被解析但可见。
-
-## 设计文档
-
-- 阶段一设计：[docs/superpowers/specs/2026-05-20-firecloud-forecast-design.md](docs/superpowers/specs/2026-05-20-firecloud-forecast-design.md)
-- 阶段一实现计划：[docs/superpowers/plans/2026-05-20-firecloud-forecast-phase1.md](docs/superpowers/plans/2026-05-20-firecloud-forecast-phase1.md)
+- [Agile Project](https://github.com/users/NickZhuxy/projects/2)
+- [v0.2 · 真实云层诊断](https://github.com/NickZhuxy/firecloud-forecast/milestone/1)
+- [#9 · GFS 0.25° 压力层数据适配器](https://github.com/NickZhuxy/firecloud-forecast/issues/9)

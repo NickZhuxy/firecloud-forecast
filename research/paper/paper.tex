@@ -57,7 +57,7 @@ Sunset Glow Prediction over the Continental United States}
 \maketitle
 
 \begin{abstract}
-Vivid sunset and sunrise glows---colloquially ``fire clouds'' in Chinese (\textit{huoshaoyun})---arise from a narrow set of atmospheric conditions: mid- to high-level clouds illuminated by low-angle sunlight that has traversed a long atmospheric path, with the troposphere clean enough to deliver ``unadulterated'' red light to the cloud canvas. Existing commercial prediction services (SunsetWx, Sunsethue) score these conditions with weighted-sum combinations of meteorological variables, treating necessary conditions (such as the presence of mid- or high-level clouds) as substitutable for other favorable factors. We show this produces substantial false positives: in an end-to-end run over Washington State's Olympic Peninsula at sunset on 20 May 2026, a weighted-sum predictor returned probabilities of 0.625--0.631 uniformly across all 180 cells of a 0.1\textdegree{}-resolution grid despite mid- and high-level cloud coverage of zero. We propose a two-layer scoring architecture in which physically necessary conditions act as multiplicative gates and enhancement variables modulate the result. The framework incorporates ozone Chappuis-band absorption---recently shown by \citet{lange2023revisiting} to dominate twilight blue color at low solar elevations---as an explicit pathway alongside Rayleigh and Mie scattering. We implement the framework as an open-source Python package consuming NOAA's High Resolution Rapid Refresh (HRRR) numerical weather prediction data, and present a preliminary case study comparison: the proposed gate $\times$ modifier scheme correctly returns zero across the Olympic Peninsula bounding box, where weighted-sum scoring fails. Full validation against citizen-science ground truth is identified as future work.
+Vivid sunset and sunrise glows---colloquially ``fire clouds'' in Chinese (\textit{huoshaoyun})---arise from a narrow set of atmospheric conditions: mid- to high-level clouds illuminated by low-angle sunlight that has traversed a long atmospheric path, with the troposphere clean enough to deliver ``unadulterated'' red light to the cloud canvas. Existing commercial prediction services (SunsetWx, Sunsethue) score these conditions with weighted-sum combinations of meteorological variables, treating necessary conditions (such as the presence of mid- or high-level clouds) as substitutable for other favorable factors. We show this produces substantial false positives: in an end-to-end run over Washington State's Olympic Peninsula at sunset on 20 May 2026, a weighted-sum predictor returned probabilities of 0.625--0.631 uniformly across all 180 cells of a 0.1\textdegree{}-resolution grid despite mid- and high-level cloud coverage of zero. We propose a two-layer scoring architecture in which physically necessary conditions act as multiplicative gates and enhancement variables modulate the result. The framework incorporates ozone Chappuis-band absorption---recently shown by \citet{lange2023revisiting} to dominate twilight blue color at low solar elevations---as an explicit pathway alongside Rayleigh and Mie scattering. We implement the framework as an open-source Python package consuming NOAA's High Resolution Rapid Refresh (HRRR) numerical weather prediction data, and present a preliminary case study comparison: the proposed gate $\times$ modifier scheme correctly returns zero across the Olympic Peninsula bounding box, where weighted-sum scoring fails. Full validation against large public reference datasets and professional observations is identified as future work.
 
 \medskip
 \noindent\textbf{Keywords:} atmospheric optics; twilight color; sunset prediction; numerical weather prediction; operational forecasting; Rayleigh scattering; Mie scattering; ozone Chappuis absorption.
@@ -94,7 +94,7 @@ This paper contributes:
 
 \subsection{Outline}
 
-Section~\ref{sec:theory} develops the theoretical background spanning atmospheric optics, solar geometry, cloud physics, and aerosol effects, concluding with a synthesis of necessary versus enhancing conditions. Section~\ref{sec:methodology} defines the methodology: data sources, feature derivation, scoring rule design, and the gate $\times$ modifier architecture. Section~\ref{sec:implementation} describes the software implementation. Section~\ref{sec:casestudy} presents a preliminary case study. Section~\ref{sec:discussion} discusses implications and acknowledges limitations. Section~\ref{sec:conclusion} concludes with planned future work, including a citizen-science validation pipeline and a planned extension to global coverage.
+Section~\ref{sec:theory} develops the theoretical background spanning atmospheric optics, solar geometry, cloud physics, and aerosol effects, concluding with a synthesis of necessary versus enhancing conditions. Section~\ref{sec:methodology} defines the methodology: data sources, feature derivation, scoring rule design, and the gate $\times$ modifier architecture. Section~\ref{sec:implementation} describes the software implementation. Section~\ref{sec:casestudy} presents a preliminary case study. Section~\ref{sec:discussion} discusses implications and acknowledges limitations. Section~\ref{sec:conclusion} concludes with validation against public reference data and extension to global coverage.
 
 \section{Theoretical Background}
 \label{sec:theory}
@@ -409,7 +409,7 @@ Stratospheric $\AOD$ & OSIRIS, OMPS, SAGE III & $\sim$100\,km daily & Volcanic e
 \label{tab:aerosoldata}
 \end{table}
 
-Section~\ref{sec:datasources} describes our operational use of HRRR's surface visibility variable as the immediate Goldilocks gate proxy, with HRRR-Smoke and satellite $\AOD$ identified as Phase 2 and Phase 3 enhancements.
+Section~\ref{sec:datasources} describes our operational use of HRRR's surface visibility variable as the immediate Goldilocks gate proxy, with HRRR-Smoke and satellite $\AOD$ identified as possible future enhancements.
 
 \subsubsection{Equivalent Cloud Base Height from the Aerosol Extinction Profile}
 \label{sec:eqcloudbase}
@@ -580,7 +580,7 @@ Rule & Type & Function & Literature anchor \\
 
 Planned additions identified by the theoretical analysis of Section~\ref{sec:theory}: \texttt{CleanAirGate} (Gate, trapezoidal in HRRR \texttt{VIS}); \texttt{CloudAltitudePreference} (Modifier, weighted by altitude); \texttt{CloudCoverSweetSpot} (Modifier, trapezoidal at 40--75\%); \texttt{OzoneChappuisContribution} (Modifier, requires OMI/TROPOMI integration).
 
-The parameter choices are starting points from literature consensus rather than fitted values. Section~\ref{sec:mlext} outlines a procedure for principled weight and threshold fitting from labeled observation data.
+The parameter choices are starting points from literature consensus rather than fitted values. Section~\ref{sec:validation} describes the independent public evidence required before statistical calibration would be justified.
 
 \subsection{The Gate $\times$ Modifier Architecture}
 \label{sec:gatemodifier}
@@ -644,7 +644,7 @@ The gate layer is a relaxation of the \emph{noisy-AND} model in probabilistic lo
 
 \subsubsection{Choice of Weights}
 
-For the present work, gate weights are set uniformly ($w_i = 1$ for $i \in \mathcal{G}$), reflecting equal \emph{physical necessity}: a missing cloud canvas, a blocked horizon, and a wrong-time-of-day all preclude the phenomenon in their own right, and we have no principled basis for ranking them. Modifier weights are heuristically chosen from literature-anchored intuition: humidity is weighted 0.3 reflecting its role as a color-saturation modulator rather than a presence-of-glow determinant. A principled weight-fitting procedure on labeled observation data is identified as future work in Section~\ref{sec:mlext}.
+For the present work, gate weights are set uniformly ($w_i = 1$ for $i \in \mathcal{G}$), reflecting equal \emph{physical necessity}: a missing cloud canvas, a blocked horizon, and a wrong-time-of-day all preclude the phenomenon in their own right, and we have no principled basis for ranking them. Modifier weights are heuristically chosen from literature-anchored intuition: humidity is weighted 0.3 reflecting its role as a color-saturation modulator rather than a presence-of-glow determinant. Statistical calibration is deferred until the independent evidence described in Section~\ref{sec:validation} is available.
 
 \section{Implementation}
 \label{sec:implementation}
@@ -678,11 +678,11 @@ Each Protocol can be satisfied by any conforming class without inheritance. Conc
 
 The package is organized into four modules with disjoint responsibilities: \texttt{score.py} (public types), \texttt{features.py} (feature derivation and solar geometry), \texttt{fetch.py} (data sources including \texttt{HRRRSource} with its in-memory dataset cache and cos(lat)-corrected nearest-grid lookup), and \texttt{rules.py} (scoring rules and predictor composition).
 
-The test suite in \texttt{predictor/tests/} comprises 30 unit tests covering each scoring rule, the snapshot transformation, the nearest-grid lookup with both cos(lat) and equator-baseline assertions, the dataset-cache hit behavior, end-to-end forecast composition, and several boundary conditions. One integration test gated by a pytest \texttt{integration} marker performs a real HRRR fetch from AWS and validates the full pipeline against operational data; it is excluded from default runs to avoid network-dependent CI flakiness.
+The test suite in \texttt{predictor/tests/} covers each scoring rule, snapshot transformation, nearest-grid lookup, dataset-cache behavior, end-to-end forecast composition, and boundary conditions. Network-dependent checks are gated by a pytest \texttt{integration} marker and excluded from default runs.
 
 \subsection{Reproducibility}
 
-The codebase is open-source [license to be selected before submission]; the repository contains a Jupyter notebook \texttt{apps/notebook/forecast-map.ipynb} that reproduces the case study of Section~\ref{sec:casestudy} end-to-end. Environment management uses \texttt{uv}, which produces a lockfile capturing exact versions of all transitive dependencies. System dependencies for HRRR access (\texttt{eccodes} for GRIB2 decoding, \texttt{geos} and \texttt{proj} for cartopy) are installed via Homebrew on macOS.
+The repository retains the source code, tests, figure scripts, and locked Python environment needed to inspect the case study. Environment management uses \texttt{uv}, which produces a lockfile capturing exact versions of all transitive dependencies. System dependencies for HRRR access (\texttt{eccodes} for GRIB2 decoding, \texttt{geos} and \texttt{proj} for cartopy) are installed via Homebrew on macOS.
 
 Herbie's on-disk cache of downloaded GRIB2 files lives at \texttt{research/data/cache/hrrr/}; the directory is excluded from version control. For grid-scale notebook execution where many query points share an HRRR cycle, the in-memory dataset cache on the \texttt{HRRRSource} instance avoids the cfgrib re-parse cost. Without the in-memory cache, the 150-point Olympic Peninsula case study takes approximately ten minutes; with it, the first grid point dominates total runtime and subsequent points return in milliseconds.
 
@@ -781,14 +781,14 @@ Figure~\ref{fig:olympic} displays both fields as side-by-side maps. The weighted
 \begin{figure}[H]
 \centering
 \includegraphics[width=\linewidth]{fig3_olympic_peninsula.png}
-\caption{Olympic Peninsula case study comparing weighted-sum scoring (\textbf{left}, current implementation) against the proposed gate $\times$ modifier scoring (\textbf{right}, this paper). Both panels use the same per-rule component scores computed from a single HRRR forecast cycle (initialized 01:00 UTC on 21 May 2026, forecast hour 2). Cyan stars mark La Push, Forks, and Ruby Beach. The weighted-sum panel returns 0.625--0.631 across all 180 grid cells despite zero HRRR-reported mid- and high-cloud coverage; the gate $\times$ modifier panel returns 0.000 in every cell.}
+\caption{Olympic Peninsula case study comparing the weighted-sum baseline (\textbf{left}) against gate $\times$ modifier scoring (\textbf{right}). Both panels use the same per-rule component scores computed from a single HRRR forecast cycle (initialized 01:00 UTC on 21 May 2026, forecast hour 2). Cyan stars mark La Push, Forks, and Ruby Beach. The weighted-sum panel returns 0.625--0.631 across all 180 grid cells despite zero HRRR-reported mid- and high-cloud coverage; the gate $\times$ modifier panel returns 0.000 in every cell.}
 \label{fig:olympic}
 \end{figure}
 
 \subsection{Sensitivity and Limitations}
 \label{sec:limitations}
 
-This case study is not a validation: we do not have ground-truth observations of whether a glow actually occurred at Forks on the queried evening. (The HRRR-reported atmospheric state, with zero mid and high cloud cover, suggests no glow was possible.) We use the case study only to demonstrate the structural failure mode of weighted-sum scoring and the corrective behavior of the gate $\times$ modifier alternative. Statistical validation against citizen-science ground truth is the subject of planned future work (Section~\ref{sec:validation}).
+This case study is not a validation: we do not have ground-truth observations of whether a glow actually occurred at Forks on the queried evening. (The HRRR-reported atmospheric state, with zero mid and high cloud cover, suggests no glow was possible.) We use the case study only to demonstrate the structural failure mode of weighted-sum scoring and the corrective behavior of the gate $\times$ modifier alternative. Statistical validation requires independent public reference data and professional observations (Section~\ref{sec:validation}).
 
 Two implementation issues surfaced during this case study and have been addressed in the current code:
 \begin{enumerate}
@@ -849,23 +849,12 @@ A forecaster reviewing a busted prediction should be able to attribute the failu
 
 \subsection{Summary}
 
-We have presented a physics-motivated framework for sunset glow prediction over the continental United States, with three principal contributions. First, an explicit catalog of necessary versus enhancing atmospheric conditions for the phenomenon, grounded in peer-reviewed atmospheric optics literature including the recent \citet{lange2023revisiting} refinement that ozone Chappuis absorption dominates twilight sky color at low solar elevations. Second, a two-layer gate $\times$ modifier scoring architecture that respects the multiplicatively-gated nature of necessary conditions and avoids a class of false positives produced by weighted-sum scoring as used in existing commercial services. Third, an open-source Python implementation consuming NOAA HRRR data with end-to-end reproducibility. A preliminary case study on the Olympic Peninsula demonstrates the structural failure mode of weighted-sum scoring (probability $\sim 0.63$ in a configuration with zero mid- and high-level cloud) and the corrective behavior of the gate $\times$ modifier architecture (probability $\to 0$ in the same configuration). Full validation against ground-truth observations is identified as the principal piece of remaining work before peer-reviewed submission.
+We have presented a physics-motivated framework for sunset glow prediction over the continental United States, with three principal contributions. First, an explicit catalog of necessary versus enhancing atmospheric conditions for the phenomenon, grounded in peer-reviewed atmospheric optics literature including the recent \citet{lange2023revisiting} refinement that ozone Chappuis absorption dominates twilight sky color at low solar elevations. Second, a two-layer gate $\times$ modifier scoring architecture that respects the multiplicatively-gated nature of necessary conditions and avoids a class of false positives produced by weighted-sum scoring as used in existing commercial services. Third, an open-source Python implementation consuming NOAA HRRR data with end-to-end reproducibility. A preliminary case study on the Olympic Peninsula demonstrates the structural failure mode of weighted-sum scoring (probability $\sim 0.63$ in a configuration with zero mid- and high-level cloud) and the corrective behavior of the gate $\times$ modifier architecture (probability $\to 0$ in the same configuration). Full validation against independent reference observations remains the principal piece of work before peer-reviewed submission.
 
-\subsection{Citizen-Science Validation Pipeline}
+\subsection{Validation Against Public Reference Data}
 \label{sec:validation}
 
-A statistically meaningful validation of any sunset prediction algorithm requires paired (prediction, observation) records over a wide range of conditions and locations. We propose a citizen-science observation pipeline as the cheapest path to such a dataset.
-
-The pipeline has three components: a structured observation submission interface, a calibration step against expert reference observations, and a statistical methodology for handling observer bias and geographic non-uniformity. Structured submissions would record date, time, location, a five-point visual rating of glow intensity, a controlled color vocabulary, qualitative cloud type/coverage estimates, and a photograph for spot-check verification. Integration with an existing platform such as iNaturalist would lower onboarding friction at the cost of less structured data; a dedicated portal would invert the tradeoff.
-
-Even modest data volumes are sufficient to evaluate the framework's qualitative pathology fix: a hundred paired records over a few weeks would suffice to test whether the gate $\times$ modifier predictor's high-probability outputs correspond to observed glows more reliably than weighted-sum outputs. Larger volumes would support fitted weight optimization (Section~\ref{sec:mlext}) and geographic generalization studies.
-
-\subsection{Machine Learning Extension}
-\label{sec:mlext}
-
-Once a labeled dataset exists, the \texttt{Predictor} Protocol allows a drop-in \texttt{MLPredictor} implementation consuming the same \texttt{Features} representation as \texttt{RuleBasedPredictor}. Several model families are appropriate: gradient-boosted decision trees (XGBoost, LightGBM) on the existing feature set offer interpretable feature-importance reports; logistic or beta regression yields probability outputs with calibration properties suited to forecasting use; feed-forward neural networks become viable at larger training volumes.
-
-In all cases the rule-based predictor functions as an interpretable baseline against which ML accuracy gains are measured. A separate research direction is \emph{color} prediction: \citet{lange2023revisiting}'s ozone column dependence suggests that color (red vs.\ orange vs.\ purple) is itself predictable from atmospheric inputs, a regression target not attempted by any existing service.
+A statistically meaningful validation requires independent reference observations over many locations and weather regimes. Personal long-term observation logging cannot supply the necessary coverage and is not part of the project plan. Validation should instead combine public NWP archives, geostationary satellite imagery, operational soundings, radar, and professionally curated surface observations. Offline synthetic profiles remain useful for regression testing but cannot establish forecast accuracy by themselves. Statistical calibration is deferred until a sufficiently large, independent public dataset is available.
 
 \subsection{Global Expansion}
 \label{sec:globalext}

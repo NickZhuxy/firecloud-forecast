@@ -58,11 +58,11 @@ Ribeiro 等 (2024, *Atmos. Chem. Phys.*) 用现代辐射传输模型重新分析
 | **能见度 (VIS)** | HRRR 直接输出 | CONUS，3 km，逐小时 | 与 AOD 反相关：VIS 高 → AOD 低 |
 | **总臭氧柱 (TOC)** | NASA OMI / TROPOMI 卫星；GFS `TOZNE` | 卫星 0.25° 每日；GFS 0.25° hourly | Lange 2023 提出的第三贡献机制，HRRR 无 |
 
-**短期 (Phase 1+) 推荐**：用 HRRR 的 `VIS`（地表能见度）做对流层 AOD 的负代理，已经在 HRRR 数据流里、不需要额外接入。Liao et al. (2024, *Earth Syst. Sci. Data*) 给了能见度→AOD 的全球反演关系；在 CONUS 内可信。
+**当前实现**：优先使用 Open-Meteo/CAMS 的 550 nm AOD；AOD 缺失时才把地表能见度作为低置信度回退，并避免把雾或近地湿度误判成整层气溶胶。
 
-**中期 (Phase 2) 扩展**：接入 HRRR-Smoke 的 PM2.5 / smoke 柱浓度，专门处理夏季野火季 PNW / California 那种"看上去能见度还行但烟在上空"的场景。
+**下一步**：沿日落方向读取 AOD，而不是只看观察点；对烟雾和普通背景气溶胶保留不同诊断来源。
 
-**长期 (Phase 3) 扩展**：接入 NASA OMI/TROPOMI 的 TOC 卫星数据，加入 Lange 2023 的臭氧机制。这一步需要异步数据流（每日一次卫星反演），架构上和 HRRR 实时数据不一致，需要单独的 `WeatherSource` 实现。
+**后续研究**：NASA OMI/TROPOMI 臭氧柱和分层气溶胶可改善颜色与平流层贡献诊断，但它们属于独立、低频的数据流，不应塞进普通天气请求。
 
 ## 资料来源
 
@@ -93,7 +93,7 @@ Ribeiro 等 (2024, *Atmos. Chem. Phys.*) 用现代辐射传输模型重新分析
 
 4. **`AerosolEnhancement`（火山事件期开启的 modifier）**：火山喷发后 0–18 个月平流层 AOD 异常升高，火烧云会显著增强。这是一个**事件触发**的 modifier，不是常态规则。可以用 SAGE III / OMPS 的近实时反演判定，或简单查询 Global Volcanism Program 的最近 18 个月 VEI ≥ 4 事件列表。
 
-5. **色温作为目标变量（ML 阶段）**：本笔记 + atmospheric-optics 提示色温（红 vs 紫 vs 粉）取决于 troposphere/stratosphere AOD、臭氧柱、米氏粒径分布。未来 ML 模型可以从二元 (Y/N) 升级到回归 (色温) 或多分类（橙/红/粉/紫）。
+5. **色彩诊断作为独立研究问题**：本笔记 + atmospheric-optics 提示红、橙、粉、紫的差异取决于对流层/平流层 AOD、臭氧柱和米氏粒径分布。现阶段先输出可解释的光学变量，不把颜色分类并入主评分。
 
 ## 论文章节种子
 
@@ -101,8 +101,8 @@ Ribeiro 等 (2024, *Atmos. Chem. Phys.*) 用现代辐射传输模型重新分析
 
 - **Krakatoa 全球记录数据可视化**：1883–1886 年的观察日记按地理分布画热力图（如果能数字化 Symons 1888 的原始数据，这是 paper 的"历史 + 现代"亮点）。
 - **Pinatubo 全球 AOD 时间序列**：从 1991-06 到 1993-12，用 SAGE II 或 OMPS 卫星数据，叠加全球暮光观察报告。
-- **现代 PM2.5 → 火烧云抑制案例**：北京 2013-01 大霾事件、加州 2020-09 山火期、印度恒河平原灌溉烧荒季——三个地点同时段的 AOD 时序 vs 当地火烧云观察报告（来自摄影社群或 citizen science）。这构成 paper 的"反向案例"章节。
-- **Lee 2003 的 Goldilocks 结论的复现**：用我们项目自己积累的 `research/observations/log.md` 数据 + HRRR-Smoke 历史档案，看 0.05–0.15 这个 AOD 区间是否真的对应火烧云高发——能不能复现 Lee 2003 的"中等对流层散射最优"结论。
+- **现代 PM2.5 → 火烧云抑制案例**：比较北京 2013-01 大霾、加州 2020-09 山火和印度恒河平原烧荒季的公开 AOD、卫星云产品与专业观测资料。
+- **Lee 2003 Goldilocks 结论的复核**：使用公开 AOD 再分析、卫星云产品和历史专业观测检查 0.05–0.15 区间；在获得足够独立证据前不把它写成硬阈值。
 
 延伸：
 

@@ -1,7 +1,7 @@
 [project]
 name = "firecloud-forecast"
 version = "0.1.0"
-description = "Fire cloud (sunset glow) probability prediction"
+description = "Physics-motivated sunset-glow condition forecasting"
 requires-python = ">=3.11"
 dependencies = [
     "herbie-data>=2024.8.0",

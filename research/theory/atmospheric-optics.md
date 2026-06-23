@@ -102,7 +102,7 @@ $$\tau_{\text{total}}(\lambda) = \tau_R(\lambda) + \tau_M(\lambda) + \tau_{\math
 把上面的物理对回 `predictor/` 的具体改动：
 
 1. **`CleanAirGate` 是 Goldilocks 而非单调 gate**。Lee 2003 表明对流层 AOD = 0 在紫光现象里不是最优。但火烧云作为**反射现象**对 AOD 的容忍度更低（云的画布需要直射光），所以最优区在很低但非零的 AOD——用**梯形隶属函数**而非线性单调下降。数据源待挖：HRRR 不直接给 AOD，可用能见度 `VIS` 做反代理（VIS 高 → AOD 低），或并入 MERRA-2 / OpenAQ / EPA AirNow。
-2. **臭氧柱 TOC 作为候选新特征**。Lange 2023 的量化（240 DU → 60%, 300 DU → 66%, 500 DU → 76% 臭氧贡献）说明 TOC 在 ~30% 范围内显著改变颜色。HRRR **不直接给** TOC——需要并入 NASA OMI/TROPOMI 卫星数据或 GFS 的 `TOZNE` 变量。短期内是 Phase 2 数据扩展项。
+2. **臭氧柱 TOC 作为候选新特征**。Lange 2023 的量化（240 DU → 60%, 300 DU → 66%, 500 DU → 76% 臭氧贡献）说明 TOC 在约 30% 范围内显著改变颜色。可从 NASA OMI/TROPOMI 或包含总臭氧的模式产品获取；在数据时效与空间匹配方案明确前，它只进入诊断研究，不进入主评分。
 3. **米氏区粒径范围 0.5–1 μm 对应 PM2.5**。CleanAirGate 的代理变量可以用 PM2.5（粒径 ≤ 2.5 μm 恰好覆盖米氏区主体）的预报或实测。OpenAQ、EPA AirNow 提供这种数据；HRRR-Smoke 给地表烟雾浓度。
 4. **~600 nm Chappuis 中心**意味着火烧云的橙红波段恰好与臭氧吸收峰重叠。Lange 2023 的隐含含义：**高臭氧柱（300+ DU）让火烧云更偏纯红、低臭氧柱让它偏黄橙**。这是一个可观测的色彩诊断量，未来 ML 阶段可作为预测器的目标变量之一（不只是 binary "出火烧云 Y/N"，还可以预测色温）。
 
