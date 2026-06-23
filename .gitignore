@@ -19,14 +19,24 @@ research/data/raw/
 # IDE
 .vscode/
 .idea/
+/.claude/
+
+# Local multi-agent coordination state (shared in one workspace, never committed)
+/.agent-progress.md
 
 # Large third-party reference material (kept local, not redistributed)
 research/*.pdf
+
+# Generated paper PDF (rebuild with `make` in research/paper/)
+research/paper/paper.pdf
 
 # LaTeX build artifacts
 research/paper/*.aux
 research/paper/*.bbl
 research/paper/*.blg
+research/paper/*.fdb_latexmk
+research/paper/*.fls
 research/paper/*.log
 research/paper/*.out
+research/paper/*.synctex.gz
 research/paper/*.toc

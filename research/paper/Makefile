@@ -10,14 +10,21 @@ PAPER := paper
 
 all: $(PAPER).pdf
 
-$(PAPER).pdf: $(PAPER).tex references.bib figures/fig1_extinction_spectrum.png figures/fig2_horizon_depression.png figures/fig3_olympic_peninsula.png
+FIGURES := figures/fig1_extinction_spectrum.png \
+	figures/fig2_horizon_depression.png \
+	figures/fig3_olympic_peninsula.png \
+	figures/fig4_spatiotemporal_triangle.png
+
+$(PAPER).pdf: $(PAPER).tex references.bib $(FIGURES)
 	pdflatex -interaction=nonstopmode $(PAPER).tex
 	bibtex $(PAPER)
 	pdflatex -interaction=nonstopmode $(PAPER).tex
 	pdflatex -interaction=nonstopmode $(PAPER).tex
 
 clean:
-	rm -f $(PAPER).aux $(PAPER).bbl $(PAPER).blg $(PAPER).log $(PAPER).out $(PAPER).pdf $(PAPER).toc
+	rm -f $(PAPER).aux $(PAPER).bbl $(PAPER).blg $(PAPER).fdb_latexmk \
+		$(PAPER).fls $(PAPER).log $(PAPER).out $(PAPER).pdf \
+		$(PAPER).synctex.gz $(PAPER).toc
 
 watch:
 	@command -v fswatch >/dev/null || { echo "fswatch not installed (brew install fswatch)"; exit 1; }

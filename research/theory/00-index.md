@@ -55,7 +55,7 @@ aerosols-and-color     ── 平流层 vs 对流层气溶胶反向作用；Clea
 
 把这 5 篇笔记串成一篇 paper，可能的 thesis：
 
-> **"现有日落预测算法（如 SunsetWx, Sunsethue）把必要条件当作可加 modifier，导致在 ['mid/high cloud absent + other conditions favorable'] 的情形下严重高估火烧云概率。本文提出基于云物理 + 大气光学 + 暮光几何的两层 (gate × modifier) 评分框架，使用 NOAA HRRR 操作数据，并在 CONUS 上做端到端验证。"**
+> **“加权和会让有利变量补偿缺失的必要条件，从而高估火烧云。当前框架用 gate × modifier 保留物理不可替代性，并通过公开 NWP、空间几何、离线情景和多源资料逐步验证。”**
 
 章节草图：
 
@@ -67,16 +67,16 @@ aerosols-and-color     ── 平流层 vs 对流层气溶胶反向作用；Clea
    - 2.4 Aerosols: 双层逆向作用（[aerosols-and-color](aerosols-and-color.md)）
    - 2.5 Synthesis: necessary vs sufficient（[formation-conditions](formation-conditions.md)）
 3. **Methodology**
-   - 3.1 Data source: HRRR variables, MERRA-2/OMI for ozone, VIS/HRRR-Smoke for aerosol
+   - 3.1 Data sources: Open-Meteo baseline, GFS pressure levels, satellite/radar correction
    - 3.2 Rule architecture: gate × modifier
    - 3.3 Scoring functions per rule (trapezoidal, geometric combiner)
-4. **Implementation** — Python package `predictor/`，Jupyter notebook 验证管道。
-5. **Validation** — citizen-science 观察日志对照；与 SunsetWx baseline 的对比。
-6. **Discussion & Limitations** — 数据缺口（TOC、分层 AOD）、citizen-science 噪声。
-7. **Conclusion + Future Work** — ML 扩展、全球化、色温预测。
+4. **Implementation** — Python package `predictor/` 与 FastAPI/Leaflet 应用。
+5. **Validation** — 离线物理情景、公开资料、专业观测和多源同时次对照。
+6. **Discussion & Limitations** — 数据缺口（TOC、分层 AOD、真实云底）与模式不确定性。
+7. **Conclusion + Future Work** — 全国精细化、垂直剖面和卫星临近订正。
 
 **下一阶段研究空白**（可能各自成一篇笔记）：
 
 - `ozone-chappuis.md` — 把 Lange 2023 的 TOC ↔ 颜色定量关系展开；接入 NASA OMI 数据流路径。
 - `volcanic-events.md` — `AerosolEnhancement` 的事件触发逻辑；Global Volcanism Program 数据接入。
-- `citizen-science-validation.md` — 如何把 observations/log.md 升级成可统计的 ground-truth 数据集；与 Mateshvili 2005 等专业测站的桥接方法。
+- `validation-sources.md` — 可自动化使用的公开探空、卫星、雷达和专业观测资料，以及各自的误差边界。
