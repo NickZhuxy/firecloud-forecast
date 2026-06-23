@@ -7,6 +7,10 @@ from astral import Observer
 from astral.sun import sun
 
 from predictor.spatial import SunwardProfile
+from predictor.illumination import (
+    canvas_layer_from_diagnosis,
+    cloud_base_from_diagnosis,
+)
 
 
 # Representative base altitudes (metres) for the WMO three-tier cloud layers,
@@ -36,6 +40,13 @@ class Features:
     sunward_boundary_gradient_pct_per_km: float | None = None
     sunward_obstruction_pct: float | None = None
     boundary_motion_m_s: float | None = None
+    # Provenance of cloud_base_m and the old three-tier estimate kept for
+    # new-vs-old comparison (#13). cloud_base_source ∈ {"diagnosed",
+    # "source_reported", "fixed_estimate"}; the fixed-estimate fallback carries
+    # lower confidence because it uses a representative height, not a real base.
+    cloud_base_source: str | None = None
+    cloud_base_fixed_m: float | None = None
+    cloud_base_confidence: float | None = None
 
 
 def select_canvas_layer(
@@ -174,7 +185,7 @@ def compute_sunset(lat: float, lon: float, dt: datetime) -> datetime:
     return sun(observer, date=dt.date(), tzinfo=dt.tzinfo)["sunset"]
 
 
-def derive(snapshot, lat: float, lon: float, time: datetime) -> Features:
+def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None) -> Features:
     """Build a Features instance from a WeatherSnapshot + location + query time.
 
     `snapshot` is duck-typed — it must expose cloud_low_pct, cloud_mid_pct,
@@ -182,6 +193,12 @@ def derive(snapshot, lat: float, lon: float, time: datetime) -> Features:
     cloud_base_m, sunset_time) are used when present and filled in otherwise:
     the sunset time falls back to an astral computation, and the cloud base to a
     layer-based estimate.
+
+    When ``cloud_layers`` (a list of diagnosed ``CloudLayer``, #10) is supplied,
+    the canvas layer's real diagnosed base replaces the three-tier representative
+    height. Without it, the source-reported base or the fixed estimate is used —
+    the latter at reduced confidence. The fixed estimate is always recorded in
+    ``cloud_base_fixed_m`` for new-vs-old comparison (#13).
     """
     source_sunset = getattr(snapshot, "sunset_time", None)
     sunset_time = (
@@ -197,14 +214,26 @@ def derive(snapshot, lat: float, lon: float, time: datetime) -> Features:
         getattr(snapshot, f"cloud_{canvas_layer}_pct") if canvas_layer else 0.0
     )
 
-    source_base = getattr(snapshot, "cloud_base_m", None)
-    cloud_base_m = (
-        source_base
-        if source_base is not None
-        else estimate_cloud_base_m(
-            snapshot.cloud_low_pct, snapshot.cloud_mid_pct, snapshot.cloud_high_pct
-        )
+    fixed_base = estimate_cloud_base_m(
+        snapshot.cloud_low_pct, snapshot.cloud_mid_pct, snapshot.cloud_high_pct
     )
+    source_base = getattr(snapshot, "cloud_base_m", None)
+    diagnosed_base = cloud_base_from_diagnosis(cloud_layers) if cloud_layers else None
+
+    if diagnosed_base is not None:
+        cloud_base_m = diagnosed_base
+        cloud_base_source = "diagnosed"
+        canvas = canvas_layer_from_diagnosis(cloud_layers)
+        cloud_base_confidence = canvas.confidence if canvas is not None else None
+    elif source_base is not None:
+        cloud_base_m = source_base
+        cloud_base_source = "source_reported"
+        cloud_base_confidence = 0.7  # measured but not vertically diagnosed
+    else:
+        cloud_base_m = fixed_base
+        cloud_base_source = "fixed_estimate"
+        # Lowered: a representative height is a weak stand-in for a real base.
+        cloud_base_confidence = 0.4 if fixed_base is not None else None
 
     profile = getattr(snapshot, "sunward_profile", None)
     spatial = (
@@ -226,5 +255,8 @@ def derive(snapshot, lat: float, lon: float, time: datetime) -> Features:
         canvas_layer=canvas_layer,
         canvas_cloud_pct=canvas_cloud_pct,
         aerosol_optical_depth=getattr(snapshot, "aerosol_optical_depth", None),
+        cloud_base_source=cloud_base_source,
+        cloud_base_fixed_m=fixed_base,
+        cloud_base_confidence=cloud_base_confidence,
         **spatial,
     )
