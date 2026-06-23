@@ -168,6 +168,11 @@ def _point_forecast(lat: float, lon: float, d: date_cls) -> dict:
             "duration_min": (
                 round(geo.duration_min, 1) if geo.duration_min is not None else None
             ),
+            # Provenance + the retained three-tier estimate so a consumer can
+            # compare the diagnosed base against the old fixed height (#13).
+            "cloud_base_source": feats.cloud_base_source,
+            "cloud_base_fixed_m": feats.cloud_base_fixed_m,
+            "cloud_base_confidence": feats.cloud_base_confidence,
         },
         "spatial": {
             "sun_azimuth_deg": (
