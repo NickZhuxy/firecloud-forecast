@@ -36,7 +36,7 @@ build-backend = "hatchling.build"
 packages = ["predictor"]
 
 [tool.pytest.ini_options]
-testpaths = ["predictor/tests"]
+testpaths = ["predictor/tests", "app/tests"]
 markers = [
     "integration: marks tests requiring network (deselect with -m 'not integration')",
 ]
