@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>火烧云 —— 一份理论与方法笔记</title>
+<script>
+  MathJax = {
+    tex: { inlineMath: [['$', '$'], ['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] },
+    options: { renderActions: { addMenu: [0, '', ''] } }
+  };
+</script>
+<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<style>
+  :root {
+    --bg: #fbf9f3;
+    --ink: #1a1815;
+    --soft: #5d564f;
+    --muted: #8a8278;
+    --rule: #d8cfbf;
+    --thin-rule: #ece4d2;
+    --accent: #5a2a1a;
+    --link: #7a3a25;
+    --pull: #f3eddc;
+    --code-bg: #f0eadb;
+    --math-bg: #f5f0e1;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "STSong", "SimSun", serif;
+    font-size: 17.5px;
+    line-height: 1.85;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .doc { max-width: 760px; margin: 0 auto; padding: 64px 36px 96px; }
+
+  /* Header block */
+  .head { border-bottom: 1px solid var(--rule); padding-bottom: 36px; margin-bottom: 48px; }
+  .meta {
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 18px;
+  }
+  h1.title {
+    font-size: 34px;
+    line-height: 1.35;
+    margin: 0 0 12px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .subtitle {
+    font-size: 17px;
+    color: var(--soft);
+    margin: 0 0 24px;
+    line-height: 1.7;
+    font-style: italic;
+  }
+  .byline {
+    font-size: 13px;
+    color: var(--muted);
+    font-family: "PingFang SC", system-ui, sans-serif;
+    margin: 0;
+  }
+
+  /* TOC */
+  nav.toc {
+    background: var(--code-bg);
+    padding: 22px 28px;
+    margin: 0 0 56px;
+    border-left: 3px solid var(--accent);
+  }
+  nav.toc h2 {
+    font-size: 13px;
+    letter-spacing: 0.28em;
+    color: var(--accent);
+    margin: 0 0 14px;
+    font-family: "PingFang SC", sans-serif;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  nav.toc ol { margin: 0; padding-left: 22px; font-size: 15px; line-height: 1.95; }
+  nav.toc a { color: var(--ink); text-decoration: none; }
+  nav.toc a:hover { color: var(--accent); text-decoration: underline; }
+
+  /* Section structure */
+  section { padding-top: 16px; margin-bottom: 56px; }
+  h2.section {
+    font-size: 24px;
+    margin: 0 0 8px;
+    color: var(--accent);
+    font-weight: 700;
+    letter-spacing: -0.005em;
+  }
+  h2.section .num {
+    color: var(--muted);
+    font-variant-numeric: oldstyle-nums;
+    margin-right: 0.5em;
+  }
+  h3 {
+    font-size: 18px;
+    margin: 32px 0 12px;
+    color: var(--ink);
+    font-weight: 700;
+  }
+  h4 {
+    font-size: 16px;
+    margin: 24px 0 8px;
+    color: var(--ink);
+    font-weight: 700;
+    font-family: "PingFang SC", system-ui, sans-serif;
+  }
+
+  /* Body text */
+  p { margin: 0 0 16px; text-align: justify; text-justify: inter-ideograph; }
+  strong { font-weight: 700; }
+  em { font-style: italic; }
+  ul, ol { padding-left: 26px; margin: 0 0 18px; }
+  ul li, ol li { margin-bottom: 8px; }
+
+  /* Citations and inline refs */
+  .cite {
+    color: var(--link);
+    font-family: "PingFang SC", system-ui, sans-serif;
+    font-size: 0.92em;
+    font-variant-numeric: oldstyle-nums;
+  }
+  a { color: var(--link); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 0.15s; }
+  a:hover { border-bottom-color: var(--link); }
+
+  /* Math display */
+  mjx-container[display="true"] {
+    margin: 22px 0 !important;
+  }
+  .eq-label {
+    text-align: right;
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: -28px;
+    margin-bottom: 22px;
+    font-family: "PingFang SC", sans-serif;
+  }
+
+  /* Definitions / formal boxes */
+  .definition {
+    background: var(--math-bg);
+    padding: 18px 22px;
+    margin: 22px 0;
+    border-left: 3px solid var(--accent);
+    border-radius: 0 4px 4px 0;
+  }
+  .definition .label {
+    font-family: "PingFang SC", sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.28em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin: 0 0 8px;
+    font-weight: 600;
+  }
+  .definition p:last-child { margin-bottom: 0; }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 22px 0 26px;
+    font-size: 15px;
+    font-feature-settings: "tnum";
+  }
+  table thead th {
+    border-top: 2px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: 700;
+    font-family: "PingFang SC", sans-serif;
+    font-size: 14px;
+  }
+  table tbody td {
+    border-bottom: 1px solid var(--thin-rule);
+    padding: 6px 10px;
+    text-align: left;
+    line-height: 1.6;
+  }
+  table tbody tr:last-child td { border-bottom: 2px solid var(--ink); }
+  .table-caption {
+    font-size: 14px;
+    color: var(--soft);
+    margin: -16px 0 24px;
+    line-height: 1.6;
+  }
+  .table-caption strong {
+    color: var(--accent);
+    font-family: "PingFang SC", sans-serif;
+    font-weight: 600;
+    margin-right: 0.5em;
+  }
+
+  /* Figures */
+  figure {
+    margin: 28px -8px;
+    text-align: center;
+  }
+  figure img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 3px;
+    box-shadow: 0 2px 14px rgba(0,0,0,0.07);
+  }
+  figcaption {
+    margin: 12px 28px 0;
+    font-size: 14px;
+    color: var(--soft);
+    line-height: 1.65;
+    text-align: left;
+  }
+  figcaption strong {
+    color: var(--accent);
+    font-family: "PingFang SC", sans-serif;
+    font-weight: 600;
+    margin-right: 0.5em;
+  }
+
+  /* Pull quote */
+  blockquote {
+    margin: 28px 0;
+    padding: 0 24px;
+    border-left: 2px solid var(--accent);
+    color: var(--soft);
+    font-style: italic;
+    font-size: 17px;
+  }
+  blockquote p { margin: 0 0 8px; }
+  blockquote .attr {
+    font-style: normal;
+    color: var(--muted);
+    font-size: 14px;
+    font-family: "PingFang SC", sans-serif;
+  }
+
+  /* Code spans */
+  code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: "JetBrains Mono", "Source Code Pro", "SF Mono", Menlo, monospace;
+    font-size: 0.88em;
+  }
+
+  /* Bibliography */
+  section.biblio { border-top: 1px solid var(--rule); padding-top: 32px; margin-top: 64px; }
+  section.biblio h2 { color: var(--accent); font-size: 22px; margin-bottom: 18px; }
+  section.biblio ol {
+    counter-reset: refnum;
+    padding-left: 0;
+    list-style: none;
+    font-size: 14px;
+    line-height: 1.75;
+  }
+  section.biblio li {
+    counter-increment: refnum;
+    margin-bottom: 12px;
+    padding-left: 32px;
+    position: relative;
+    text-indent: 0;
+    color: var(--soft);
+  }
+  section.biblio li::before {
+    content: "[" counter(refnum) "]";
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-family: "PingFang SC", sans-serif;
+    font-size: 13px;
+  }
+  section.biblio em { font-style: italic; }
+
+  footer.foot {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    font-family: "PingFang SC", sans-serif;
+  }
+  footer.foot p { margin: 0 0 6px; }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    body { font-size: 16.5px; }
+    .doc { padding: 40px 22px 60px; }
+    h1.title { font-size: 28px; }
+    h2.section { font-size: 21px; }
+    table { font-size: 13.5px; }
+    figure { margin: 24px -10px; }
+    figcaption { margin: 10px 10px 0; }
+  }
+</style>
+</head>
+<body>
+<article class="doc">
+
+<header class="head">
+  <p class="meta">理论与方法笔记 · 2026 春</p>
+  <h1 class="title">火烧云</h1>
+  <p class="subtitle">从大气光学、日落几何、云物理三条线索出发，把一个常见但极少被系统讨论的天象，拆解成可计算的预测问题。</p>
+  <p class="byline">Nick Zhu · 2026 年 5 月</p>
+</header>
+
+<nav class="toc" aria-label="目录">
+  <h2>目 录</h2>
+  <ol>
+    <li><a href="#sec1">题目：火烧云为什么难预测</a></li>
+    <li><a href="#sec2">大气光学：阳光被选择性消光</a></li>
+    <li><a href="#sec3">日落几何：长光程与时空三角</a></li>
+    <li><a href="#sec4">云物理：为什么只有中高云能烧</a></li>
+    <li><a href="#sec5">气溶胶与颜色：双层逆向作用</a></li>
+    <li><a href="#sec6">从理论到预报：必要 × 增强的两层架构</a></li>
+    <li><a href="#sec7">实测：奥林匹克半岛 2026-05-20</a></li>
+    <li><a href="#sec8">局限与下一步</a></li>
+    <li><a href="#biblio">参考文献</a></li>
+  </ol>
+</nav>
+
+<section id="sec1">
+<h2 class="section"><span class="num">1.</span>题目：火烧云为什么难预测</h2>
+
+<p>"火烧云"（英文文献：<em>afterglow</em> / <em>sunset glow</em>）指日落或日出前后，中高云被低角度阳光从底部照亮、呈现红橙粉紫的现象。它不发光——它反射的是已经被大气层"过滤"过的红化阳光。这一现象在文化中很常见，但在科学预测上却出奇地稀缺：迄今为止，公开可用的几个预测服务（SunsetWx、Sunsethue、PhotoPills Skyfire）都没有发表过同行评议的方法论文，也不公开模型权重，更未做过系统的与地面观察的统计对比。</p>
+
+<p>这并不是因为问题太复杂。这个题目涉及的物理子模块都很成熟：分子瑞利散射（Strutt 1871<span class="cite">[1]</span>）、米散射（Mie 1908<span class="cite">[2]</span>）、臭氧 Chappuis 吸收（Hulburt 1953<span class="cite">[3]</span>；定量重审见 Lange 等 2023<span class="cite">[4]</span>）、Kasten–Young 大气光程公式（1989<span class="cite">[5]</span>）、行星边界层物理。难点不在物理本身，而在<strong>如何把这些机制串起来，并把它们映射到可观测的气象数据上</strong>，最终给出一个可计算、可验证的预测函数。</p>
+
+<p>这份笔记把这个串联工作系统地写一遍。读完应该能回答：为什么天空会变红？为什么只有特定的云能"烧"？为什么现有的简单预报方法在物理上有结构性问题？又如何用一个具体的两层架构（必要条件作 gate × 增强条件作 modifier）来修正它？最后用一次实测案例来证明这套修正确实成立。</p>
+</section>
+
+<section id="sec2">
+<h2 class="section"><span class="num">2.</span>大气光学：阳光被选择性消光</h2>
+
+<p>火烧云的颜色来源是<strong>选择性消光</strong>——白色阳光在穿越大气的过程中，不同波长被以不同的强度散射或吸收掉，剩下的光抵达云层、被反射给观察者。三种机制共同贡献，但波长依赖性大不相同。</p>
+
+<h3>2.1 瑞利散射</h3>
+<p>当散射体（这里是空气分子）的尺寸远小于光的波长时，散射截面满足瑞利公式：</p>
+<p>$$\sigma_R(\lambda) = \frac{8\pi^3 (n^2 - 1)^2}{3 N^2 \lambda^4}$$</p>
+<p>其中 $n$ 是空气折射率、$N$ 是分子数密度。关键事实是 $\sigma_R \propto \lambda^{-4}$：紫光（400 nm）的散射截面是红光（700 nm）的 $(700/400)^4 \approx 9.4$ 倍。这就是为什么白天天空是蓝色——蓝紫光被打到各个方向，从天空各处进入眼睛；而日落时只剩红橙——蓝紫已经在长光程上被全部散射掉了。</p>
+
+<p>更精确的处理需要加上 King correction factor（约 1.05，反映分子各向异性）和折射率色散修正，详见 Bodhaine 等 1999<span class="cite">[6]</span>。这些修正在主导项 $1/\lambda^4$ 之上是 5% 量级，本笔记不展开。</p>
+
+<h3>2.2 米散射</h3>
+<p>当散射体尺寸与光的波长可比时，瑞利近似失效，必须用 Mie 1908 的完整电磁散射解。关键无量纲量是<strong>尺寸参数</strong>：</p>
+<p>$$x = \frac{2\pi r}{\lambda}$$</p>
+<p>三个区域：</p>
+<ul>
+  <li>$x \ll 1$：回到瑞利极限，$\sigma \propto \lambda^{-4}$。</li>
+  <li>$x \sim 1$：米散射振荡区，整体波长依赖性弱，接近"灰色"散射。</li>
+  <li>$x \gg 1$：几何光学极限。</li>
+</ul>
+<p>对可见光（$\lambda \in [0.4, 0.7]\,\mu$m）和典型对流层气溶胶（半径 $r \in [0.05, 0.5]\,\mu$m），$x$ 落在 1–10，处于米散射区。这意味着<strong>城市污染、矿物尘、生物质燃烧颗粒物对各种波长的可见光的散射强度差不多</strong>——它们不会优先散射蓝光、保留红光，而是均匀地把整个光谱拖到暗灰。这就是雾霾天的日落看起来浅黄暗淡而非鲜红的根本原因。</p>
+
+<h3>2.3 臭氧 Chappuis 吸收</h3>
+<p>这是 Lange 等 2023<span class="cite">[4]</span> 用 SCIATRAN 辐射传输模型重新量化的一项贡献。臭氧分子在 500–700 nm 有一个宽吸收带（Chappuis 带），主峰约 600 nm。日落时太阳光走的水平路径所穿越的臭氧柱比正午约高 30 倍，所以 Chappuis 吸收在消光预算里的占比从正午 &lt; 5% 上升到 SZA = 90° 时的 66%。</p>
+
+<div class="definition">
+<p class="label">主要量化结果</p>
+<p>太阳天顶角 90°、天顶视向、总臭氧柱（TOC）300 DU 时：<strong>臭氧 Chappuis 贡献 66% 的天顶天空蓝色，瑞利散射仅占约 34%</strong>。这一比例随 TOC 系统性变化：TOC = 240 DU 时为 60%，500 DU 时为 76%（Lange 等 2023<span class="cite">[4]</span>）。</p>
+</div>
+
+<p>这一结果颠覆了教科书"瑞利单独解释蓝天"的简化叙事。对火烧云而言，它的含义是：日落红橙光在最后阶段还要再被 Chappuis 带吸收一次橙黄绿，让残光更偏向纯红——这是一道"二次过滤"。</p>
+
+<h3>2.4 合成：Beer–Lambert 消光</h3>
+<p>三种机制在光学厚度上简单相加，光强按指数衰减：</p>
+<p>$$\frac{I(\lambda)}{I_0(\lambda)} = e^{-\tau_{\text{total}}(\lambda)}, \quad \tau_{\text{total}}(\lambda) = \tau_R(\lambda) + \tau_{\text{Mie}}(\lambda) + \tau_{\mathrm{O_3}}(\lambda)$$</p>
+
+<figure>
+  <img src="paper/figures/fig1_extinction_spectrum.png" alt="累积消光波长依赖图">
+  <figcaption><strong>图 1.</strong> SZA = 90° 时三种机制对总光学厚度的贡献（上）以及残余透射光谱（下）。瑞利在蓝端剧烈衰减并随波长平滑下降；米散射近似为常数（清洁对流层 AOD₀ = 0.05）；臭氧 Chappuis 在 600 nm 附近形成一个明显的"驼峰"。底色条对应肉眼颜色：在如此大的光程下，几乎只有 650 nm 以上的深红得以可观透过。</figcaption>
+</figure>
+</section>
+
+<section id="sec3">
+<h2 class="section"><span class="num">3.</span>日落几何：长光程与时空三角</h2>
+
+<p>第 2 节的消光公式以"光程长度"为输入。日落时之所以光谱被剧烈改造，根源就在于此时光程是正午的几十倍。这一节把这层几何讲清楚。</p>
+
+<h3>3.1 大气光程：Kasten–Young 公式</h3>
+<p>定义<strong>相对光学大气质量</strong> $m$ 为实际斜射光程长度对天顶光程长度的比值。平面平行近似下（$\text{SZA} \lesssim 75°$ 时成立）：</p>
+<p>$$m \approx \sec(\text{SZA}) = \frac{1}{\cos(\text{SZA})}$$</p>
+<p>近地平线时 $\sec$ 发散，必须用球面修正。当代标准是 Kasten 和 Young 1989<span class="cite">[5]</span> 在 ISO 标准大气 1972 廓线上数值积分得到的拟合公式：</p>
+<p>$$m(\text{SZA}) = \frac{1}{\cos(\text{SZA}) + 0.50572 \, (96.07995 - \text{SZA})^{-1.6364}}$$</p>
+
+<table>
+<thead><tr><th>太阳高度角 $\alpha$</th><th>天顶角 SZA</th><th>大气质量 $m$</th></tr></thead>
+<tbody>
+<tr><td>90°（正天顶）</td><td>0°</td><td>1.00</td></tr>
+<tr><td>30°</td><td>60°</td><td>2.00</td></tr>
+<tr><td>10°</td><td>80°</td><td>5.60</td></tr>
+<tr><td>5°（火烧云阶段开始）</td><td>85°</td><td>10.4</td></tr>
+<tr><td>1°</td><td>89°</td><td>27</td></tr>
+<tr><td>0°（视日落）</td><td>90°</td><td>38</td></tr>
+</tbody>
+</table>
+<p class="table-caption"><strong>表 1.</strong> 不同太阳高度角下的 Kasten–Young 大气质量。视日落时光程是正午的 38 倍——第 2 节中的所有消光积分（瑞利、米、Chappuis）都以这个因子被放大。</p>
+
+<h3>3.2 平面化坐标系：把直线变抛物线</h3>
+<p>球面坐标的三角函数让几何推导繁琐。引入<strong>弧长坐标</strong>：定义 $l = R_\oplus \theta$ 沿地表的弧长，$h$ 为海拔。在这个坐标系里，等海拔面变成水平直线；但<strong>原本沿真空中直线传播的阳光，在新坐标里变成抛物线</strong>。展开到二阶（误差 $\sim (l/R_\oplus)^4$，几百公里尺度可忽略）：</p>
+<p>$$h(l) \approx \frac{l^2}{2 R_\oplus}$$</p>
+<p>更一般地，一条切于地表点 $(l_0, h_0)$ 的光线在新坐标里写作：</p>
+<p>$$h(l) = \frac{(l - l_0)^2}{2 R_\oplus} + h_0$$</p>
+
+<p>这个变换的妙处在于：三角函数被多项式代替，地球自转（改变太阳高度角）被一个抛物线沿 $l$ 方向的平移代替。所有关于火烧云时空分布的推导一下子变得简单。</p>
+
+<p>第一个应用：把云底高度 $h_{CB}$ 代入约束 $h(l) = h_{CB}$，立即得到光线沿地表能"穿透"的最远距离：</p>
+<p>$$|l|_{\max} = 2\sqrt{2 R_\oplus h_{CB}}$$</p>
+<p>代入 $R_\oplus = 6371$ km：$h_{CB} = 2$ km 给 $|l|_{\max} \approx 319$ km；5 km 给 505 km；10 km 给 714 km。<strong>这是火烧云能"打到"多远的解析上限。</strong> 观察者若想看到火烧云，候选云的近边界距离必须在这个范围内。</p>
+
+<h3>3.3 火烧云时空三角</h3>
+<p>结合 3.2 的几何与地球自转，可以闭式地写出"什么时间、什么位置能被火烧云照亮"。设观察者位于原点，云层底高度均为 $h_{CB}$。定义 $v = -R_\oplus \, d\phi/dt$ 为日落终结线沿日落方向的线速度。在日落后时刻 $t$，可被照亮区域由两条边界限定：</p>
+
+<p><strong>远边界</strong>（由地球阴影决定，光线沿地表切线传播）：</p>
+<p>$$l_f(t) = -L + vt, \quad \text{其中 } L \equiv \sqrt{2 R_\oplus h_{CB}}$$</p>
+
+<p><strong>近边界</strong>（由云本身的边界遮光决定）：</p>
+<p>$$l_n(t) = \begin{cases} 2vt, & t \le 0 \\ 0, & t > 0 \end{cases}$$</p>
+
+<p>两条边界在 $(t, l) = (-L/v, -2L)$ 和 $(L/v, 0)$ 处相遇。中间区域是一个三角形（图 2）。</p>
+
+<figure>
+  <img src="paper/figures/fig4_spatiotemporal_triangle.png" alt="火烧云时空三角">
+  <figcaption><strong>图 2.</strong> 火烧云时空三角，云底高度 $h_{CB} = 5$ km，日落线速度 $v = 21$ km/min。下边为远边界（地球阴影），上边为近边界（云自身边界 / 观察者天顶）。红色垂直线段表示 $t = -3$ 分钟时的瞬时被照亮范围。</figcaption>
+</figure>
+
+<p>从三角形可以直接读出几条有用的常识：</p>
+<ol>
+  <li><strong>平底层状云的本地天顶火烧云永远在日出前或者日落后出现</strong>，从不与日出/日落同时。</li>
+  <li>云底越高，三角形两个方向都按 $\sqrt{h_{CB}}$ 比例扩大：火烧云照得越远、持续越久。</li>
+  <li>任意固定位置看到的最长持续时间出现在离云边界最近处，不在云的中央。</li>
+  <li>傍晚的火烧云从云的最内侧（最接近观察者的一侧）开始，向外侧扩展；早晨次序相反。</li>
+  <li>即使云的"日落方向边界"已经低于观察者地平线，火烧云仍可能可见——只要边界足够远。</li>
+</ol>
+
+<h3>3.4 云高度决定的照亮时长</h3>
+<p>从 3.2 公式 $h(l) \approx l^2/(2R_\oplus)$ 反解出，云在高度 $h$ 处能"看到"已落下到地平线下角度 $d$ 的太阳，当且仅当：</p>
+<p>$$d(h) = \arccos\left(\frac{R_\oplus}{R_\oplus + h}\right) \approx \sqrt{\frac{2h}{R_\oplus}}$$</p>
+
+<figure>
+  <img src="paper/figures/fig2_horizon_depression.png" alt="云高度与照亮时间">
+  <figcaption><strong>图 3.</strong> 云的地平线下沉角与对应的直射时长。左：$d(h)$ 随云高度的变化（$\propto \sqrt{h}$）。右：对应的视日落后直射时长 $\Delta t = 2d/|d\alpha/dt|$，中纬度 $|d\alpha/dt| \approx 0.2°$/min。低云（&lt; 2 km）的直射窗口只有几分钟；高云（10 km +）能延续半小时。</figcaption>
+</figure>
+</section>
+
+<section id="sec4">
+<h2 class="section"><span class="num">4.</span>云物理：为什么只有中高云能烧</h2>
+
+<p>第 3.4 节的几何窗口只是<strong>三个独立机制</strong>之一。中高云在火烧云上的统治地位，是三种机制叠加的结果。</p>
+
+<h3>4.1 云的分层（WMO 标准）</h3>
+<table>
+<thead><tr><th>层</th><th>云底高度（温带）</th><th>主要云属</th><th>组成</th><th>光学厚度 $\tau_c$</th></tr></thead>
+<tbody>
+<tr><td>高云</td><td>5–13 km</td><td>卷云 Ci, 卷积云 Cc, 卷层云 Cs</td><td>冰晶</td><td>通常 &lt; 1</td></tr>
+<tr><td>中云</td><td>2–6 km</td><td>高积云 Ac, 高层云 As, 雨层云 Ns</td><td>水滴/冰晶混合</td><td>1–10</td></tr>
+<tr><td>低云</td><td>&lt; 2 km</td><td>层云 St, 层积云 Sc, 积云 Cu</td><td>水滴</td><td>常 &gt; 10</td></tr>
+</tbody>
+</table>
+<p class="table-caption"><strong>表 2.</strong> WMO International Cloud Atlas 的三层分类<span class="cite">[7]</span>。NOAA HRRR 数值预报里的 HCDC / MCDC / LCDC 三个变量大致对应这三层。</p>
+
+<h3>4.2 行星边界层（PBL）</h3>
+<p>大气最底部、受地表摩擦和加热驱动而剧烈混合的那一层，称为<strong>行星边界层</strong>。中纬度白天典型 PBL 厚度 1–2 km，夏季干燥地表可达 3 km，夜间塌缩到几百米；日落后白天的"残层"在 ~2 小时内还保留高浓度气溶胶。</p>
+<p>PBL 包含 90%+ 的对流层气溶胶、水汽和人为污染物。低角度日落光要水平地穿过 PBL 这段最厚的"脏"大气，遭遇的累积消光远大于自由对流层。</p>
+
+<h3>4.3 三个独立机制</h3>
+<p><strong>机制 1：几何照亮窗口</strong>（已在 3.4 节展开）。低云 1 km 的直射窗口只有 5–10 分钟，高云 10 km 可达半小时。差异随 $\sqrt{h}$ 扩大。</p>
+
+<p><strong>机制 2：PBL 对来光的衰减</strong>。低角度阳光在到达 PBL 上方之前，要水平地穿过整段 PBL。城市 PBL 在可见波长的光学厚度 $\tau_{\text{PBL}} \approx 0.3$–$1.0$，意味着原光衰减到 $e^{-\tau_{\text{PBL}}} \approx 37\%$–$74\%$ 才到 PBL 顶。<strong>关键</strong>是这是无波长选择性的米散射衰减——它不优先保留红，只是把整个光谱均匀压暗。Corfidi 2014<span class="cite">[8]</span> 操作性地总结为：</p>
+<blockquote>
+<p>"A cloud must be high enough to intercept 'unadulterated' sunlight—light that has not suffered attenuation by passing through the atmospheric boundary layer."</p>
+<p class="attr">—— Corfidi (2014), NOAA Storm Prediction Center</p>
+</blockquote>
+<p>中云和高云按定义位于 PBL 之上；低云完全嵌在 PBL 之内。</p>
+
+<p><strong>机制 3：低层水云的高光学厚度</strong>。层云/层积云的可见波段光学厚度 $\tau_c > 10$，对入射光近乎不透。即便有一缕红化阳光到达低云顶部，在如此密集的水滴散射体中也会被搅成均匀灰白，几乎无波长选择性地反射，看不出红橙。卷云和高积云相反，$\tau_c \lesssim 1$，光能部分透过、被冰晶散射、保持色彩。</p>
+
+<p>三个机制独立、叠加。即便强行设想一片低云在几何上能被照亮、且坐落在异常清洁的边界层之上——它的光学厚度仍会扼杀颜色。这种<strong>三重冗余</strong>是为什么在预测架构中（第 6 节）"中高云存在"必须作为一票否决的 gate，而不是能被其他变量补偿的 modifier。</p>
+</section>
+
+<section id="sec5">
+<h2 class="section"><span class="num">5.</span>气溶胶与颜色：双层逆向作用</h2>
+
+<p>第 2 节的尺寸参数框架有一个引人注目的物理结果：<strong>平流层和对流层气溶胶虽然都是"大气中的颗粒物"，但对火烧云颜色的作用方向相反。</strong></p>
+
+<h3>5.1 两个气溶胶库</h3>
+<table>
+<thead><tr><th>库</th><th>高度</th><th>主要成分</th><th>典型半径 $r$</th><th>散射区</th></tr></thead>
+<tbody>
+<tr><td>平流层</td><td>12–50 km</td><td>火山硫酸盐、陨石尘</td><td>0.05–0.2 μm</td><td>接近瑞利极限</td></tr>
+<tr><td>对流层</td><td>0–12 km<br>（90%+ 在 PBL）</td><td>硫酸盐、黑碳、矿物尘、海盐、烟雾</td><td>0.1–10 μm<br>（质量主要在 0.5–2 μm）</td><td>米散射振荡区</td></tr>
+</tbody>
+</table>
+<p class="table-caption"><strong>表 3.</strong> 大气中两个物理上分开的气溶胶库，及其特征尺寸与散射区。</p>
+
+<p>回到 2.2 节的尺寸参数：尺寸远小于波长的粒子按 $\lambda^{-4}$ 散射，选择性地剥掉蓝；尺寸与波长相当的粒子近似波长无关，均匀压暗整个光谱。两个库就因此朝相反方向作用：<strong>平流层气溶胶强化红色，对流层气溶胶压制对比度。</strong></p>
+
+<h3>5.2 历史案例</h3>
+<p><strong>Krakatoa 1883</strong>。1883 年 8 月 Krakatoa 大爆发把约 20 km³ 物质注入大气，相当部分以 SO₂ 形式进入平流层并氧化为硫酸盐液滴。Symons 1888 的英国皇家学会专著记录了之后约三年间的全球异常日落和持久 afterglow<span class="cite">[9]</span>。Ribeiro 等 2024<span class="cite">[10]</span> 用现代辐射传输模型重新分析了"绿色火山日落"，归因于 0.1–0.3 μm 的特定粒径分布在特定光程几何下产生的绿色透射窗口。</p>
+
+<p><strong>Pinatubo 1991</strong>。1991 年 6 月 Pinatubo 喷发把约 20 Mt SO₂ 注入平流层，全球 550 nm 平流层 AOD 从背景 0.01–0.02 升到 0.15 量级。Mateshvili 等 2005<span class="cite">[11]</span> 在格鲁吉亚 Abastumani 天文台对九个波长（422–820 nm）做了 1991–1993 年的暮光多光谱测量，气溶胶层在 SZA–亮度曲线上表现为明显"驼峰"，于 1991-12 / 1992-01 达峰。</p>
+
+<p><strong>现代对流层污染</strong>。亚洲沙尘事件 AOD &gt; 1（Husar 等 2000<span class="cite">[12]</span>）、北美山火烟羽、大都市持久雾霾——都对应暗淡褪色的日落，而非鲜艳火烧云。机制即米散射区的非选择性消光。</p>
+
+<h3>5.3 Lee–Hernández-Andrés Goldilocks 修正</h3>
+<p>对上面这套图景的朴素读法是"对流层越干净越好"。Lee 和 Hernández-Andrés 2003<span class="cite">[13]</span> 用对暮光紫光光谱的时间序列测量结合辐射传输模型证明了这一直觉的局限：</p>
+<blockquote>
+<p>"Background stratospheric aerosols by themselves do not redden sunlight enough to cause the purple light's reds. Furthermore, scattering and extinction in both the troposphere and the stratosphere are needed to explain most purple lights."</p>
+<p class="attr">—— Lee &amp; Hernández-Andrés (2003), Applied Optics</p>
+</blockquote>
+<p>即<strong>多次散射通路</strong>需要对流层也有一定的散射来支撑——零对流层气溶胶并不是最优。这意味着"清洁空气"是个 Goldilocks 变量：太高确实压制颜色，但太低也未必是最佳。对火烧云的"反射"现象，最优区接近清洁端但不为零。</p>
+
+<h3>5.4 等效云底高度：气溶胶对几何的修正</h3>
+<p>气溶胶浓度按指数随高度衰减，scale height $h_a$ 量级 500–4000 m：</p>
+<p>$$\beta(h) \approx \beta_0 \, e^{-h/h_a}, \quad \text{AOD} = \beta_0 h_a$$</p>
+<p>设阈值 $\beta_x$ 之上的气溶胶层视为"对阳光透过完全致密"，对几何模型来说它实际上把"地球阴影边界"抬高到了等效高度 $h_x$：</p>
+<p>$$h_x = h_a \, \ln\!\left(\frac{\beta_0}{\beta_x}\right) = h_a \, \ln\!\left(\frac{\text{AOD}}{h_a \, \beta_x}\right)$$</p>
+<p>等效云底高度 $h_{CB, \text{eff}} = h_{CB} - h_x$；第 3 节的最大穿透距离相应变成 $2\sqrt{2R_\oplus h_{CB, \text{eff}}}$。取经验阈值 $\beta_x = 0.02$ km⁻¹（对应能见度公式 $\text{Vis} = -\ln(0.02)/\beta_{550} \approx 196$ km），在 AOD = 0.15 下：</p>
+
+<table>
+<thead><tr><th>气溶胶 scale height $h_a$ (km)</th><th>等效阴影高度 $h_x$ (km)</th></tr></thead>
+<tbody>
+<tr><td>0.5</td><td>1.35</td></tr>
+<tr><td>1.0</td><td>2.01</td></tr>
+<tr><td>1.5</td><td>2.41</td></tr>
+<tr><td>2.0</td><td>2.64</td></tr>
+<tr><td>2.5</td><td>2.74</td></tr>
+<tr><td>3.0</td><td>2.75</td></tr>
+<tr><td>3.5</td><td>2.66</td></tr>
+<tr><td>4.0</td><td>2.51</td></tr>
+</tbody>
+</table>
+<p class="table-caption"><strong>表 4.</strong> 不同 scale height 下的等效阴影高度，AOD = 0.15。在中等情形下 $h_x \approx 2.7$ km：原本 5 km 的云底实际只剩 2.3 km 的"有效"高度，最大穿透距离从 505 km 缩到 339 km（33% 衰减）。云底接近 $h_x$ 时，阳光根本到不了云底。</p>
+</section>
+
+<section id="sec6">
+<h2 class="section"><span class="num">6.</span>从理论到预报：必要 × 增强的两层架构</h2>
+
+<p>第 2–5 节的物理可以归纳成一份<strong>必要条件 vs 增强条件</strong>的分类表：</p>
+
+<table>
+<thead><tr><th>类别</th><th>变量</th><th>依据</th></tr></thead>
+<tbody>
+<tr><td rowspan="4"><strong>必要</strong><br>（缺一即归零）</td>
+    <td>中/高云存在</td><td>第 4 节三机制</td></tr>
+<tr><td>低层 + 西方地平线通透</td><td>第 4 节机制 2</td></tr>
+<tr><td>太阳处于暮光窗口（$\alpha \in [-6°, +5°]$）</td><td>第 3 节</td></tr>
+<tr><td>对流层气溶胶（Goldilocks，趋向清洁端）</td><td>第 2.2 节 + 第 5.3 节</td></tr>
+<tr><td rowspan="4"><strong>增强</strong><br>（影响强度/色彩，可被其他变量补偿）</td>
+    <td>中高云覆盖率在 40–75% 区间</td><td>SunsetWx / Sunsethue 经验</td></tr>
+<tr><td>云高度组成（高云权重高于中云）</td><td>第 3.4 + 4.3 节</td></tr>
+<tr><td>总臭氧柱（TOC）</td><td>第 2.3 节 Lange 2023</td></tr>
+<tr><td>湿度在 40–80%</td><td>Sunsethue 经验</td></tr>
+</tbody>
+</table>
+<p class="table-caption"><strong>表 5.</strong> 火烧云形成条件的必要 / 增强二分。该分类直接对应第 6.2 节中的 gate / modifier 划分。</p>
+
+<h3>6.1 现有方法的结构性缺陷</h3>
+<p>市面上几个公开预测服务（SunsetWx、Sunsethue 等）的方法可以归结为对所有变量按权重做加权和：</p>
+<p>$$P_{\text{add}} = \frac{\sum_i w_i s_i}{\sum_i w_i}$$</p>
+<p>这种构造的<strong>结构性缺陷</strong>是：对任何规则 $r_i$，把 $s_i$ 从 0 升到满分，都可以补偿另一规则 $r_j$ 的 $s_j = 0$，只要 $w_i \ge w_j$。代数里根本没有可以表达"这一条不容妥协"的位置。后果是：当某个必要条件不满足时（如"完全没有中高云"），其他增强条件还能把分数撑到 0.5 量级，给出看似可信但物理上不可能的预测——一种结构性的假阳性。</p>
+
+<h3>6.2 Gate × Modifier 架构</h3>
+<p>把规则集 $\mathcal{R}$ 按表 5 分成必要 $\mathcal{G}$ 和增强 $\mathcal{M}$ 两组。</p>
+
+<p><strong>Gate 层</strong>：必要条件用加权几何平均组合，称为 $G$：</p>
+<p>$$G = \prod_{i \in \mathcal{G}} s_i^{\,w_i / W_G}, \quad W_G = \sum_{i \in \mathcal{G}} w_i, \quad G \in [0, 1]$$</p>
+<p>定义性质：$G = 0$ 当且仅当某个 $s_i = 0$。权重 $w_i$ 表达"必要程度的相对排序"，但任何权重组合都不足以让某一项的 0 被其他项补偿。当 $s_i \to 0$ 时，$G$ 超线性地塌向 0。</p>
+
+<p><strong>Modifier 层</strong>：增强条件用标准加权算术平均：</p>
+<p>$$M = \frac{\sum_{j \in \mathcal{M}} w_j s_j}{\sum_{j \in \mathcal{M}} w_j}, \quad M \in [0, 1]$$</p>
+<p>在这一层里，变量之间可以相互补偿——这正是"增强"语义所要求的。</p>
+
+<p><strong>复合得分</strong>：</p>
+<p>$$P = G \cdot M \in [0, 1]$$</p>
+
+<p>边界情形：$\mathcal{M} = \emptyset$ 退化为纯 gate；$\mathcal{G} = \emptyset$ 退化为标准加权和（即 SunsetWx / Sunsethue 模式）。感兴趣的是 $|\mathcal{G}| \ge 1$ 且 $|\mathcal{M}| \ge 1$ 的中间情形——gate 阻止假阳性，modifier 在 gate 通过后做精细区分。</p>
+
+<p>这套结构是<strong>noisy-AND 模型</strong>（Pearl 1988<span class="cite">[14]</span>）的松弛形式。严格 noisy-AND 在独立性下是 $\prod_i s_i$（即我们的 $G$ 在 $w_i = 1$ 时的特例）；权重指数 $w_i / W_G$ 让我们能区分必要条件的相对重要性。我们不采用严格 noisy-AND，因为中等 gate 值（如 0.4）不应像精确 0 那样把整体归零。</p>
+</section>
+
+<section id="sec7">
+<h2 class="section"><span class="num">7.</span>实测：奥林匹克半岛 2026-05-20</h2>
+
+<p>2026 年 5 月 20 日 20:30 PDT（03:30 UTC, 5-21），用上述预测器在华盛顿州奥林匹克半岛海岸做了一次端到端预报。区域 $1.4° \times 1°$（含 Forks、La Push、Ruby Beach），0.1° 网格 = 180 个查询点。数据源 NOAA HRRR 模式 01:00 UTC 实况运行的 fxx=2 时次（在查询时刻为已经发布的验证预报）。</p>
+
+<h3>7.1 加权和方法的结果</h3>
+<p>用第 6.1 节描述的加权和方法，权重 $\{w_{\text{mid\_high}}, w_{\text{low\_obstr}}, w_{\text{solar}}, w_{\text{humidity}}\} = \{2.0, 2.0, 1.5, 1.0\}$，180 个点都返回大约 0.625–0.631 的均匀概率。在代表性点 $(47.70°\text{N}, 124.80°\text{W})$ 的分解：</p>
+
+<table>
+<thead><tr><th>规则</th><th>$s_i$</th><th>$w_i$</th><th>$w_i s_i$</th></tr></thead>
+<tbody>
+<tr><td><code>MidHighCloudPresence</code></td><td>0.00</td><td>2.0</td><td>0.00</td></tr>
+<tr><td><code>LowCloudObstruction</code></td><td>1.00</td><td>2.0</td><td>2.00</td></tr>
+<tr><td><code>SolarAngleAtSunset</code></td><td>1.00</td><td>1.5</td><td>1.50</td></tr>
+<tr><td><code>HumidityFactor</code></td><td>0.60</td><td>1.0</td><td>0.60</td></tr>
+<tr><td colspan="2"></td><td>$\sum w_i = 6.5$</td><td>$\sum w_i s_i = 4.10$</td></tr>
+</tbody>
+</table>
+<p class="table-caption"><strong>表 6.</strong> 代表性点的加权和分解：$P_{\text{add}} = 4.10 / 6.5 = 0.631$。背后的 HRRR 报告值：高云 0.0%、中云 0.0%、低云 18.0%、2m 相对湿度 86.0%、本地视日落 04:08 UTC（21:08 PDT），查询时为日落前约 38 分钟。</p>
+
+<p>物理上看：高云中云都为 0% 意味着没有可被照亮的"画布"。无论其他变量多么有利，今晚这个位置都不可能出现火烧云。加权和却返回 0.631——一个看似有信心但物理上空洞的数字。</p>
+
+<h3>7.2 Gate × Modifier 的反事实</h3>
+<p>用第 6.2 节的两层架构，分类如下：</p>
+<p>$$\mathcal{G} = \{\text{MidHighCloudPresence}, \text{LowCloudObstruction}, \text{SolarAngleAtSunset}\}, \quad \mathcal{M} = \{\text{HumidityFactor}\}$$</p>
+<p>（湿度按 6 节分类作为色彩饱和度的 modifier）。均匀 gate 权重下：</p>
+<p>$$G = (0.00 \cdot 1.00 \cdot 1.00)^{1/3} = 0.00, \quad M = 0.60, \quad P = G \cdot M = 0.00$$</p>
+
+<p>180 个点上分别用两套打分计算（输入是同一份 per-rule 分数向量），结果：</p>
+<table>
+<thead><tr><th>方法</th><th>最小值</th><th>均值</th><th>最大值</th></tr></thead>
+<tbody>
+<tr><td>加权和</td><td>0.625</td><td>0.631</td><td>0.631</td></tr>
+<tr><td>Gate × Modifier</td><td>0.000</td><td>0.000</td><td>0.000</td></tr>
+</tbody>
+</table>
+<p class="table-caption"><strong>表 7.</strong> 180-cell 网格上两套打分方案的统计。</p>
+
+<figure>
+  <img src="paper/figures/fig3_olympic_peninsula.png" alt="奥林匹克半岛对比图">
+  <figcaption><strong>图 4.</strong> 同一份 HRRR 数据（01:00 UTC 实况运行 fxx=2），两套打分方案。左：加权和，整片地区返回 0.62–0.63 的均匀"中等概率"。右：gate × modifier，整片地区返回 0.000——与"没有任何中高云覆盖"的物理事实一致。</figcaption>
+</figure>
+
+<p>这一案例不是统计意义上的验证（缺少地面观察记录），只是一次<strong>结构故障的实证演示</strong>：加权和在物理上不可能出现火烧云的配置下自信地说"还行"；gate × modifier 在同样输入上诚实地说"不可能"。系统性验证（与公民科学观察数据库的统计对比）是下一步工作。</p>
+</section>
+
+<section id="sec8">
+<h2 class="section"><span class="num">8.</span>局限与下一步</h2>
+
+<p>这套框架的局限大致归三类：数据层、方法层、验证层。</p>
+
+<h3>8.1 数据层</h3>
+<ol>
+  <li><strong>臭氧柱不是实时</strong>。NASA OMI / TROPOMI 是日级产品，1–3 天延迟。要把 Chappuis modifier 真正用上，需要么容忍数据滞后、要么并入 GEOS-FP / MERRA-2 这种运行模式。</li>
+  <li><strong>气溶胶分层不可直接观测</strong>。区分平流层 vs 对流层贡献需要 OSIRIS / OMPS-LP 这种卫星掩星产品。在缺少分层数据的情况下，事件触发式 modifier（VEI ≥ 4 的火山事件 18 个月窗口）是个粗略但可操作的替代。</li>
+  <li><strong>HRRR-Smoke 仅限 CONUS</strong>。野火驱动的气溶胶在 PNW 和加州 fire season 至关重要，全球扩展时这层数据会缺失。</li>
+</ol>
+
+<h3>8.2 方法层</h3>
+<ol>
+  <li><strong>规则函数的形态选择</strong>。当前用梯形 / 分段线性。光滑形态（高斯、sigmoid、beta）可微但需要额外超参数，原则上要等到有标注数据后再拟合。</li>
+  <li><strong>无形式化敏感性分析</strong>。第 7 节的实测是定性的。需要在大批合成 Features 上系统扫描参数空间，给出每条规则对最终概率的边际影响曲线。</li>
+  <li><strong>权重靠经验拍</strong>。Gate 权重目前设为 1.0；modifier 权重（如湿度 0.3）靠文献和直觉。真正的权重拟合需要标注数据。</li>
+</ol>
+
+<h3>8.3 验证层</h3>
+<ol>
+  <li><strong>第 7 节是结构演示而非统计验证</strong>。没有地面观察对比，只能说"加权和在这一配置下错得明显，gate × modifier 在物理上对"。系统验证需要的最低数据量：约 100 对 (预报, 观察) 记录，覆盖几周的多样天气和地理位置，就足以测试 gate × modifier 的高概率输出是否比加权和更可靠地对应观察到的火烧云。</li>
+  <li><strong>citizen-science 观察管道</strong>是下一阶段的主要工作。结构化提交、与专业测站的校准、对观察者偏差的统计处理，构成一个有独立价值的开放数据集设计任务。</li>
+</ol>
+
+<h3>8.4 工程层</h3>
+<ol>
+  <li>当前实现是命令行 Python 包 + Jupyter notebook，地理覆盖 CONUS。Phase 2 是把预测器包成 FastAPI 后端、用 React + Mapbox/Leaflet 做前端。Phase 3 是 Tauri 桌面应用，本地缓存 HRRR，离线可用。</li>
+  <li>全球扩展只需替换 <code>WeatherSource</code> 实现（HRRRSource → GFSSource），其余架构不变。代价是空间分辨率降到 0.25°（约 28 km），失去 HRRR-Smoke 等区域特化产品。</li>
+</ol>
+</section>
+
+<section class="biblio" id="biblio">
+<h2>参考文献</h2>
+<ol>
+  <li>Strutt, J. W. (Lord Rayleigh). <em>On the scattering of light by small particles</em>. Philosophical Magazine, 41, 447–454. 1871.</li>
+  <li>Mie, G. <em>Beiträge zur Optik trüber Medien, speziell kolloidaler Metallösungen</em>. Annalen der Physik, 330, 377–445. 1908.</li>
+  <li>Hulburt, E. O. <em>Explanation of the brightness and color of the sky, particularly the twilight sky</em>. J. Opt. Soc. Am., 43(2), 113–118. 1953.</li>
+  <li>Lange, A., Rozanov, V. V., &amp; Burrows, J. P. <em>Revisiting the question "Why is the sky blue?" — A radiative transfer model study</em>. Atmos. Chem. Phys., 23, 14829–14851. 2023.</li>
+  <li>Kasten, F., &amp; Young, A. T. <em>Revised optical air mass tables and approximation formula</em>. Applied Optics, 28(22), 4735–4738. 1989.</li>
+  <li>Bodhaine, B. A., Wood, N. B., Dutton, E. G., &amp; Slusser, J. R. <em>On Rayleigh optical depth calculations</em>. J. Atmos. Oceanic Technol., 16, 1854–1861. 1999.</li>
+  <li>World Meteorological Organization. <em>International Cloud Atlas</em>. https://cloudatlas.wmo.int/</li>
+  <li>Corfidi, S. F. <em>The Colors of Twilight and Sunset</em>. NOAA Storm Prediction Center publication. 2014.</li>
+  <li>Symons, G. J. (Ed.). <em>The Eruption of Krakatoa, and Subsequent Phenomena</em>. Royal Society of London. 1888.</li>
+  <li>Ribeiro, J. R. et al. <em>Explaining the green volcanic sunsets after the 1883 eruption of Krakatoa</em>. Atmos. Chem. Phys. 2024.</li>
+  <li>Mateshvili, N. et al. <em>Twilight sky brightness measurements as a useful tool for stratospheric aerosol investigations</em>. J. Geophys. Res. Atmos., 110, D09209. 2005.</li>
+  <li>Husar, R. B. et al. <em>Asian dust events of April 1998</em>. J. Geophys. Res., 106(D16), 18317–18330. 2000.</li>
+  <li>Lee, R. L. Jr., &amp; Hernández-Andrés, J. <em>Measuring and modeling twilight's purple light</em>. Applied Optics, 42(3), 445–457. 2003.</li>
+  <li>Pearl, J. <em>Probabilistic Reasoning in Intelligent Systems: Networks of Plausible Inference</em>. Morgan Kaufmann. 1988.</li>
+</ol>
+<p style="font-size: 13px; color: var(--muted); margin-top: 22px;">完整 BibTeX 见仓库 <code>research/paper/references.bib</code>；英文论文版本见 <code>research/paper/paper.tex</code>。</p>
+</section>
+
+<footer class="foot">
+<p>firecloud-forecast · 完整源码与论文 github.com/NickZhuxy/firecloud-forecast</p>
+<p>Nick Zhu · 2026 年 5 月</p>
+</footer>
+
+</article>
+</body>
+</html>

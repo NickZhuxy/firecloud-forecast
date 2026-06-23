@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Project caches (HRRR downloads can be GBs)
+research/data/cache/
+research/data/raw/
+
+# IDE
+.vscode/
+.idea/
+
+# Large third-party reference material (kept local, not redistributed)
+research/*.pdf
+
+# LaTeX build artifacts
+research/paper/*.aux
+research/paper/*.bbl
+research/paper/*.blg
+research/paper/*.log
+research/paper/*.out
+research/paper/*.toc
