@@ -15,6 +15,14 @@ class ScoringRule(Protocol):
     def evaluate(self, features: Features) -> float | None: ...
 
 
+def _canvas_cover(f: Features) -> float:
+    """Mid/high canvas coverage (%): GFS's own mid/high cover when available
+    (#35), else the larger of the snapshot mid/high cover."""
+    if f.diagnosed_mid_high_cover_pct is not None:
+        return f.diagnosed_mid_high_cover_pct
+    return max(f.cloud_mid_pct, f.cloud_high_pct)
+
+
 def _trapezoid(x: float, low0: float, low1: float, high1: float, high0: float) -> float:
     """Trapezoidal membership function.
 
@@ -40,9 +48,11 @@ class MidHighCloudPresence:
     name = "mid_high_cloud_presence"
 
     def evaluate(self, f: Features) -> float:
-        # A single 40% mid deck is already a 40% canvas; averaging it with an
-        # absent high layer incorrectly halves the real cover.
-        canvas = max(f.cloud_mid_pct, f.cloud_high_pct)
+        # Prefer GFS's own cover of the diagnosed canvas (#35) so this gate is not
+        # zeroed by an Open-Meteo coverage that disagrees with the GFS-diagnosed
+        # canvas. A single 40% mid deck is already a 40% canvas; averaging it with
+        # an absent high layer would incorrectly halve the real cover.
+        canvas = _canvas_cover(f)
         if canvas <= 0:
             return 0.0
         return min(1.0, canvas / 20.0)
@@ -175,7 +185,7 @@ class CloudCoverSweetSpot:
     name = "cloud_cover_sweet_spot"
 
     def evaluate(self, f: Features) -> float:
-        canvas = max(f.cloud_mid_pct, f.cloud_high_pct)
+        canvas = _canvas_cover(f)
         return _trapezoid(canvas, low0=10, low1=40, high1=75, high0=95)
 
 
@@ -373,17 +383,18 @@ class RuleBasedPredictor:
         snapshot = self.source.fetch(lat, lon, time)
         return self.score_snapshot(snapshot, lat, lon, time)
 
-    def score_snapshot(self, snapshot, lat: float, lon: float, time, cloud_layers=None) -> Forecast:
+    def score_snapshot(self, snapshot, lat: float, lon: float, time, cloud_layers=None, cloud_cover=None) -> Forecast:
         """Score a pre-fetched snapshot (the compute half, no IO).
 
         Lets batch callers (e.g. the map grid) fetch many points in one request
         and then evaluate each without a per-point network round-trip.
 
-        ``cloud_layers`` (diagnosed CloudLayer list, #10) is optional: when given
-        it upgrades the canvas base from the fixed three-tier height to the real
-        diagnosed base (#13). Batch/grid callers omit it to stay fast.
+        ``cloud_layers`` (diagnosed CloudLayer list, #10) and ``cloud_cover``
+        (GFS étage cover, #35) are optional: together they upgrade the canvas
+        base and coverage from fixed/Open-Meteo values to GFS-diagnosed ones
+        (#13/#35). Batch/grid callers omit them to stay fast.
         """
-        feats = derive(snapshot, lat, lon, time, cloud_layers=cloud_layers)
+        feats = derive(snapshot, lat, lon, time, cloud_layers=cloud_layers, cloud_cover=cloud_cover)
         components = {}
         for rule in self.rules:
             value = rule.evaluate(feats)
