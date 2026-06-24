@@ -41,3 +41,25 @@ next: close the 13-line gap in national_field.py (lines 59, 61, 75, 77, 121, 123
   126, 143, 163, 183-187, 196) — many are trivial error-branch tests requiring no GFS
   mock; tackle them as the next atomic step.
 need 48 more lines to reach 95% floor.
+
+### 2026-06-25  iter 3
+hardened: all 13 missed lines in `national_field.py` (88% → 100%).
+Added 11 tests to `predictor/tests/test_national_field.py` covering:
+- `_range_axis()` inverted range (line 59 fallback to [start]) and non-aligned end (line 61 appends end).
+  Note: `_range_axis(30.0, 20.0)` hits BOTH lines 59 and 61 since after the [start] fallback,
+  end=20.0 is not close to start=30.0, so end is also appended → result is [30.0, 20.0].
+- `_active_sunsets()` raises when domain_mask returns wrong shape (line 75) and when domain_mask
+  excludes all cells (line 77) — both exercised via build_national_field with mock masks.
+- `build_national_field()` input validation: datetime→date coercion (line 121), TypeError on
+  non-date input (line 123), ValueError on inverted bbox lat_min>lat_max (line 126).
+- `fetch_surface_grids` batch API path (line 143): source with that method gets one batch call
+  instead of N individual `fetch_surface_grid` calls.
+- Coarse bbox miss assertion (line 163): monkeypatched sunset_utc_grid returns wider range on
+  second call → required_times ⊄ valid_times → ValueError raised.
+- `download_bytes` summation branch (lines 183-187): grids with download_bytes=500 → field
+  reports correct totals (500*n and 500*(n-1)).
+- tracemalloc already tracing (line 196): start tracemalloc before call → trace=False → peak_mem_mb=NaN.
+cov 93% → 93% (1957 stmts, 146→133 missed). suite green (307 passed, 5 deselected).
+national_field.py now at 100%.
+still need 35 more lines to reach 95% floor.
+next highest-leverage: national_product.py (45 missed, 77%) or gfs.py (24 missed, 91%).

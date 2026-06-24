@@ -28,10 +28,7 @@
 ## Coverage gaps to close with MEANINGFUL tests (current weak modules)
 - [ ] national_product.py (~77%, 45 missed) — exercise the pure plotting/metadata helpers offline.
 - [ ] gfs.py (~91%, 24 missed) — cycle-fallback / missing-level / error branches (mock the loader; no net).
-- [ ] national_field.py (~88%, 13 missed lines: 59, 61, 75, 77, 121, 123, 126, 143, 163, 183-187, 196)
-      — lines 121, 123, 126 need no GFS mock (validation before fetch); 75, 77 need bad domain_mask;
-        143 needs a source with fetch_surface_grids method; 183-187 needs download_bytes set; 196 needs
-        tracemalloc already running. Next iteration priority.
+- [x] national_field.py (~88% → 100%) — DONE iter 3: all 13 missed lines covered by 11 new tests.
 - [ ] sunset_grid.py: line 33 is unreachable defensive code — skip.
 - [ ] profiles.py (~90%, 9 missed), rules.py (~94%, 11 missed), features.py (~93%, 10 missed),
       clouds.py (~95%, 6 missed), cross_section.py (~92%, 4 missed) — close reachable branches.
