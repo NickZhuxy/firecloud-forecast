@@ -104,36 +104,44 @@ def test_recent_legacy_slot_is_adopted_without_refresh(monkeypatch, tmp_path):
     assert result["generated_utc"] == "2026-06-22T08:30:00+00:00"
 
 
-def test_build_selects_each_grid_points_sunset_window(monkeypatch):
-    monkeypatch.setattr(overlay, "CN_BBOX", (30.0, 120.0, 30.0, 121.0))
-    monkeypatch.setattr(overlay, "CN_STEP", 1.0)
-    monkeypatch.setattr(overlay, "_render_clipped_png", lambda *args: "image")
+def test_build_scores_one_gfs_grid_read(monkeypatch):
+    # The national overview now reads one GFS surface grid and scores it
+    # vectorized (#19) — no per-point requests.
+    import numpy as np
+
+    from predictor.gfs import SurfaceGrid
+
     calls = []
 
-    class Source:
-        def fetch_many_for_sunset(
-            self, coords, evening_hint, score_offset, *, window_days
-        ):
-            calls.append((coords, evening_hint, score_offset, window_days))
-            return [
-                SimpleNamespace(
-                    sunset_time=datetime(2026, 6, 22, 10 + i, tzinfo=timezone.utc)
-                )
-                for i, _ in enumerate(coords)
-            ]
+    class FakeGFS:
+        def fetch_surface_grid(self, bbox, valid_time):
+            calls.append((bbox, valid_time))
+            lats = np.array([34.0, 32.0, 30.0])   # north→south, like GFS
+            lons = np.array([120.0, 121.0])
+            shape = (3, 2)
+            return SurfaceGrid(
+                lats=lats, lons=lons,
+                cloud_low_pct=np.full(shape, 5.0),
+                cloud_mid_pct=np.full(shape, 55.0),
+                cloud_high_pct=np.full(shape, 40.0),
+                humidity_pct=np.full(shape, 60.0),
+                visibility_m=np.full(shape, 25000.0),
+                run_time=datetime(2026, 6, 22, 0, tzinfo=timezone.utc),
+                valid_time=datetime(2026, 6, 22, 11, tzinfo=timezone.utc),
+                source_label="gfs@2026-06-22T00Z+f11", missing=[],
+            )
 
-    class Predictor:
-        def score_snapshot(self, snapshot, lat, lon, time):
-            expected = snapshot.sunset_time - overlay.SCORE_OFFSET
-            assert time == expected
-            return SimpleNamespace(probability=0.5)
+    monkeypatch.setattr(overlay, "_GFS", FakeGFS())
+    monkeypatch.setattr(overlay, "_render_clipped_png", lambda *a, **k: "image")
 
-    result = overlay._build(date(2026, 6, 22), Source(), Predictor(), object())
+    result = overlay._build(date(2026, 6, 22), object(), object(), object())
 
-    assert len(calls) == 1
-    assert calls[0][0] == [(30.0, 120.0), (30.0, 121.0)]
-    assert calls[0][3] == 0
+    assert len(calls) == 1                      # exactly one grid read
+    assert calls[0][0] == overlay.CN_BBOX
     assert result["image"] == "image"
+    assert result["n_points"] == 6
+    assert result["valid_utc"] == "2026-06-22T11:00:00+00:00"
+    assert 0.0 <= result["max_probability"] <= 1.0
 
 
 def test_previous_schema_cache_is_ignored(monkeypatch, tmp_path):

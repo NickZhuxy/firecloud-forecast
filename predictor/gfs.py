@@ -39,6 +39,28 @@ class EtageCloudCover:
     def for_tier(self, tier: str) -> float:
         return {"low": self.low_pct, "mid": self.mid_pct, "high": self.high_pct}[tier]
 
+
+@dataclass
+class SurfaceGrid:
+    """GFS surface fields over a bbox: one read for the whole national grid (#19)."""
+
+    lats: np.ndarray  # 1-D (ny)
+    lons: np.ndarray  # 1-D (nx)
+    cloud_low_pct: np.ndarray   # (ny, nx); remaining fields share this shape
+    cloud_mid_pct: np.ndarray
+    cloud_high_pct: np.ndarray
+    humidity_pct: np.ndarray
+    visibility_m: np.ndarray
+    run_time: datetime
+    valid_time: datetime
+    source_label: str
+    missing: list[str]
+
+    @property
+    def n_points(self) -> int:
+        return int(self.lats.size * self.lons.size)
+
+
 # GFS cfgrib shortname -> our profile field name.
 GFS_VAR_MAP: dict[str, str] = {
     "t": "temperature_k",
@@ -84,6 +106,7 @@ class GFSSource:
         # HRRRSource: avoids re-parsing for repeated same-cycle queries.
         self._ds_cache: dict[tuple[datetime, int], xr.Dataset] = {}
         self._cover_cache: dict[tuple[datetime, int], xr.Dataset] = {}
+        self._surface_cache: dict[tuple[datetime, int], xr.Dataset] = {}
 
     # ---- public API -----------------------------------------------------
 
@@ -125,6 +148,25 @@ class GFSSource:
         run_dt, fxx = self._select_cycle(valid_utc)
         ds, _run, _fxx = self._load_with_fallback(run_dt, fxx, self._load_cover)
         return self._cover_from_dataset(ds, lat, lon)
+
+    def fetch_surface_grid(
+        self, bbox: tuple[float, float, float, float], valid_time: datetime
+    ) -> SurfaceGrid:
+        """GFS surface fields (cloud cover, 2 m RH, visibility) over a bbox (#19).
+
+        One read + decode for the whole region — the national overview then
+        scores every cell with numpy instead of a per-point HTTP request.
+        """
+        valid_utc = _as_utc(valid_time)
+        run_dt, fxx = self._select_cycle(valid_utc)
+        ds, run_used, fxx_used = self._load_with_fallback(run_dt, fxx, self._load_surface)
+        return self._surface_grid_from_dataset(
+            ds,
+            bbox=bbox,
+            run_time=run_used,
+            valid_time=valid_utc,
+            source_label=f"gfs@{run_used:%Y-%m-%dT%HZ}+f{fxx_used:02d}",
+        )
 
     # ---- cycle selection / loading -------------------------------------
 
@@ -175,6 +217,15 @@ class GFSSource:
         self._cover_cache[key] = ds
         return ds
 
+    def _load_surface(self, run_dt: datetime, fxx: int) -> xr.Dataset:
+        key = (run_dt, fxx)
+        cached = self._surface_cache.get(key)
+        if cached is not None:
+            return cached
+        ds = self._download_surface(run_dt, fxx)
+        self._surface_cache[key] = ds
+        return ds
+
     def _herbie(self, run_dt: datetime, fxx: int):
         """Construct a Herbie handle for a GFS 0.25° cycle (network on .xarray)."""
         from herbie import Herbie
@@ -214,6 +265,17 @@ class GFSSource:
             return xr.merge(parsed, compat="override", combine_attrs="override")
         return parsed
 
+    def _download_surface(self, run_dt: datetime, fxx: int) -> xr.Dataset:
+        """Download GFS surface fields (étage cover, 2 m RH, visibility)."""
+        H = self._herbie(run_dt, fxx)
+        search = r":(?:LCDC|MCDC|HCDC):|:RH:2 m above ground:|:VIS:surface:"
+        parsed = H.xarray(search)
+        if isinstance(parsed, list):
+            return xr.merge(
+                parsed, compat="override", combine_attrs="override", join="outer"
+            )
+        return parsed
+
     # cfgrib shortnames: LCDC→lcc, MCDC→mcc, HCDC→hcc.
     _COVER_SHORTNAMES = ("lcc", "mcc", "hcc")
 
@@ -250,6 +312,60 @@ class GFSSource:
 
         return EtageCloudCover(
             low_pct=cover("lcc"), mid_pct=cover("mcc"), high_pct=cover("hcc")
+        )
+
+    @staticmethod
+    def _surface_grid_from_dataset(
+        ds: xr.Dataset,
+        bbox: tuple[float, float, float, float],
+        run_time: datetime,
+        valid_time: datetime,
+        source_label: str,
+    ) -> SurfaceGrid:
+        """Crop GFS surface fields to a bbox; cover→0, RH/VIS→NaN where absent."""
+        lat_min, lat_max, lon_min, lon_max = bbox
+        lats = np.asarray(ds["latitude"].values, dtype=float)
+        grid_lons = np.asarray(ds["longitude"].values, dtype=float)
+        uses_0_360 = float(np.nanmax(grid_lons)) > 180.0
+
+        def _norm(x: float) -> float:
+            return x % 360.0 if uses_0_360 else ((x + 180.0) % 360.0 - 180.0)
+
+        lat_mask = (lats >= lat_min) & (lats <= lat_max)
+        lo, hi = _norm(lon_min), _norm(lon_max)
+        lon_mask = (grid_lons >= lo) & (grid_lons <= hi) if lo <= hi else (
+            (grid_lons >= lo) | (grid_lons <= hi)
+        )
+        lat_idx = np.where(lat_mask)[0]
+        lon_idx = np.where(lon_mask)[0]
+        sub = ds.isel(latitude=lat_idx, longitude=lon_idx)
+
+        out_lats = np.asarray(sub["latitude"].values, dtype=float)
+        out_lons = np.asarray(sub["longitude"].values, dtype=float)
+        ny, nx = out_lats.size, out_lons.size
+        missing: list[str] = []
+
+        def field(short: str, default: float) -> np.ndarray:
+            if short not in sub.data_vars:
+                missing.append(short)
+                return np.full((ny, nx), default)
+            return (
+                sub[short].transpose("latitude", "longitude").values.astype(float)
+            )
+
+        # cfgrib shortnames: cover lcc/mcc/hcc, 2 m RH r2, surface VIS vis.
+        return SurfaceGrid(
+            lats=out_lats,
+            lons=out_lons,
+            cloud_low_pct=field("lcc", 0.0),
+            cloud_mid_pct=field("mcc", 0.0),
+            cloud_high_pct=field("hcc", 0.0),
+            humidity_pct=field("r2", np.nan),
+            visibility_m=field("vis", np.nan),
+            run_time=run_time,
+            valid_time=valid_time,
+            source_label=source_label,
+            missing=missing,
         )
 
     # ---- pure transform (tested with synthetic xarray) -----------------
