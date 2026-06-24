@@ -29,7 +29,8 @@ from matplotlib.figure import Figure
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path as MplPath
 
-from app.timing import SCORE_OFFSET, evening_instant
+from predictor.gfs import GFSSource
+from predictor.national_field import build_national_field
 
 CACHE_DIR = Path("research/data/cache/overlays")
 OVERLAY_FLOOR = 0.06
@@ -51,6 +52,10 @@ CN_STEP = 4.0                          # grid spacing in degrees (fixed grid)
 # orange → red (high). Masked no-data cells stay transparent over the basemap.
 _QUALITY_CMAP = matplotlib.colormaps["turbo"].copy()
 _QUALITY_CMAP.set_bad(alpha=0.0)
+
+# The national overview now reads one GFS 0.25° grid and scores it vectorized
+# (#19), instead of ~190 per-point Open-Meteo requests.
+_GFS = GFSSource()
 
 
 # --------------------------------------------------------------------------- #
@@ -105,12 +110,12 @@ def _upsample(arr: np.ndarray, factor: int = 6) -> np.ndarray:
     return np.vstack([np.interp(yi, np.arange(ny), rows[:, c]) for c in range(rows.shape[1])]).T
 
 
-def _render_clipped_png(lats, lons, P, geom) -> str | None:
+def _render_clipped_png(lats, lons, P, geom, *, upsample: int = 6) -> str | None:
     arr = _smooth(np.array(P, dtype=float), passes=1)
     if float(np.nanmax(arr)) < OVERLAY_FLOOR:
         return None
 
-    fine = _upsample(arr, factor=6)
+    fine = _upsample(arr, factor=upsample) if upsample > 1 else arr
     lon_fine = np.linspace(lons[0], lons[-1], fine.shape[1])
     lat_fine = np.linspace(lats[0], lats[-1], fine.shape[0])
     field = np.ma.masked_less(fine, OVERLAY_FLOOR)
@@ -256,36 +261,55 @@ def _axis_values(start: float, end: float, step: float) -> list[float]:
     return values
 
 
-def _build(d: date_cls, source, predictor, geom) -> dict:
-    south, west, north, east = CN_BBOX
-    lats = _axis_values(south, north, CN_STEP)
-    lons = _axis_values(west, east, CN_STEP)
+def _center_sunset_utc(d: date_cls) -> datetime:
+    """Sunset (UTC) at the domain centre — the national overview's valid time."""
+    from astral import Observer
+    from astral.sun import sun
 
-    # Fetch the whole grid near local evening (one batched, chunked request).
-    evening = evening_instant((west + east) / 2.0, d)
-    coords = [(la, lo) for la in lats for lo in lons]
-    # China evening always falls on the same UTC calendar date, so a one-day
-    # payload is sufficient here. Each location then selects its own reported
-    # sunset minus SCORE_OFFSET from that payload.
-    snaps = source.fetch_many_for_sunset(
-        coords,
-        evening,
-        SCORE_OFFSET,
-        window_days=0,
+    south, west, north, east = CN_BBOX
+    obs = Observer(latitude=(south + north) / 2.0, longitude=(west + east) / 2.0)
+    try:
+        return sun(obs, date=d, tzinfo=timezone.utc)["sunset"]
+    except ValueError:
+        # Polar edge (won't happen for China's centre, but degrade safely):
+        # fall back to solar noon + ~7 h at the centre meridian's longitude.
+        return datetime(d.year, d.month, d.day, 12, tzinfo=timezone.utc) + timedelta(hours=7)
+
+
+def _build(d: date_cls, source, predictor, geom) -> dict:
+    # One GFS 0.25° read, scored vectorized over the whole region (#19). The
+    # `source`/`predictor` parameters are kept for call-site/signature
+    # compatibility; the overview no longer makes per-point Open-Meteo requests.
+    #
+    # NOTE (#19 follow-up): a single valid time scores the whole 63°-wide domain
+    # at the centre-meridian sunset, so east/west China are read up to ~1 h off
+    # their own sunset. Matches SunsetWx's single-forecast-hour map; per-cell
+    # sunset (multi-timestep) is tracked separately.
+    valid_time = _center_sunset_utc(d)
+    south, west, north, east = CN_BBOX
+    # fetch_surface_grid takes (lat_min, lat_max, lon_min, lon_max) — not the
+    # (south, west, north, east) order of CN_BBOX.
+    field = build_national_field(_GFS, (south, north, west, east), valid_time)
+    print(
+        f"[overlay] national field {field.source_label}: {field.n_points} cells, "
+        f"{field.runtime_s:.2f}s, peak {field.peak_mem_mb:.1f} MB",
+        flush=True,
     )
 
-    P = [[0.0] * len(lons) for _ in range(len(lats))]
-    for k, ((la, lo), snap) in enumerate(zip(coords, snaps)):
-        t = (snap.sunset_time - SCORE_OFFSET) if snap.sunset_time else evening
-        P[k // len(lons)][k % len(lons)] = round(predictor.score_snapshot(snap, la, lo, t).probability, 4)
-
-    image = _render_clipped_png(lats, lons, P, geom)
+    # The GFS grid is already ~25 km; a light 2× upsample is enough for a smooth
+    # render (the old coarse 4° grid needed 6×).
+    image = _render_clipped_png(field.lats, field.lons, field.probability, geom, upsample=2)
     return {
         "country": "China",
         "date": d.isoformat(),
-        "bounds": [[lats[0], lons[0]], [lats[-1], lons[-1]]],
+        "bounds": [
+            [float(field.lats[0]), float(field.lons[0])],
+            [float(field.lats[-1]), float(field.lons[-1])],
+        ],
         "image": image,
-        "max_probability": round(float(np.nanmax(np.array(P))), 4),
+        "max_probability": round(float(np.nanmax(field.probability)), 4),
+        "valid_utc": field.valid_time.isoformat(),
+        "n_points": field.n_points,
     }
 
 

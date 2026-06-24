@@ -1,0 +1,82 @@
+"""Vectorized grid scoring matches the scalar predictor (#19)."""
+from datetime import datetime, timezone
+
+import numpy as np
+
+from predictor.fetch import FakeSource, WeatherSnapshot
+from predictor.grid_score import GridInputs, score_grid
+from predictor.rules import standard_predictor
+
+_T = datetime(2026, 6, 23, 11, 0, tzinfo=timezone.utc)
+
+
+def _scalar_predictor():
+    dummy = WeatherSnapshot(0, 0, 0, 0, "x", _T)
+    return standard_predictor(FakeSource(dummy))
+
+
+def _scalar_score(low, mid, high, humidity, visibility):
+    snap = WeatherSnapshot(
+        cloud_low_pct=low, cloud_mid_pct=mid, cloud_high_pct=high, humidity_pct=humidity,
+        source_label="cell", retrieved_at=_T, visibility_m=visibility,
+        sunset_time=_T,  # scored AT sunset → solar_angle gate = 1.0
+    )
+    return _scalar_predictor().score_snapshot(snap, 31.0, 121.0, _T).probability
+
+
+def test_grid_matches_scalar_predictor_within_tolerance():
+    low = np.array([[5.0, 40.0], [10.0, 0.0]])
+    mid = np.array([[55.0, 20.0], [70.0, 0.0]])
+    high = np.array([[40.0, 10.0], [10.0, 0.0]])
+    humidity = np.array([[60.0, 85.0], [50.0, 30.0]])
+    visibility = np.array([[25000.0, 8000.0], [30000.0, 25000.0]])
+
+    grid = score_grid(GridInputs(low, mid, high, humidity, visibility_m=visibility))
+
+    for j in range(2):
+        for i in range(2):
+            scalar = _scalar_score(low[j, i], mid[j, i], high[j, i], humidity[j, i], visibility[j, i])
+            assert abs(grid[j, i] - scalar) < 1e-9, f"cell ({j},{i}): {grid[j,i]} vs {scalar}"
+
+
+def test_absent_canvas_gates_to_zero():
+    grid = score_grid(GridInputs(
+        cloud_low_pct=np.array([[10.0]]), cloud_mid_pct=np.array([[0.0]]),
+        cloud_high_pct=np.array([[0.0]]), humidity_pct=np.array([[60.0]]),
+        visibility_m=np.array([[25000.0]]),
+    ))
+    assert grid[0, 0] == 0.0
+
+
+def test_heavy_low_cloud_gates_to_zero():
+    grid = score_grid(GridInputs(
+        cloud_low_pct=np.array([[100.0]]), cloud_mid_pct=np.array([[60.0]]),
+        cloud_high_pct=np.array([[40.0]]), humidity_pct=np.array([[60.0]]),
+        visibility_m=np.array([[25000.0]]),
+    ))
+    assert grid[0, 0] == 0.0
+
+
+def test_aod_path_matches_scalar():
+    # When AOD is supplied it takes precedence over visibility, matching CleanAirGate.
+    low = np.array([[5.0]]); mid = np.array([[55.0]]); high = np.array([[40.0]])
+    humidity = np.array([[60.0]]); aod = np.array([[0.25]])
+    grid = score_grid(GridInputs(low, mid, high, humidity, aerosol_optical_depth=aod))
+
+    snap = WeatherSnapshot(
+        cloud_low_pct=5.0, cloud_mid_pct=55.0, cloud_high_pct=40.0, humidity_pct=60.0,
+        source_label="cell", retrieved_at=_T, aerosol_optical_depth=0.25, sunset_time=_T,
+    )
+    scalar = _scalar_predictor().score_snapshot(snap, 31.0, 121.0, _T).probability
+    assert abs(grid[0, 0] - scalar) < 1e-9
+
+
+def test_output_shape_and_range():
+    shape = (12, 20)
+    rng = np.linspace(0, 100, shape[0] * shape[1]).reshape(shape)
+    grid = score_grid(GridInputs(
+        cloud_low_pct=rng * 0.3, cloud_mid_pct=rng * 0.6, cloud_high_pct=rng * 0.4,
+        humidity_pct=rng, visibility_m=np.full(shape, 25000.0),
+    ))
+    assert grid.shape == shape
+    assert np.all((grid >= 0.0) & (grid <= 1.0))
