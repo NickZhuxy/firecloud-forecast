@@ -14,7 +14,7 @@ def _reset_cache(monkeypatch, tmp_path):
 def test_exact_slot_cache_returns_ready_without_starting_build(monkeypatch, tmp_path):
     _reset_cache(monkeypatch, tmp_path)
     now = datetime(2026, 6, 22, 10, 7, tzinfo=timezone.utc)
-    key = "cn-v3-2026-06-22-20260622T0900"
+    key = "cn-v4-2026-06-22-20260622T0900"
     overlay._mem_cache[key] = {
         "country": "China",
         "date": "2026-06-22",
@@ -31,8 +31,8 @@ def test_exact_slot_cache_returns_ready_without_starting_build(monkeypatch, tmp_
     result = overlay.get_overlay(date(2026, 6, 22), object(), object(), now)
 
     assert result["status"] == "ready"
-    assert result["image"] == "/api/overlay/image/cn-v3-2026-06-22-20260622T0900.png"
-    assert (tmp_path / "cn-v3-2026-06-22-20260622T0900.png").read_bytes() == b"ready"
+    assert result["image"] == "/api/overlay/image/cn-v4-2026-06-22-20260622T0900.png"
+    assert (tmp_path / "cn-v4-2026-06-22-20260622T0900.png").read_bytes() == b"ready"
     assert result["generated_utc"] == "2026-06-22T09:00:00+00:00"
 
 
@@ -52,12 +52,12 @@ def test_cache_miss_returns_immediately_as_building(monkeypatch, tmp_path):
 
     assert result["status"] == "building"
     assert result["image"] is None
-    assert started == ["cn-v3-2026-06-22-20260622T0900"]
+    assert started == ["cn-v4-2026-06-22-20260622T0900"]
 
 
 def test_cache_miss_serves_previous_slot_while_refreshing(monkeypatch, tmp_path):
     _reset_cache(monkeypatch, tmp_path)
-    overlay._mem_cache["cn-v3-2026-06-22-20260622T0600"] = {
+    overlay._mem_cache["cn-v4-2026-06-22-20260622T0600"] = {
         "country": "China",
         "date": "2026-06-22",
         "bounds": [[17, 73], [54, 136]],
@@ -74,13 +74,13 @@ def test_cache_miss_serves_previous_slot_while_refreshing(monkeypatch, tmp_path)
     )
 
     assert result["status"] == "stale"
-    assert result["image"] == "/api/overlay/image/cn-v3-2026-06-22-20260622T0600.png"
+    assert result["image"] == "/api/overlay/image/cn-v4-2026-06-22-20260622T0600.png"
     assert result["generated_utc"] == "2026-06-22T06:00:00+00:00"
 
 
 def test_recent_legacy_slot_is_adopted_without_refresh(monkeypatch, tmp_path):
     _reset_cache(monkeypatch, tmp_path)
-    overlay._mem_cache["cn-v3-2026-06-22-20260622T0830"] = {
+    overlay._mem_cache["cn-v4-2026-06-22-20260622T0830"] = {
         "country": "China",
         "date": "2026-06-22",
         "bounds": [[17, 73], [54, 136]],
@@ -104,9 +104,9 @@ def test_recent_legacy_slot_is_adopted_without_refresh(monkeypatch, tmp_path):
     assert result["generated_utc"] == "2026-06-22T08:30:00+00:00"
 
 
-def test_build_scores_one_gfs_grid_read(monkeypatch):
-    # The national overview now reads one GFS surface grid and scores it
-    # vectorized (#19) — no per-point requests.
+def test_build_scores_covering_gfs_hours_per_cell(monkeypatch):
+    # The overview reads a handful of GFS hours and still scores one vectorized
+    # national field — no per-point weather requests (#43).
     import numpy as np
 
     from predictor.gfs import SurfaceGrid
@@ -127,29 +127,44 @@ def test_build_scores_one_gfs_grid_read(monkeypatch):
                 humidity_pct=np.full(shape, 60.0),
                 visibility_m=np.full(shape, 25000.0),
                 run_time=datetime(2026, 6, 22, 0, tzinfo=timezone.utc),
-                valid_time=datetime(2026, 6, 22, 11, tzinfo=timezone.utc),
-                source_label="gfs@2026-06-22T00Z+f11", missing=[],
+                valid_time=valid_time,
+                source_label=f"gfs@test+f{valid_time.hour:02d}", missing=[],
             )
 
     monkeypatch.setattr(overlay, "_GFS", FakeGFS())
+    monkeypatch.setattr(
+        overlay,
+        "_geometry_mask",
+        lambda _geom, lats, lons: np.ones((len(lats), len(lons)), dtype=bool),
+    )
     monkeypatch.setattr(overlay, "_render_clipped_png", lambda *a, **k: "image")
 
     result = overlay._build(date(2026, 6, 22), object(), object(), object())
 
-    assert len(calls) == 1                      # exactly one grid read
+    assert len(calls) >= 3
     # CN_BBOX is (south, west, north, east); fetch_surface_grid takes
     # (lat_min, lat_max, lon_min, lon_max), so the build must reorder it.
     south, west, north, east = overlay.CN_BBOX
-    assert calls[0][0] == (south, north, west, east)
+    assert all(call[0] == (south, north, west, east) for call in calls)
+    assert all(call[1].minute == 0 and call[1].tzinfo == timezone.utc for call in calls)
+    assert all(
+        later - earlier == overlay.timedelta(hours=1)
+        for (_bbox, earlier), (_bbox2, later) in zip(calls, calls[1:])
+    )
     assert result["image"] == "image"
     assert result["n_points"] == 6
-    assert result["valid_utc"] == "2026-06-22T11:00:00+00:00"
+    assert result["valid_times_utc"] == [call[1].isoformat() for call in calls]
+    assert len(result["sunset_range_utc"]) == 2
+    assert result["surface_fetches"] == len(calls)
+    assert result["additional_surface_fetches"] == len(calls) - 1
+    assert result["decoded_input_bytes"] > 0
+    assert "valid_utc" not in result
     assert 0.0 <= result["max_probability"] <= 1.0
 
 
 def test_previous_schema_cache_is_ignored(monkeypatch, tmp_path):
     _reset_cache(monkeypatch, tmp_path)
-    overlay._mem_cache["cn-v1-2026-06-22-20260622T0900"] = {
+    overlay._mem_cache["cn-v3-2026-06-22-20260622T0900"] = {
         "country": "China",
         "date": "2026-06-22",
         "bounds": [[17, 73], [54, 136]],
@@ -170,7 +185,7 @@ def test_previous_schema_cache_is_ignored(monkeypatch, tmp_path):
 
     assert result["status"] == "building"
     assert result["image"] is None
-    assert started == ["cn-v3-2026-06-22-20260622T0900"]
+    assert started == ["cn-v4-2026-06-22-20260622T0900"]
 
 
 def test_axis_values_always_include_country_bounds():
@@ -191,7 +206,7 @@ def test_refresh_slots_are_three_hourly():
 
 
 def test_failed_build_observes_retry_cooldown(monkeypatch):
-    key = "cn-v3-2026-06-22-20260622T0900"
+    key = "cn-v4-2026-06-22-20260622T0900"
     overlay._building.clear()
     overlay._build_errors.clear()
     overlay._build_errors[key] = ("rate limited", overlay.time.monotonic() + 60)

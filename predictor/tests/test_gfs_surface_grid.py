@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 
 import numpy as np
+import pandas as pd
 import pytest
 import xarray as xr
 
@@ -106,3 +107,107 @@ def test_fetch_surface_grid_uses_cache(monkeypatch):
     b = src.fetch_surface_grid(bbox, _T6)
     assert calls["n"] == 1
     assert a.cloud_mid_pct.shape == b.cloud_mid_pct.shape
+
+
+def test_batch_surface_grids_use_one_common_model_run(monkeypatch, tmp_path):
+    src = GFSSource(cache_dir=tmp_path)
+    calls = []
+
+    def fake_download(run_dt, fxx):
+        calls.append((run_dt, fxx))
+        return _surface_ds()
+
+    monkeypatch.setattr(src, "_download_surface", fake_download)
+    valid_times = (
+        datetime(2026, 6, 23, 8, tzinfo=timezone.utc),
+        datetime(2026, 6, 23, 10, tzinfo=timezone.utc),
+    )
+
+    grids = src.fetch_surface_grids(
+        (15.0, 45.0, 117.0, 123.0), valid_times
+    )
+
+    # Per-time selection would choose 00Z for 08Z and 06Z for 10Z. The batch
+    # pins both forecast hours to 00Z so longitude does not imply model-cycle age.
+    assert calls == [
+        (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 8),
+        (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 10),
+    ]
+    assert {grid.run_time for grid in grids} == {
+        datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
+    }
+
+
+def test_batch_surface_fallback_moves_every_hour_together(monkeypatch, tmp_path):
+    src = GFSSource(cache_dir=tmp_path)
+    calls = []
+
+    def fake_download(run_dt, fxx):
+        calls.append((run_dt, fxx))
+        if run_dt.hour == 6:
+            raise FileNotFoundError("cycle still publishing")
+        return _surface_ds()
+
+    monkeypatch.setattr(src, "_download_surface", fake_download)
+    valid_times = (
+        datetime(2026, 6, 23, 10, tzinfo=timezone.utc),
+        datetime(2026, 6, 23, 11, tzinfo=timezone.utc),
+    )
+
+    grids = src.fetch_surface_grids(
+        (15.0, 45.0, 117.0, 123.0), valid_times
+    )
+
+    assert calls == [
+        (datetime(2026, 6, 23, 6, tzinfo=timezone.utc), 4),
+        (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 10),
+        (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 11),
+    ]
+    assert {grid.run_time for grid in grids} == {
+        datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
+    }
+
+
+def test_surface_grid_records_unique_grib_payload_bytes(tmp_path):
+    first = tmp_path / "cloud.grib2"
+    second = tmp_path / "surface.grib2"
+    first.write_bytes(b"c" * 17)
+    second.write_bytes(b"s" * 23)
+    ds = _surface_ds()
+    for short in ("lcc", "mcc", "hcc"):
+        ds[short].encoding["source"] = str(first)
+    for short in ("r2", "vis"):
+        ds[short].encoding["source"] = str(second)
+
+    grid = GFSSource._surface_grid_from_dataset(
+        ds, bbox=(15.0, 45.0, 117.0, 123.0),
+        run_time=_T0, valid_time=_T6, source_label="gfs@test",
+    )
+
+    assert grid.download_bytes == 40
+    assert grid.decoded_bytes > grid.download_bytes
+
+
+def test_download_surface_records_inventory_byte_ranges(monkeypatch, tmp_path):
+    class FakeHerbie:
+        def inventory(self, search):
+            return pd.DataFrame({
+                "grib_message": [1, 2, 4],
+                "start_byte": [100, 200, 500],
+                "end_byte": [199, 299, 599],
+            })
+
+        def xarray(self, search):
+            return _surface_ds()
+
+    src = GFSSource(cache_dir=tmp_path)
+    monkeypatch.setattr(src, "_herbie", lambda *_args: FakeHerbie())
+
+    ds = src._download_surface(_T0, 6)
+    grid = src._surface_grid_from_dataset(
+        ds, bbox=(15.0, 45.0, 117.0, 123.0),
+        run_time=_T0, valid_time=_T6, source_label="gfs@test",
+    )
+
+    # Adjacent messages 1–2 are one 200-byte range; message 4 adds 100 bytes.
+    assert grid.download_bytes == 300

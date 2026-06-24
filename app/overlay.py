@@ -37,7 +37,7 @@ OVERLAY_FLOOR = 0.06
 # Increment whenever scoring inputs, rules, or rendering semantics change.
 # Keeping it in the key prevents a new deployment from serving an old image
 # produced by different forecast logic during the same refresh slot.
-CACHE_SCHEMA_VERSION = "v3"  # v3: SunsetWx-style turbo quality colormap (#40)
+CACHE_SCHEMA_VERSION = "v4"  # v4: per-cell sunset, multi-timestep GFS (#43)
 
 # China domain (a small margin around the border bounds).
 CN_BBOX = (17.0, 73.0, 54.0, 136.0)   # south, west, north, east
@@ -53,8 +53,8 @@ CN_STEP = 4.0                          # grid spacing in degrees (fixed grid)
 _QUALITY_CMAP = matplotlib.colormaps["turbo"].copy()
 _QUALITY_CMAP.set_bad(alpha=0.0)
 
-# The national overview now reads one GFS 0.25° grid and scores it vectorized
-# (#19), instead of ~190 per-point Open-Meteo requests.
+# The national overview reads a small set of GFS 0.25° hours and scores one
+# per-cell-sunset field vectorized (#19/#43), with no point API requests.
 _GFS = GFSSource()
 
 
@@ -89,6 +89,15 @@ def _geom_to_clip_path(geom) -> MplPath:
             codes.extend([MplPath.LINETO] * (len(xy) - 2))
             codes.append(MplPath.CLOSEPOLY)
     return MplPath(verts, codes)
+
+
+def _geometry_mask(geom, lats, lons) -> np.ndarray:
+    """Cells inside the same country geometry used to clip the rendered PNG."""
+    lon_grid, lat_grid = np.meshgrid(lons, lats)
+    points = np.column_stack((lon_grid.ravel(), lat_grid.ravel()))
+    return _geom_to_clip_path(geom).contains_points(points, radius=1e-9).reshape(
+        lat_grid.shape
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -261,37 +270,33 @@ def _axis_values(start: float, end: float, step: float) -> list[float]:
     return values
 
 
-def _center_sunset_utc(d: date_cls) -> datetime:
-    """Sunset (UTC) at the domain centre — the national overview's valid time."""
-    from astral import Observer
-    from astral.sun import sun
-
-    south, west, north, east = CN_BBOX
-    obs = Observer(latitude=(south + north) / 2.0, longitude=(west + east) / 2.0)
-    try:
-        return sun(obs, date=d, tzinfo=timezone.utc)["sunset"]
-    except ValueError:
-        # Polar edge (won't happen for China's centre, but degrade safely):
-        # fall back to solar noon + ~7 h at the centre meridian's longitude.
-        return datetime(d.year, d.month, d.day, 12, tzinfo=timezone.utc) + timedelta(hours=7)
-
-
 def _build(d: date_cls, source, predictor, geom) -> dict:
-    # One GFS 0.25° read, scored vectorized over the whole region (#19). The
-    # `source`/`predictor` parameters are kept for call-site/signature
-    # compatibility; the overview no longer makes per-point Open-Meteo requests.
-    #
-    # NOTE (#19 follow-up): a single valid time scores the whole 63°-wide domain
-    # at the centre-meridian sunset, so east/west China are read up to ~1 h off
-    # their own sunset. Matches SunsetWx's single-forecast-hour map; per-cell
-    # sunset (multi-timestep) is tracked separately.
-    valid_time = _center_sunset_utc(d)
+    # A handful of GFS 0.25° hours cover the domain's sunset range; every cell
+    # selects its nearest hour before one vectorized score pass (#43).  The
+    # `source`/`predictor` parameters remain for call-site compatibility; the
+    # overview makes no per-point Open-Meteo requests.
     south, west, north, east = CN_BBOX
     # fetch_surface_grid takes (lat_min, lat_max, lon_min, lon_max) — not the
     # (south, west, north, east) order of CN_BBOX.
-    field = build_national_field(_GFS, (south, north, west, east), valid_time)
+    field = build_national_field(
+        _GFS,
+        (south, north, west, east),
+        d,
+        domain_mask=lambda lats, lons: _geometry_mask(geom, lats, lons),
+    )
+    raw_mb = (
+        "unknown"
+        if field.download_bytes is None
+        else (
+            f"{field.download_bytes / 1e6:.1f} MB "
+            f"(+{field.additional_download_bytes / 1e6:.1f} MB)"
+        )
+    )
     print(
         f"[overlay] national field {field.source_label}: {field.n_points} cells, "
+        f"{field.surface_fetches} GFS hours (+{field.additional_surface_fetches}), "
+        f"raw payload {raw_mb}, decoded {field.decoded_input_bytes / 1e6:.1f} MB "
+        f"(+{field.additional_decoded_input_bytes / 1e6:.1f} MB), "
         f"{field.runtime_s:.2f}s, peak {field.peak_mem_mb:.1f} MB",
         flush=True,
     )
@@ -308,8 +313,15 @@ def _build(d: date_cls, source, predictor, geom) -> dict:
         ],
         "image": image,
         "max_probability": round(float(np.nanmax(field.probability)), 4),
-        "valid_utc": field.valid_time.isoformat(),
+        "valid_times_utc": [time.isoformat() for time in field.valid_times],
+        "sunset_range_utc": [time.isoformat() for time in field.sunset_range_utc],
         "n_points": field.n_points,
+        "surface_fetches": field.surface_fetches,
+        "additional_surface_fetches": field.additional_surface_fetches,
+        "download_bytes": field.download_bytes,
+        "additional_download_bytes": field.additional_download_bytes,
+        "decoded_input_bytes": field.decoded_input_bytes,
+        "additional_decoded_input_bytes": field.additional_decoded_input_bytes,
     }
 
 
