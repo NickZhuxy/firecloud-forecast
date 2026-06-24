@@ -1,29 +1,38 @@
-# TASKS — most important first. The loop picks ONE per iteration and updates this file.
+# TASKS — physics-hardening backlog, most important first.
+# The loop picks ONE per iteration, writes a failing offline test, fixes the code, commits.
+# All tests live in predictor/tests/ and must run offline (no network).
 
-## BLOCKER — needs a human decision (no model iteration can move the metric until resolved)
-- [ ] **Decide the label source + labelling rule** for "a good 火烧云 occurred at sunset
-      (date D, site L) -> 1/0", AND confirm the pivot to a supervised *probability* model.
-      This conflicts with the README stance (no personal training set; output is not a
-      probability), so it must be an explicit, deliberate choice. Options to weigh:
-      (a) professional/ground-truth observation logs, (b) a satellite-derived proxy label
-      with a written rule, (c) human-rated archive. The agent must NOT invent labels or
-      write data/holdout/ — that is the scoreboard.
-- [ ] Once decided: populate `data/train.parquet` and `data/holdout/holdout.parquet`
-      (schema in firecloud_ml/schema.py). Holdout = later dates only, frozen.
+## Physical invariants (pin laws the code must ALWAYS obey)
+- [ ] Condition scores stay in [0, 1] over a fuzz of valid-but-random Features/profiles
+      (rules.py, features.py, score.py). No NaN, no out-of-range, no exception.
+- [ ] Diagnosed cloud geometry is physical: top ≥ base ≥ surface, all finite, for every
+      diagnosed layer across a battery of synthetic soundings (clouds.py, cloud_top.py).
+- [ ] Sunward path/cross-section: distances strictly increasing and within 0–800 km;
+      sample points monotone along the true sunset azimuth (cross_section.py, spatial.py).
+- [ ] Determinism: identical input → identical output (extend the existing 1e-9 equivalence
+      theme into a property-style test over scoring + diagnosis).
+- [ ] National grid: every cell score ∈ [0,1] or NaN where masked; no exception over a
+      synthetic AtmosphericCube/SurfaceGrid (grid_score.py, national_field.py).
 
-## Open (blocked on the decision above)
-- [ ] Ingest base golden-hour features from the existing `predictor/` pipeline: low/mid/high
-      cloud cover, RH profile by level (already produced by predictor.gfs / profiles).
-- [ ] Add sun–cloud geometry feature (predictor.illumination / geometry give solar az/elev).
-- [ ] Add a surface visibility / aerosol proxy feature.
-- [ ] First real model iteration: fit the logistic baseline, record Brier/AUC vs base-rate,
-      then try one motivated improvement (calibration / interactions / a stronger learner).
+## Edge cases (degrade safely, never crash / emit unphysical values)
+- [ ] Polar / no-sunset day: high summer latitude where the sun never sets — illumination
+      and the scorer must handle it gracefully (illumination.py, sunset_grid.py).
+- [ ] Longitude conventions: 0–360 vs ±180 and the antimeridian seam (profiles nearest-lon,
+      sunset_grid.py, spatial.py).
+- [ ] Degenerate profiles: empty / single-level / all-NaN column through normalize.py →
+      clouds.py → cloud_top.py must fall back safely, not raise.
+- [ ] Extremes: 0% clear-sky and 100% overcast pushed through the full scorer.
+- [ ] Strong temperature inversion sounding through cloud diagnosis + cloud-top retrieval.
+
+## Coverage gaps to close with MEANINGFUL tests (current weak modules)
+- [ ] national_product.py (~77%) — exercise the pure plotting/metadata helpers offline.
+- [ ] gfs.py (~91%) — cycle-fallback / missing-level / error branches (mock the loader; no net).
+- [ ] national_field.py, sunset_grid.py, profiles.py, rules.py, features.py, clouds.py,
+      cross_section.py — close the remaining reachable branches with real assertions.
+
+## Target
+- [ ] predictor/ source coverage ≥ 95% (verify.sh floor) with all of the above green.
+      Ratchet the floor (COV_FLOOR) upward in future runs once reached.
 
 ## Done
-- [x] (iter 1) Minimal train+eval entrypoint writing reports/metrics.json — `python -m
-      firecloud_ml`; abstains (exit 2, writes nothing) until a real dataset exists.
-- [x] (iter 1) Leakage-free split BY DATE, forward in time — `firecloud_ml/split.py`
-      (asserts no shared date between train and holdout).
-- [x] (iter 1) >= 3 tests: (a) schema, (b) holdout-leakage guard, (c) metrics+model
-      sanity — `loop/tests/`, 11 passing.
-- [x] (iter 1) Hand-rolled Brier + ROC-AUC and a dependency-free logistic baseline.
+<!-- move finished items here with the iteration number that closed them -->

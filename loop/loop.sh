@@ -1,37 +1,41 @@
 #!/usr/bin/env bash
-# loop.sh — overnight Ralph-style loop for Project Cloud Agent (火烧云 predictor).
+# loop.sh — overnight Ralph-style loop for firecloud-forecast physics hardening.
 #
 # Loop Engineering: the loop prompts the agent; an EXTERNAL gate (verify.sh) decides "done".
-# Context is fresh each iteration — durable state lives on disk (PROGRESS.md / TASKS.md / git).
+# Context is fresh each iteration — durable state lives on disk (loop/PROGRESS.md,
+# loop/TASKS.md, git). The agent hardens predictor/; it cannot fake the coverage gate.
 set -euo pipefail
 
 # ---- knobs (override via env) ----------------------------------------------
-PROJECT_DIR="${PROJECT_DIR:-$HOME/projects/cloud-agent}"
-PROMPT_FILE="${PROMPT_FILE:-PROMPT.md}"
-VERIFY="${VERIFY:-./verify.sh}"
-MODEL="${MODEL:-sonnet}"                  # sonnet = cheap per iter; bump to opus if it stalls
-MAX_ITERS="${MAX_ITERS:-12}"              # hard ceiling on iterations
-MAX_TURNS="${MAX_TURNS:-40}"             # cap agentic turns INSIDE one iteration
-ITER_TIMEOUT="${ITER_TIMEOUT:-30m}"      # wall-clock kill switch per iteration
-TIME_BUDGET_MIN="${TIME_BUDGET_MIN:-420}" # total budget in minutes (420 ≈ 7h overnight)
+# PROJECT_DIR is the REPO ROOT (predictor/ lives there); the loop files live in loop/.
+PROJECT_DIR="${PROJECT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+PROMPT_FILE="${PROMPT_FILE:-loop/PROMPT.md}"
+VERIFY="${VERIFY:-loop/verify.sh}"
+MODEL="${MODEL:-sonnet}"                   # cheap per iter; bump to opus if it stalls
+MAX_ITERS="${MAX_ITERS:-12}"               # hard ceiling on iterations
+MAX_TURNS="${MAX_TURNS:-50}"               # cap agentic turns INSIDE one iteration
+ITER_TIMEOUT="${ITER_TIMEOUT:-30m}"        # wall-clock kill switch per iteration
+TIME_BUDGET_MIN="${TIME_BUDGET_MIN:-420}"  # total budget in minutes (420 ≈ 7h overnight)
+export COV_FLOOR="${COV_FLOOR:-95}"        # source-coverage target verify.sh enforces
 
-# Start TIGHT. Widen ALLOWED only when logs show the agent legitimately blocked.
-ALLOWED="Read,Edit,Write,Glob,Grep,Bash(python3:*),Bash(python:*),Bash(pytest:*),Bash(ls:*),Bash(cat:*),Bash(mkdir:*),Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git checkout:*)"
+# Tight allowlist: the project's real commands. Widen only when logs show a true block.
+ALLOWED="Read,Edit,Write,Glob,Grep,Bash(uv run pytest:*),Bash(uv run python:*),Bash(uv run:*),Bash(ls:*),Bash(cat:*),Bash(mkdir:*),Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git checkout:*),Bash(git log:*)"
 DENIED="Bash(git push:*),Bash(git reset:*),Bash(git clean:*),Bash(rm:*),Bash(sudo:*),Bash(curl:*),Bash(wget:*)"
 # ----------------------------------------------------------------------------
 
 cd "$PROJECT_DIR"
 command -v claude >/dev/null || { echo "FATAL: claude CLI not found"; exit 1; }
 command -v git    >/dev/null || { echo "FATAL: git not found"; exit 1; }
+command -v uv     >/dev/null || { echo "FATAL: uv not found (project uses uv)"; exit 1; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "FATAL: $PROJECT_DIR is not a git repo"; exit 1; }
 
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
-LOG_DIR="logs/loop-$RUN_ID"; mkdir -p "$LOG_DIR"
+LOG_DIR="loop/logs/loop-$RUN_ID"; mkdir -p "$LOG_DIR"
 START_EPOCH="$(date +%s)"
 log() { echo "[$(date +%T)] $*" | tee -a "$LOG_DIR/run.log"; }
 
-log "== Project Cloud Agent loop $RUN_ID =="
-log "dir=$PROJECT_DIR model=$MODEL max_iters=$MAX_ITERS budget=${TIME_BUDGET_MIN}m"
+log "== firecloud-forecast hardening loop $RUN_ID =="
+log "dir=$PROJECT_DIR model=$MODEL max_iters=$MAX_ITERS cov_floor=${COV_FLOOR}% budget=${TIME_BUDGET_MIN}m"
 
 for i in $(seq 1 "$MAX_ITERS"); do
   ELAPSED_MIN=$(( ( $(date +%s) - START_EPOCH ) / 60 ))
@@ -56,7 +60,7 @@ for i in $(seq 1 "$MAX_ITERS"); do
 
   # Safety net: never lose work — commit anything the agent left uncommitted.
   if ! git diff --quiet || ! git diff --cached --quiet; then
-    git add -A && git commit -q -m "loop[$i]: checkpoint (driver autocommit)" || true
+    git add -A && git commit -q -m "harden[$i]: checkpoint (driver autocommit)" || true
     log "driver autocommit."
   fi
 
@@ -73,4 +77,4 @@ done
 
 log "== loop finished =="
 log "Morning review:  git -C $PROJECT_DIR log --oneline | head -n $MAX_ITERS"
-log "                 git -C $PROJECT_DIR diff HEAD~$MAX_ITERS..HEAD   # inspect the night's work"
+log "                 cat $PROJECT_DIR/loop/PROGRESS.md"

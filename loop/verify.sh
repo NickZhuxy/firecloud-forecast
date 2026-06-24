@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# verify.sh — EXTERNAL, un-fakeable success gate for the overnight loop.
-# Exit 0 = goal met (loop stops). Non-zero = keep looping.
+# verify.sh — EXTERNAL, un-fakeable success gate for the overnight physics-hardening loop.
+# Exit 0 = goal met (loop stops). Non-zero = keep hardening.
 # The agent is forbidden from editing this file; only the driver runs it.
+#
+# "Done" = the OFFLINE physics suite is green AND predictor/ source coverage clears
+# the floor. You cannot raise real coverage without exercising real code paths, and
+# you cannot stay green while weakening behaviour — so the gate cannot be faked.
 set -uo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."            # repo root — predictor/ lives here
 
-# 1) Tests must pass.
-if ! pytest -q >/dev/null 2>&1; then
-  echo "verify: tests FAILING"; exit 1
+COV_FLOOR="${COV_FLOOR:-95}"      # source-coverage target; ratchet up as hardening proceeds
+
+# Offline only (integration/network tests excluded — validation is offline by design).
+PYTHONPATH=. uv run pytest -m "not integration" -q \
+    --cov=predictor --cov-config=loop/coveragerc \
+    --cov-fail-under="$COV_FLOOR"
+rc=$?
+
+if [ "$rc" -eq 0 ]; then
+  echo "verify: offline suite green AND predictor/ coverage >= ${COV_FLOOR}% -> PASS"
+  exit 0
 fi
-
-# 2) Metrics on the frozen holdout must clear both thresholds.
-METRICS="reports/metrics.json"
-[ -f "$METRICS" ] || { echo "verify: no metrics.json yet"; exit 1; }
-
-python3 - "$METRICS" <<'PY'
-import json, sys
-m = json.load(open(sys.argv[1]))
-brier = float(m.get("brier", 1.0))   # lower is better
-auc   = float(m.get("auc",   0.0))   # higher is better
-ok = (brier <= 0.15) and (auc >= 0.80)
-print(f"verify: brier={brier:.4f} auc={auc:.4f} -> {'PASS' if ok else 'FAIL'}")
-sys.exit(0 if ok else 1)
-PY
+echo "verify: NOT done (suite red or coverage < ${COV_FLOOR}%) -> keep hardening"
+exit 1
