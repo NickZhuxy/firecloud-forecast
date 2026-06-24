@@ -15,6 +15,7 @@ dist/
 # Project caches (HRRR downloads can be GBs)
 research/data/cache/
 research/data/raw/
+products/
 
 # IDE
 .vscode/

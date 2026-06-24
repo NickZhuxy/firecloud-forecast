@@ -70,7 +70,7 @@ aerosols-and-color     ── 平流层 vs 对流层气溶胶反向作用；Clea
    - 3.1 Data sources: Open-Meteo baseline, GFS pressure levels, satellite/radar correction
    - 3.2 Rule architecture: gate × modifier
    - 3.3 Scoring functions per rule (trapezoidal, geometric combiner)
-4. **Implementation** — Python package `predictor/` 与 FastAPI/Leaflet 应用。
+4. **Implementation** — Python package `predictor/` 与本地 SunsetWx 科研制图产物。
 5. **Validation** — 离线物理情景、公开资料、专业观测和多源同时次对照。
 6. **Discussion & Limitations** — 数据缺口（TOC、分层 AOD、真实云底）与模式不确定性。
 7. **Conclusion + Future Work** — 全国精细化、垂直剖面和卫星临近订正。
