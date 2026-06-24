@@ -31,14 +31,15 @@
 - [ ] gfs.py (~91%, 24 missed) — cycle-fallback / missing-level / error branches (mock the loader; no net).
 - [x] national_field.py (~88% → 100%) — DONE iter 3: all 13 missed lines covered by 11 new tests.
 - [ ] sunset_grid.py: line 33 is unreachable defensive code — skip.
-- [ ] profiles.py (~90%, 9 missed: lines 103-112 contiguous block) + cross_section.py (~92%,
-      4 missed: lines 43, 71, 85, 91) — together exactly 13 lines to hit 95% floor. DO NEXT.
+- [x] profiles.py (~90%, 9 missed: lines 103-112 contiguous block) + cross_section.py (~92%,
+      4 missed: lines 43, 71, 85, 91) — DONE iter 5: 5 new tests cover all 13 lines, floor reached.
 - [ ] rules.py (~94%, 11 missed), features.py (~93%, 10 missed), clouds.py (~95%, 6 missed)
       — close reachable branches for headroom above 95%.
 
 ## Target
-- [ ] predictor/ source coverage ≥ 95% (verify.sh floor) with all of the above green.
-      Ratchet the floor (COV_FLOOR) upward in future runs once reached.
+- [x] predictor/ source coverage ≥ 95% (verify.sh floor) — REACHED iter 5 (95%, 325 tests green).
+      Next target: 96%+ by covering reachable branches in rules.py (11 missed), features.py (10),
+      clouds.py (6). Ratchet COV_FLOOR once external verify confirms pass.
 
 ## Done
 <!-- move finished items here with the iteration number that closed them -->

@@ -93,3 +93,25 @@ national_product.py 77% → 88% (23 missed, all in load_map_context).
 still need 13 more lines to reach 95% floor.
 next: profiles.py (9 missed: lines 103-112, a contiguous block) + cross_section.py
 (4 missed: lines 43, 71, 85, 91) — together 13 lines exactly at the floor.
+
+### 2026-06-25  iter 5
+hardened: profiles.py (lines 103-112) + cross_section.py (lines 43, 71, 85, 91) — 13 lines.
+Added 5 tests:
+- `test_normalized_profile_to_dict_is_json_friendly` (test_profiles.py): exercises
+  NormalizedProfile.to_dict() — arrays → list, datetimes → ISO string (lines 103-112).
+- `test_even_heights_count_less_than_2_returns_single_zero` (test_cross_section.py):
+  even_heights(count=0/1) returns [0.0] (line 43).
+- `test_build_cross_section_raises_on_length_mismatch` (test_cross_section.py):
+  mismatched profiles/layers_per_point/samples raises ValueError (line 71).
+- `test_empty_profile_column_is_fully_masked` (test_cross_section.py):
+  profile with geometric_height_m=[] → col_heights.size == 0 → continue (line 85).
+- `test_profile_span_entirely_outside_heights_is_masked` (test_cross_section.py):
+  all requested heights above profile top → valid.any() is False → continue (line 91).
+cov 94% → 95% (1957 stmts, 111→98 missed). suite green (325 passed, 5 deselected).
+profiles.py 90% → 100%; cross_section.py 92% → 100%.
+COV_FLOOR OF 95% REACHED. Verify.sh external gate should now pass.
+Remaining missed lines (98 total): gfs.py 24, national_product.py 23 (load_map_context, offline-permanent skip),
+features.py 10, rules.py 11, clouds.py 6, cross_section_plot.py 3, sounding_plot.py 4,
+fetch.py 10, geometry.py 2, spatial.py 2, sunset_grid.py 1 (line 33 unreachable), others 2.
+next: headroom — push to 96%+ by covering reachable branches in rules.py (11 missed),
+features.py (10 missed), clouds.py (6 missed). Or wait for external verify to confirm gate passes.
