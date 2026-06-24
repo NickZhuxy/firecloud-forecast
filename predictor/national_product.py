@@ -47,6 +47,10 @@ class ProductArtifacts:
 
 
 def _geom_to_path(geom) -> MplPath:
+    # NOTE: interior rings are appended as additional closed subpaths but are not
+    # oriented to cut holes, so lakes/holes are filled rather than excluded. The
+    # production 110 m China outline has no interior rings, so this is currently
+    # latent; revisit if a higher-resolution outline with lakes is adopted.
     polygons = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
     vertices: list[tuple[float, float]] = []
     codes: list[int] = []
@@ -205,8 +209,10 @@ def plot_sunsetwx_product(
     colorbar.ax.tick_params(labelsize=8)
     colorbar.set_label("Sunset quality index", fontsize=9)
 
-    first_valid, last_valid = field.valid_times[0], field.valid_times[-1]
-    valid_label = f"{first_valid:%H:%M}–{last_valid:%H:%M} UTC"
+    # The caption reflects the true per-cell sunset window, not the (wider)
+    # snapped GFS hourly bracket in field.valid_times.
+    sunset_start, sunset_end = field.sunset_range_utc
+    valid_label = f"{sunset_start:%H:%M}–{sunset_end:%H:%M} UTC"
     fig.text(
         0.045,
         0.91,
@@ -255,6 +261,11 @@ def _metadata(
     generated_at: datetime,
 ) -> dict:
     probability = np.asarray(field.probability, dtype=float)
+    finite = probability[np.isfinite(probability)]
+    # An all-NaN grid would make nanmin/nanmax return NaN, which json.dumps emits
+    # as a bare `NaN` token (invalid JSON). Fall back to null instead.
+    prob_min = float(finite.min()) if finite.size else None
+    prob_max = float(finite.max()) if finite.size else None
     return {
         "schema_version": PRODUCT_SCHEMA_VERSION,
         "product": "china_sunset_quality",
@@ -266,10 +277,7 @@ def _metadata(
         "valid_times_utc": [value.isoformat() for value in field.valid_times],
         "sunset_range_utc": [value.isoformat() for value in field.sunset_range_utc],
         "n_points": field.n_points,
-        "probability_range": {
-            "min": float(np.nanmin(probability)),
-            "max": float(np.nanmax(probability)),
-        },
+        "probability_range": {"min": prob_min, "max": prob_max},
         "performance": {
             "surface_fetches": field.surface_fetches,
             "additional_surface_fetches": field.additional_surface_fetches,

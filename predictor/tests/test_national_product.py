@@ -72,7 +72,9 @@ def test_plot_is_complete_sunsetwx_scientific_product():
     assert "Sunset Quality" in text
     assert "GFS 0.25" in text
     assert "Initialized" in text
-    assert "10:00–15:00 UTC" in text
+    # Caption shows the true per-cell sunset range (sunset_range_utc), not the
+    # wider snapped GFS hourly bracket (valid_times 10:00–15:00).
+    assert "10:53–14:36 UTC" in text
     assert "Warmer Colors" in text
     assert len(fig.axes) == 2  # map + vertical colorbar
     assert fig.get_facecolor()[-1] == 1.0
@@ -108,6 +110,19 @@ def test_save_product_writes_png_and_metadata(tmp_path):
     assert metadata["n_points"] == 12
     assert metadata["probability_range"] == {"min": 0.0, "max": 1.0}
     assert metadata["performance"]["download_bytes"] == 35_191_577
+
+
+def test_metadata_all_nan_probability_serializes_as_null():
+    import dataclasses
+
+    nan_probability = np.full_like(_field().probability, np.nan)
+    field = dataclasses.replace(_field(), probability=nan_probability)
+    meta = product_mod._metadata(
+        field, date(2026, 6, 24), "x.png", datetime(2026, 6, 24, tzinfo=timezone.utc)
+    )
+    assert meta["probability_range"] == {"min": None, "max": None}
+    # Strict JSON rejects bare NaN tokens; this must not raise.
+    json.dumps(meta, allow_nan=False)
 
 
 def test_cli_parses_local_generation_request(monkeypatch, tmp_path, capsys):
