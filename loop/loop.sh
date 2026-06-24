@@ -29,6 +29,13 @@ command -v git    >/dev/null || { echo "FATAL: git not found"; exit 1; }
 command -v uv     >/dev/null || { echo "FATAL: uv not found (project uses uv)"; exit 1; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "FATAL: $PROJECT_DIR is not a git repo"; exit 1; }
 
+# Per-iteration wall-clock guard is optional (macOS ships no `timeout`); when no
+# timeout binary exists, fall back to the --max-budget-usd cap. Plain string (not
+# an array) so it word-splits to nothing under bash 3.2 + set -u.
+TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
+TIMEOUT_PREFIX=""
+[ -n "$TIMEOUT_BIN" ] && TIMEOUT_PREFIX="$TIMEOUT_BIN $ITER_TIMEOUT"
+
 RUN_ID="$(date +%Y%m%d-%H%M%S)"
 LOG_DIR="loop/logs/loop-$RUN_ID"; mkdir -p "$LOG_DIR"
 START_EPOCH="$(date +%s)"
@@ -36,6 +43,7 @@ log() { echo "[$(date +%T)] $*" | tee -a "$LOG_DIR/run.log"; }
 
 log "== firecloud-forecast hardening loop $RUN_ID =="
 log "dir=$PROJECT_DIR model=$MODEL max_iters=$MAX_ITERS cov_floor=${COV_FLOOR}% budget=${TIME_BUDGET_MIN}m"
+log "per-iteration guard: ${TIMEOUT_PREFIX:-(no timeout; --max-budget-usd \$$MAX_BUDGET_USD only)}"
 
 for i in $(seq 1 "$MAX_ITERS"); do
   ELAPSED_MIN=$(( ( $(date +%s) - START_EPOCH ) / 60 ))
@@ -45,8 +53,9 @@ for i in $(seq 1 "$MAX_ITERS"); do
   log "--- iteration $i/$MAX_ITERS (elapsed ${ELAPSED_MIN}m) ---"
 
   # Fresh context every run; the prompt itself re-reads state from disk.
+  # $TIMEOUT_PREFIX is "timeout 30m" when available, else empty (runs claude directly).
   set +e
-  timeout "$ITER_TIMEOUT" claude -p "$(cat "$PROMPT_FILE")" \
+  $TIMEOUT_PREFIX claude -p "$(cat "$PROMPT_FILE")" \
       --model "$MODEL" \
       --permission-mode dontAsk \
       --allowedTools "$ALLOWED" \
