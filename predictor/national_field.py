@@ -40,27 +40,40 @@ def build_national_field(gfs_source, bbox, valid_time: datetime) -> NationalFiel
     humidity/visibility cells fall back to neutral defaults so a gap never zeroes
     a cell. Latitudes are returned ascending for rendering.
     """
-    tracemalloc.start()
+    # Don't disturb tracemalloc if the caller already had it running.
+    trace = not tracemalloc.is_tracing()
+    if trace:
+        tracemalloc.start()
     t0 = time.perf_counter()
 
     grid = gfs_source.fetch_surface_grid(bbox, valid_time)
-    order = np.argsort(grid.lats)  # GFS latitudes run north→south; flip ascending
+    # GFS latitudes run north→south; longitudes may not be ascending after a
+    # crop. Reorder rows and columns to ascending so the rendered map is upright.
+    lat_order = np.argsort(grid.lats)
+    lon_order = np.argsort(grid.lons)
+
+    def _ordered(a: np.ndarray) -> np.ndarray:
+        return np.asarray(a)[np.ix_(lat_order, lon_order)]
+
     inputs = GridInputs(
-        cloud_low_pct=grid.cloud_low_pct[order],
-        cloud_mid_pct=grid.cloud_mid_pct[order],
-        cloud_high_pct=grid.cloud_high_pct[order],
-        humidity_pct=_finite(grid.humidity_pct[order], 50.0),
-        visibility_m=_finite(grid.visibility_m[order], 25000.0),
+        cloud_low_pct=_ordered(grid.cloud_low_pct),
+        cloud_mid_pct=_ordered(grid.cloud_mid_pct),
+        cloud_high_pct=_ordered(grid.cloud_high_pct),
+        humidity_pct=_finite(_ordered(grid.humidity_pct), 50.0),
+        visibility_m=_finite(_ordered(grid.visibility_m), 25000.0),
     )
     probability = score_grid(inputs)
 
     runtime_s = time.perf_counter() - t0
-    peak_mem_mb = tracemalloc.get_traced_memory()[1] / 1e6
-    tracemalloc.stop()
+    if trace:
+        peak_mem_mb = tracemalloc.get_traced_memory()[1] / 1e6
+        tracemalloc.stop()
+    else:
+        peak_mem_mb = float("nan")
 
     return NationalField(
-        lats=grid.lats[order],
-        lons=np.asarray(grid.lons, dtype=float),
+        lats=grid.lats[lat_order],
+        lons=grid.lons[lon_order],
         probability=probability,
         valid_time=grid.valid_time,
         source_label=grid.source_label,

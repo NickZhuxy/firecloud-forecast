@@ -2,9 +2,10 @@
 from datetime import datetime, timezone
 
 import numpy as np
+import pytest
 import xarray as xr
 
-from predictor.gfs import GFSSource, SurfaceGrid
+from predictor.gfs import GFSSource, GFSUnavailable, SurfaceGrid
 
 _T0 = datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
 _T6 = datetime(2026, 6, 23, 6, tzinfo=timezone.utc)
@@ -59,6 +60,36 @@ def test_missing_field_defaults_and_recorded():
     assert np.isnan(grid.humidity_pct).all()
     # Cover present → real values, not defaults.
     assert not np.isnan(grid.cloud_low_pct).any()
+
+
+def test_all_cover_absent_raises():
+    # A cover shortname mismatch must degrade loudly, not render a blank map.
+    with pytest.raises(GFSUnavailable):
+        GFSSource._surface_grid_from_dataset(
+            _surface_ds(drop=("lcc", "mcc", "hcc")), bbox=(15.0, 45.0, 117.0, 123.0),
+            run_time=_T0, valid_time=_T6, source_label="gfs@test",
+        )
+
+
+def test_empty_crop_raises():
+    with pytest.raises(GFSUnavailable):
+        GFSSource._surface_grid_from_dataset(
+            _surface_ds(), bbox=(60.0, 70.0, 117.0, 123.0),  # no rows in 60–70 N
+            run_time=_T0, valid_time=_T6, source_label="gfs@test",
+        )
+
+
+def test_residual_level_dim_is_collapsed():
+    # cfgrib may keep a size-1 level dim (e.g. heightAboveGround on RH); the
+    # crop must still yield a 2-D (lat, lon) field.
+    ds = _surface_ds()
+    r2 = ds["r2"].expand_dims({"heightAboveGround": [2.0]})
+    ds = ds.drop_vars("r2").assign(r2=r2)
+    grid = GFSSource._surface_grid_from_dataset(
+        ds, bbox=(15.0, 45.0, 117.0, 123.0),
+        run_time=_T0, valid_time=_T6, source_label="gfs@test",
+    )
+    assert grid.humidity_pct.shape == (3, 3)
 
 
 def test_fetch_surface_grid_uses_cache(monkeypatch):

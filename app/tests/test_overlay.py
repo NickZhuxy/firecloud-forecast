@@ -137,7 +137,10 @@ def test_build_scores_one_gfs_grid_read(monkeypatch):
     result = overlay._build(date(2026, 6, 22), object(), object(), object())
 
     assert len(calls) == 1                      # exactly one grid read
-    assert calls[0][0] == overlay.CN_BBOX
+    # CN_BBOX is (south, west, north, east); fetch_surface_grid takes
+    # (lat_min, lat_max, lon_min, lon_max), so the build must reorder it.
+    south, west, north, east = overlay.CN_BBOX
+    assert calls[0][0] == (south, north, west, east)
     assert result["image"] == "image"
     assert result["n_points"] == 6
     assert result["valid_utc"] == "2026-06-22T11:00:00+00:00"

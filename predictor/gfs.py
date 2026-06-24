@@ -322,7 +322,13 @@ class GFSSource:
         valid_time: datetime,
         source_label: str,
     ) -> SurfaceGrid:
-        """Crop GFS surface fields to a bbox; cover→0, RH/VIS→NaN where absent."""
+        """Crop GFS surface fields to a bbox; cover→0, RH/VIS→NaN where absent.
+
+        ``bbox`` is ``(lat_min, lat_max, lon_min, lon_max)`` — the same convention
+        as ``fetch_cube`` (NOT the (south, west, north, east) order of CN_BBOX).
+        Raises ``GFSUnavailable`` if the crop is empty or no cover tier resolves,
+        so the caller degrades loudly instead of rendering a blank "ready" map.
+        """
         lat_min, lat_max, lon_min, lon_max = bbox
         lats = np.asarray(ds["latitude"].values, dtype=float)
         grid_lons = np.asarray(ds["longitude"].values, dtype=float)
@@ -338,6 +344,8 @@ class GFSSource:
         )
         lat_idx = np.where(lat_mask)[0]
         lon_idx = np.where(lon_mask)[0]
+        if lat_idx.size == 0 or lon_idx.size == 0:
+            raise GFSUnavailable(f"GFS surface crop is empty for bbox {bbox}")
         sub = ds.isel(latitude=lat_idx, longitude=lon_idx)
 
         out_lats = np.asarray(sub["latitude"].values, dtype=float)
@@ -349,17 +357,28 @@ class GFSSource:
             if short not in sub.data_vars:
                 missing.append(short)
                 return np.full((ny, nx), default)
-            return (
-                sub[short].transpose("latitude", "longitude").values.astype(float)
-            )
+            da = sub[short]
+            # Collapse any residual (step / single-level) dims cfgrib may keep.
+            extra = [d for d in da.dims if d not in ("latitude", "longitude")]
+            if extra:
+                da = da.isel({d: 0 for d in extra})
+            return da.transpose("latitude", "longitude").values.astype(float)
 
         # cfgrib shortnames: cover lcc/mcc/hcc, 2 m RH r2, surface VIS vis.
+        cover = {
+            "cloud_low_pct": field("lcc", 0.0),
+            "cloud_mid_pct": field("mcc", 0.0),
+            "cloud_high_pct": field("hcc", 0.0),
+        }
+        if all(s in missing for s in ("lcc", "mcc", "hcc")):
+            raise GFSUnavailable(
+                f"GFS surface dataset has no cover tier (lcc/mcc/hcc); "
+                f"got {list(sub.data_vars)}"
+            )
         return SurfaceGrid(
+            **cover,
             lats=out_lats,
             lons=out_lons,
-            cloud_low_pct=field("lcc", 0.0),
-            cloud_mid_pct=field("mcc", 0.0),
-            cloud_high_pct=field("hcc", 0.0),
             humidity_pct=field("r2", np.nan),
             visibility_m=field("vis", np.nan),
             run_time=run_time,

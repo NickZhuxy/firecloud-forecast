@@ -15,7 +15,8 @@ from predictor.national_field import build_national_field
 def test_surface_grid_over_china_is_complete_from_live_gfs():
     src = GFSSource()
     valid = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
-    grid = src.fetch_surface_grid((30.0, 118.0, 34.0, 122.0), valid)  # small East China bbox
+    # bbox = (lat_min, lat_max, lon_min, lon_max) — a small East China box.
+    grid = src.fetch_surface_grid((30.0, 34.0, 118.0, 122.0), valid)
 
     assert grid.lats.size >= 3 and grid.lons.size >= 3
     # Cloud cover must be a real, finite percentage field (shortnames lcc/mcc/hcc).
@@ -32,7 +33,7 @@ def test_surface_grid_over_china_is_complete_from_live_gfs():
 def test_build_national_field_from_live_gfs():
     src = GFSSource()
     valid = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
-    field = build_national_field(src, (18.0, 100.0, 40.0, 124.0), valid)
+    field = build_national_field(src, (18.0, 40.0, 100.0, 124.0), valid)
     assert field.n_points > 1000
     assert np.all((field.probability >= 0.0) & (field.probability <= 1.0))
     assert field.runtime_s >= 0.0 and field.peak_mem_mb > 0.0

@@ -268,15 +268,28 @@ def _center_sunset_utc(d: date_cls) -> datetime:
 
     south, west, north, east = CN_BBOX
     obs = Observer(latitude=(south + north) / 2.0, longitude=(west + east) / 2.0)
-    return sun(obs, date=d, tzinfo=timezone.utc)["sunset"]
+    try:
+        return sun(obs, date=d, tzinfo=timezone.utc)["sunset"]
+    except ValueError:
+        # Polar edge (won't happen for China's centre, but degrade safely):
+        # fall back to solar noon + ~7 h at the centre meridian's longitude.
+        return datetime(d.year, d.month, d.day, 12, tzinfo=timezone.utc) + timedelta(hours=7)
 
 
 def _build(d: date_cls, source, predictor, geom) -> dict:
     # One GFS 0.25° read, scored vectorized over the whole region (#19). The
     # `source`/`predictor` parameters are kept for call-site/signature
     # compatibility; the overview no longer makes per-point Open-Meteo requests.
+    #
+    # NOTE (#19 follow-up): a single valid time scores the whole 63°-wide domain
+    # at the centre-meridian sunset, so east/west China are read up to ~1 h off
+    # their own sunset. Matches SunsetWx's single-forecast-hour map; per-cell
+    # sunset (multi-timestep) is tracked separately.
     valid_time = _center_sunset_utc(d)
-    field = build_national_field(_GFS, CN_BBOX, valid_time)
+    south, west, north, east = CN_BBOX
+    # fetch_surface_grid takes (lat_min, lat_max, lon_min, lon_max) — not the
+    # (south, west, north, east) order of CN_BBOX.
+    field = build_national_field(_GFS, (south, north, west, east), valid_time)
     print(
         f"[overlay] national field {field.source_label}: {field.n_points} cells, "
         f"{field.runtime_s:.2f}s, peak {field.peak_mem_mb:.1f} MB",
