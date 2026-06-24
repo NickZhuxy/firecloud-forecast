@@ -18,9 +18,11 @@ ITER_TIMEOUT="${ITER_TIMEOUT:-30m}"        # wall-clock kill switch per iteratio
 TIME_BUDGET_MIN="${TIME_BUDGET_MIN:-420}"  # total budget in minutes (420 ≈ 7h overnight)
 export COV_FLOOR="${COV_FLOOR:-95}"        # source-coverage target verify.sh enforces
 
-# Tight allowlist: the project's real commands. Widen only when logs show a true block.
-ALLOWED="Read,Edit,Write,Glob,Grep,Bash(uv run pytest:*),Bash(uv run python:*),Bash(uv run:*),Bash(ls:*),Bash(cat:*),Bash(mkdir:*),Bash(git add:*),Bash(git commit:*),Bash(git status:*),Bash(git diff:*),Bash(git checkout:*),Bash(git log:*)"
-DENIED="Bash(git push:*),Bash(git reset:*),Bash(git clean:*),Bash(rm:*),Bash(sudo:*),Bash(curl:*),Bash(wget:*)"
+# Tool permissions live in loop/agent-settings.json (allow: Bash + file ops; deny:
+# git push/reset/clean, rm, sudo, curl, wget). A settings FILE is honoured reliably
+# under --permission-mode dontAsk; comma-joined --allowedTools strings are not, and
+# silently leave Bash denied (the agent can edit files but can't run pytest or commit).
+SETTINGS="${SETTINGS:-loop/agent-settings.json}"
 # ----------------------------------------------------------------------------
 
 cd "$PROJECT_DIR"
@@ -58,8 +60,7 @@ for i in $(seq 1 "$MAX_ITERS"); do
   $TIMEOUT_PREFIX claude -p "$(cat "$PROMPT_FILE")" \
       --model "$MODEL" \
       --permission-mode dontAsk \
-      --allowedTools "$ALLOWED" \
-      --disallowedTools "$DENIED" \
+      --settings "$SETTINGS" \
       --max-budget-usd "$MAX_BUDGET_USD" \
       --output-format text \
       >"$LOG_DIR/iter-$i.log" 2>&1
@@ -68,7 +69,8 @@ for i in $(seq 1 "$MAX_ITERS"); do
   log "claude exit=$rc  (full log: $LOG_DIR/iter-$i.log)"
 
   # Safety net: never lose work — commit anything the agent left uncommitted.
-  if ! git diff --quiet || ! git diff --cached --quiet; then
+  # Use porcelain (not `git diff`) so NEW untracked test files are caught too.
+  if [ -n "$(git status --porcelain)" ]; then
     git add -A && git commit -q -m "harden[$i]: checkpoint (driver autocommit)" || true
     log "driver autocommit."
   fi
