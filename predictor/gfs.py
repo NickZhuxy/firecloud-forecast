@@ -12,6 +12,7 @@ cropped in memory after parsing. A global cube over 20 levels × 8 variables is
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -55,10 +56,75 @@ class SurfaceGrid:
     valid_time: datetime
     source_label: str
     missing: list[str]
+    # GRIB subset bytes computed from Herbie's inventory byte ranges.  This is
+    # the logical download size; a disk-cache hit can use 0 network bytes while
+    # consuming the same payload.
+    download_bytes: int | None = None
 
     @property
     def n_points(self) -> int:
         return int(self.lats.size * self.lons.size)
+
+    @property
+    def decoded_bytes(self) -> int:
+        arrays = (
+            self.lats,
+            self.lons,
+            self.cloud_low_pct,
+            self.cloud_mid_pct,
+            self.cloud_high_pct,
+            self.humidity_pct,
+            self.visibility_m,
+        )
+        return sum(np.asarray(array).nbytes for array in arrays)
+
+
+_DOWNLOAD_BYTES_ATTR = "firecloud_download_bytes"
+
+
+def _subset_payload_bytes(herbie, search: str) -> int | None:
+    """Logical GRIB bytes Herbie will request for a regex subset."""
+    try:
+        inventory = herbie.inventory(search).sort_values("grib_message")
+        messages = np.asarray(inventory["grib_message"], dtype=int)
+        starts = np.asarray(inventory["start_byte"], dtype=float)
+        ends = np.asarray(inventory["end_byte"], dtype=float)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    if messages.size == 0 or not (
+        np.isfinite(starts).all() and np.isfinite(ends).all()
+    ):
+        return None
+
+    # Herbie combines consecutive GRIB messages into one HTTP Range request.
+    # Reproduce that grouping so the metric matches the downloaded payload, not
+    # merely the sum of selected message bodies.
+    group_starts = np.r_[0, np.where(np.diff(messages) != 1)[0] + 1]
+    group_ends = np.r_[group_starts[1:], messages.size]
+    return sum(
+        int(ends[stop - 1]) - int(starts[start]) + 1
+        for start, stop in zip(group_starts, group_ends)
+    )
+
+
+def _dataset_download_bytes(ds: xr.Dataset) -> int | None:
+    """Logical download bytes from inventory metadata or retained local files."""
+    measured = ds.attrs.get(_DOWNLOAD_BYTES_ATTR)
+    if isinstance(measured, (int, np.integer)) and measured >= 0:
+        return int(measured)
+
+    sources: set[Path] = set()
+    for variable in ds.data_vars.values():
+        source = variable.encoding.get("source")
+        if isinstance(source, (str, Path)):
+            sources.add(Path(source))
+    sizes: list[int] = []
+    for source in sources:
+        try:
+            sizes.append(source.stat().st_size)
+        except OSError:
+            continue
+    return sum(sizes) if sizes else None
 
 
 # GFS cfgrib shortname -> our profile field name.
@@ -157,16 +223,53 @@ class GFSSource:
         One read + decode for the whole region — the national overview then
         scores every cell with numpy instead of a per-point HTTP request.
         """
-        valid_utc = _as_utc(valid_time)
-        run_dt, fxx = self._select_cycle(valid_utc)
-        ds, run_used, fxx_used = self._load_with_fallback(run_dt, fxx, self._load_surface)
-        return self._surface_grid_from_dataset(
-            ds,
-            bbox=bbox,
-            run_time=run_used,
-            valid_time=valid_utc,
-            source_label=f"gfs@{run_used:%Y-%m-%dT%HZ}+f{fxx_used:02d}",
-        )
+        return self.fetch_surface_grids(bbox, (valid_time,))[0]
+
+    def fetch_surface_grids(
+        self,
+        bbox: tuple[float, float, float, float],
+        valid_times: Iterable[datetime],
+    ) -> list[SurfaceGrid]:
+        """Fetch several forecast hours from one common GFS model run.
+
+        Choosing each hour independently can cross a 6-hour cycle boundary and
+        create a false longitudinal seam.  The earliest selected candidate run
+        covers every requested valid time; if any hour is unavailable, the whole
+        batch falls back together so all cells retain the same model-cycle age.
+        """
+        valid_utc = tuple(_as_utc(time) for time in valid_times)
+        if not valid_utc:
+            return []
+        candidate_runs = [self._select_cycle(time)[0] for time in valid_utc]
+        common_run = min(candidate_runs)
+        base_fxx = [
+            max(0, round((time - common_run).total_seconds() / 3600.0))
+            for time in valid_utc
+        ]
+
+        last_exc: Exception | None = None
+        for step in range(self.MAX_CYCLE_FALLBACK + 1):
+            run = common_run - timedelta(hours=CYCLE_HOURS * step)
+            fxxs = [fxx + CYCLE_HOURS * step for fxx in base_fxx]
+            try:
+                datasets = [self._load_surface(run, fxx) for fxx in fxxs]
+            except Exception as exc:  # noqa: BLE001 — batch-fallback one cycle
+                last_exc = exc
+                continue
+            return [
+                self._surface_grid_from_dataset(
+                    ds,
+                    bbox=bbox,
+                    run_time=run,
+                    valid_time=time,
+                    source_label=f"gfs@{run:%Y-%m-%dT%HZ}+f{fxx:02d}",
+                )
+                for ds, time, fxx in zip(datasets, valid_utc, fxxs)
+            ]
+        raise GFSUnavailable(
+            f"no complete GFS surface batch near {common_run:%Y-%m-%dT%HZ} "
+            f"after {self.MAX_CYCLE_FALLBACK} fallbacks"
+        ) from last_exc
 
     # ---- cycle selection / loading -------------------------------------
 
@@ -269,11 +372,14 @@ class GFSSource:
         """Download GFS surface fields (étage cover, 2 m RH, visibility)."""
         H = self._herbie(run_dt, fxx)
         search = r":(?:LCDC|MCDC|HCDC):|:RH:2 m above ground:|:VIS:surface:"
+        download_bytes = _subset_payload_bytes(H, search)
         parsed = H.xarray(search)
         if isinstance(parsed, list):
-            return xr.merge(
+            parsed = xr.merge(
                 parsed, compat="override", combine_attrs="override", join="outer"
             )
+        if download_bytes is not None:
+            parsed.attrs[_DOWNLOAD_BYTES_ATTR] = download_bytes
         return parsed
 
     # cfgrib shortnames: LCDC→lcc, MCDC→mcc, HCDC→hcc.
@@ -385,6 +491,7 @@ class GFSSource:
             valid_time=valid_time,
             source_label=source_label,
             missing=missing,
+            download_bytes=_dataset_download_bytes(ds),
         )
 
     # ---- pure transform (tested with synthetic xarray) -----------------
