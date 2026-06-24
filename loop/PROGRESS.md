@@ -20,8 +20,24 @@ physics scenarios + public-data cross-checks (see repo README).
   physics. The earlier ML scaffold (firecloud_ml/, its tests, data contract) was removed.
 
 ## Log
-<!-- iteration entries appended below, e.g.:
-### 2026-06-25  iter 1
-hardened: scores-in-[0,1] invariant over fuzzed Features; found+fixed a NaN leak in rules.py.
-cov 92.0% -> 92.6%. suite green. next: cloud-geometry top≥base≥surface invariant.
--->
+
+### 2026-06-25  iter 2
+hardened: polar/midnight-sun fallback + all error branches in `sunset_grid.py`.
+Added 17 tests to `predictor/tests/test_sunset_grid.py` covering:
+- `_axis()` raises on empty / 2-D / non-finite inputs (lines 20, 22).
+- `_inclusive_axis()` raises on zero / negative / NaN step (line 28).
+- `_sunset_timestamp()` polar fallback: at 80°N on 2026-06-22 (midnight sun) astral
+  raises ValueError; fallback returns `midnight UTC + (18h − lon/15h)` — three tests
+  pin the exact values for lon=0° (18:00 UTC) and lon=120°E (10:00 UTC) and verify
+  that `sunset_utc_grid` over a polar domain yields non-NaT output (lines 44-51).
+- `hourly_valid_times()` raises on empty and NaT-containing arrays (line 95).
+- `nearest_valid_time_indices()` raises on empty/NaT sunsets, empty valid_times,
+  and non-increasing valid_times (lines 112, 114, 128).
+Line 33 in `_inclusive_axis()` is unreachable defensive code (insert when first value
+doesn't align with lo) — skipped; will not be covered by normal usage.
+cov 92% → 93% (1957 stmts, 146 missed). suite green (296 passed, 5 deselected).
+sunset_grid.py now at 98% (only line 33 unreachable).
+next: close the 13-line gap in national_field.py (lines 59, 61, 75, 77, 121, 123,
+  126, 143, 163, 183-187, 196) — many are trivial error-branch tests requiring no GFS
+  mock; tackle them as the next atomic step.
+need 48 more lines to reach 95% floor.
