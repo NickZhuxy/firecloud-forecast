@@ -13,7 +13,7 @@ PROMPT_FILE="${PROMPT_FILE:-loop/PROMPT.md}"
 VERIFY="${VERIFY:-loop/verify.sh}"
 MODEL="${MODEL:-sonnet}"                   # cheap per iter; bump to opus if it stalls
 MAX_ITERS="${MAX_ITERS:-12}"               # hard ceiling on iterations
-MAX_TURNS="${MAX_TURNS:-50}"               # cap agentic turns INSIDE one iteration
+MAX_BUDGET_USD="${MAX_BUDGET_USD:-4}"      # cap API $ spend INSIDE one iteration
 ITER_TIMEOUT="${ITER_TIMEOUT:-30m}"        # wall-clock kill switch per iteration
 TIME_BUDGET_MIN="${TIME_BUDGET_MIN:-420}"  # total budget in minutes (420 ≈ 7h overnight)
 export COV_FLOOR="${COV_FLOOR:-95}"        # source-coverage target verify.sh enforces
@@ -51,7 +51,7 @@ for i in $(seq 1 "$MAX_ITERS"); do
       --permission-mode dontAsk \
       --allowedTools "$ALLOWED" \
       --disallowedTools "$DENIED" \
-      --max-turns "$MAX_TURNS" \
+      --max-budget-usd "$MAX_BUDGET_USD" \
       --output-format text \
       >"$LOG_DIR/iter-$i.log" 2>&1
   rc=$?
