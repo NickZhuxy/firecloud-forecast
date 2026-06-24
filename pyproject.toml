@@ -12,8 +12,6 @@ dependencies = [
     "matplotlib>=3.8",
     "cartopy>=0.23",
     "astral>=3.2",
-    "fastapi>=0.110",
-    "uvicorn>=0.29",
     "requests>=2.31",
 ]
 
@@ -36,7 +34,7 @@ build-backend = "hatchling.build"
 packages = ["predictor"]
 
 [tool.pytest.ini_options]
-testpaths = ["predictor/tests", "app/tests"]
+testpaths = ["predictor/tests"]
 markers = [
     "integration: marks tests requiring network (deselect with -m 'not integration')",
 ]
