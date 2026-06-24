@@ -26,12 +26,15 @@
 - [ ] Strong temperature inversion sounding through cloud diagnosis + cloud-top retrieval.
 
 ## Coverage gaps to close with MEANINGFUL tests (current weak modules)
-- [ ] national_product.py (~77%, 45 missed) — exercise the pure plotting/metadata helpers offline.
+- [x] national_product.py (~77% → 88%) — DONE iter 4: 22 reachable lines covered by 13 new tests.
+      Remaining 23 lines all in load_map_context() (cartopy/network) — permanently skipped offline.
 - [ ] gfs.py (~91%, 24 missed) — cycle-fallback / missing-level / error branches (mock the loader; no net).
 - [x] national_field.py (~88% → 100%) — DONE iter 3: all 13 missed lines covered by 11 new tests.
 - [ ] sunset_grid.py: line 33 is unreachable defensive code — skip.
-- [ ] profiles.py (~90%, 9 missed), rules.py (~94%, 11 missed), features.py (~93%, 10 missed),
-      clouds.py (~95%, 6 missed), cross_section.py (~92%, 4 missed) — close reachable branches.
+- [ ] profiles.py (~90%, 9 missed: lines 103-112 contiguous block) + cross_section.py (~92%,
+      4 missed: lines 43, 71, 85, 91) — together exactly 13 lines to hit 95% floor. DO NEXT.
+- [ ] rules.py (~94%, 11 missed), features.py (~93%, 10 missed), clouds.py (~95%, 6 missed)
+      — close reachable branches for headroom above 95%.
 
 ## Target
 - [ ] predictor/ source coverage ≥ 95% (verify.sh floor) with all of the above green.

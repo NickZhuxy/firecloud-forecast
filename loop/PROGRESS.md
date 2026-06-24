@@ -63,3 +63,33 @@ cov 93% → 93% (1957 stmts, 146→133 missed). suite green (307 passed, 5 desel
 national_field.py now at 100%.
 still need 35 more lines to reach 95% floor.
 next highest-leverage: national_product.py (45 missed, 77%) or gfs.py (24 missed, 91%).
+
+### 2026-06-25  iter 4
+hardened: 22 reachable missed lines in `national_product.py` (77% → 88%).
+Added 13 tests to `predictor/tests/test_national_product.py` covering:
+- `_geom_to_path()` degenerate interior ring < 3 pts (line 61: `continue` skips it)
+  and all-degenerate polygon (line 67: `ValueError("country geometry contains no polygon rings")`).
+  Tested via `_RingStub`/`_PolyStub` stubs since shapely enforces min 3 exterior pts.
+- `_draw_polygon_boundary()` early return (line 73) when geometry is not Polygon/MultiPolygon
+  (e.g. a shapely Point).
+- `_line_parts()` generator: LineString branch (lines 87-88) and MultiLineString recursive
+  branch (lines 89-91).
+- `_draw_admin_lines()` inner loop body (lines 96-99): called with a real LineString,
+  verifying one line is plotted to the axes.
+- `_initialized_label()` no-match branch (line 133): non-GFS source label → "unknown".
+- `_utc()` naive-datetime branch (line 143): attaches UTC tzinfo before conversion.
+- `plot_sunsetwx_product()` surrounding loop body (line 174): context with one surrounding
+  polygon → loop body executes, figure still has 2 axes.
+- `save_product()` dpi validation (line 305): dpi ≤ 0 → `ValueError`.
+- `_intersects()` pure function (lines 335-337): True for overlapping bounds, False for disjoint.
+- `_parse_date()` error branch (lines 401-402): non-ISO string → `ArgumentTypeError`.
+- `_positive_int()` error branch (line 408): zero/negative → `ArgumentTypeError`.
+The remaining 23 missed lines in national_product.py are all in `load_map_context()`
+(lines 342-372) which calls `cartopy.io.shapereader.natural_earth()` — a disk/network fetch.
+That function is not exercised offline and the existing integration-exclusion keeps it
+out of the gate. Mark those as permanently skipped offline.
+cov 93% → 94% (1957 stmts, 133→111 missed). suite green (320 passed, 5 deselected).
+national_product.py 77% → 88% (23 missed, all in load_map_context).
+still need 13 more lines to reach 95% floor.
+next: profiles.py (9 missed: lines 103-112, a contiguous block) + cross_section.py
+(4 missed: lines 43, 71, 85, 91) — together 13 lines exactly at the floor.

@@ -1,11 +1,14 @@
 """Offline SunsetWx-style national product tests (#45)."""
+import argparse
 from datetime import date, datetime, timezone
 import json
 
 import matplotlib.image as mpimg
+from matplotlib.figure import Figure
+from matplotlib.path import Path as MplPath
 import numpy as np
 import pytest
-from shapely.geometry import box
+from shapely.geometry import box, LineString, MultiLineString, Point
 
 import predictor.national_product as product_mod
 from predictor.national_field import NationalField
@@ -14,6 +17,21 @@ from predictor.national_product import (
     plot_sunsetwx_product,
     save_product,
 )
+
+
+# Minimal stubs for testing _geom_to_path with degenerate polygon rings without
+# relying on shapely's ring-validity enforcement.
+class _RingStub:
+    def __init__(self, coords):
+        self.coords = coords
+
+
+class _PolyStub:
+    geom_type = "Polygon"
+
+    def __init__(self, exterior_coords, hole_coords=()):
+        self.exterior = _RingStub(exterior_coords)
+        self.interiors = [_RingStub(c) for c in hole_coords]
 
 _DATE = date(2026, 6, 24)
 _GENERATED = datetime(2026, 6, 24, 5, 30, tzinfo=timezone.utc)
@@ -205,3 +223,155 @@ def test_cli_help_does_not_generate(monkeypatch):
         product_mod.main(["--help"])
 
     assert exc.value.code == 0
+
+
+# ---------------------------------------------------------------------------
+# _geom_to_path edge cases (lines 61, 67)
+# ---------------------------------------------------------------------------
+
+def test_geom_to_path_skips_degenerate_interior_ring():
+    # line 61: interior ring with < 3 points triggers `continue`; valid exterior
+    # means the path is still built successfully.
+    poly = _PolyStub(
+        [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],  # 4 pts: valid exterior
+        hole_coords=[[(0.5, 0.5), (0.6, 0.5)]],  # 2 pts: degenerate → skipped
+    )
+    path = product_mod._geom_to_path(poly)
+    assert isinstance(path, MplPath)
+    # Only exterior ring contributes vertices (4 pts); degenerate interior skipped.
+    assert len(path.vertices) == 4
+
+
+def test_geom_to_path_raises_on_all_degenerate_rings():
+    # line 67: every ring is degenerate → no vertices accumulated → ValueError
+    poly = _PolyStub([(0.0, 0.0), (1.0, 0.0)])  # 2 pts: degenerate exterior
+    with pytest.raises(ValueError, match="no polygon rings"):
+        product_mod._geom_to_path(poly)
+
+
+# ---------------------------------------------------------------------------
+# _draw_polygon_boundary non-polygon early return (line 73)
+# ---------------------------------------------------------------------------
+
+def test_draw_polygon_boundary_ignores_non_polygon_geometry():
+    # line 73: returns immediately for a non-Polygon/MultiPolygon shape
+    fig = Figure()
+    ax = fig.add_subplot(111)
+    product_mod._draw_polygon_boundary(ax, Point(0, 0), color="red", linewidth=1.0)
+    assert len(ax.patches) == 0
+
+
+# ---------------------------------------------------------------------------
+# _line_parts generator (lines 87-91)
+# ---------------------------------------------------------------------------
+
+def test_line_parts_yields_linestring_directly():
+    # lines 87-88: a LineString is yielded as-is
+    ls = LineString([(0, 0), (1, 1), (2, 0)])
+    parts = list(product_mod._line_parts(ls))
+    assert parts == [ls]
+
+
+def test_line_parts_recurses_into_multilinestring():
+    # lines 89-91: a MultiLineString recurses and yields each child LineString
+    mls = MultiLineString([[(0, 0), (1, 1)], [(2, 2), (3, 3)]])
+    parts = list(product_mod._line_parts(mls))
+    assert len(parts) == 2
+    assert all(p.geom_type == "LineString" for p in parts)
+
+
+# ---------------------------------------------------------------------------
+# _draw_admin_lines body (lines 96-99)
+# ---------------------------------------------------------------------------
+
+def test_draw_admin_lines_plots_each_line_segment():
+    # lines 96-99: inner loop body executes when a non-empty LineString is present
+    fig = Figure()
+    ax = fig.add_subplot(111)
+    ls = LineString([(73, 17), (100, 35), (136, 54)])
+    product_mod._draw_admin_lines(ax, (ls,))
+    assert len(ax.lines) == 1
+
+
+# ---------------------------------------------------------------------------
+# _initialized_label no-match branch (line 133)
+# ---------------------------------------------------------------------------
+
+def test_initialized_label_returns_unknown_for_unrecognized_source():
+    # line 133: source label with no GFS pattern → "unknown"
+    assert product_mod._initialized_label("HRRR 2026-06-24 00Z") == "unknown"
+    assert product_mod._initialized_label("") == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# _utc naive-datetime branch (line 143)
+# ---------------------------------------------------------------------------
+
+def test_utc_converts_naive_datetime_to_utc():
+    # line 143: naive datetime gets UTC tzinfo attached before conversion
+    naive = datetime(2026, 6, 24, 12, 0)
+    result = product_mod._utc(naive)
+    assert result.tzinfo is not None
+    assert result.utcoffset().total_seconds() == 0
+    assert result.hour == 12
+
+
+# ---------------------------------------------------------------------------
+# plot_sunsetwx_product surrounding loop body (line 174)
+# ---------------------------------------------------------------------------
+
+def test_plot_sunsetwx_product_draws_surrounding_geometries():
+    # line 174: loop body executes when context.surrounding is non-empty;
+    # a surrounding polygon should add a patch (clipped to data coords)
+    ctx = MapContext(
+        country=box(73.0, 17.0, 136.0, 54.0),
+        surrounding=(box(40.0, 17.0, 73.0, 54.0),),
+        admin1=(),
+    )
+    fig = plot_sunsetwx_product(_field(), _DATE, ctx, generated_at=_GENERATED)
+    assert len(fig.axes) == 2  # map + colorbar axes still present
+
+
+# ---------------------------------------------------------------------------
+# save_product dpi validation (line 305)
+# ---------------------------------------------------------------------------
+
+def test_save_product_rejects_non_positive_dpi(tmp_path):
+    # line 305: dpi ≤ 0 must raise ValueError before any I/O
+    with pytest.raises(ValueError, match="dpi must be positive"):
+        save_product(_field(), _DATE, tmp_path, _context(), dpi=0)
+    with pytest.raises(ValueError, match="dpi must be positive"):
+        save_product(_field(), _DATE, tmp_path, _context(), dpi=-1)
+
+
+# ---------------------------------------------------------------------------
+# _intersects pure function (lines 335-337)
+# ---------------------------------------------------------------------------
+
+def test_intersects_detects_overlap_and_disjoint():
+    # lines 335-337: pure geometric intersection check
+    cn_bbox = (17.0, 73.0, 54.0, 136.0)  # south, west, north, east
+    # Bounds that overlap China's bounding box
+    assert product_mod._intersects((70, 15, 140, 55), cn_bbox)
+    # Bounds entirely west of China (max_x < west)
+    assert not product_mod._intersects((0, 0, 10, 20), cn_bbox)
+
+
+# ---------------------------------------------------------------------------
+# CLI helper error branches (lines 401-402, 408)
+# ---------------------------------------------------------------------------
+
+def test_parse_date_rejects_non_iso_string():
+    # lines 401-402: invalid date string → ArgumentTypeError with hint
+    with pytest.raises(argparse.ArgumentTypeError, match="YYYY-MM-DD"):
+        product_mod._parse_date("24-June-2026")
+    with pytest.raises(argparse.ArgumentTypeError, match="YYYY-MM-DD"):
+        product_mod._parse_date("not-a-date")
+
+
+def test_positive_int_rejects_non_positive():
+    # line 408: zero and negative values → ArgumentTypeError
+    with pytest.raises(argparse.ArgumentTypeError, match="positive"):
+        product_mod._positive_int("0")
+    with pytest.raises(argparse.ArgumentTypeError, match="positive"):
+        product_mod._positive_int("-3")
