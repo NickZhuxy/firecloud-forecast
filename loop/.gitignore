@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# Large/local dataset binaries — the labelled data is provided out-of-band, not committed.
+data/*.parquet
+data/holdout/*.parquet
