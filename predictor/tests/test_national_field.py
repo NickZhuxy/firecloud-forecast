@@ -36,7 +36,9 @@ class _FakeGFS:
         )
 
 
-def _grid(*, humidity=None, visibility=None, shape=(3, 3)) -> SurfaceGrid:
+def _grid(
+    *, humidity=None, visibility=None, shape=(3, 3), low=5.0, mid=55.0, high=40.0
+) -> SurfaceGrid:
     if shape == (3, 3):
         lats = np.array([40.0, 30.0, 20.0])  # north→south, like GFS
         lons = np.array([100.0, 110.0, 120.0])
@@ -46,9 +48,9 @@ def _grid(*, humidity=None, visibility=None, shape=(3, 3)) -> SurfaceGrid:
     return SurfaceGrid(
         lats=lats,
         lons=lons,
-        cloud_low_pct=np.full(shape, 5.0),
-        cloud_mid_pct=np.full(shape, 55.0),
-        cloud_high_pct=np.full(shape, 40.0),
+        cloud_low_pct=np.full(shape, low),
+        cloud_mid_pct=np.full(shape, mid),
+        cloud_high_pct=np.full(shape, high),
         humidity_pct=humidity if humidity is not None else np.full(shape, 60.0),
         visibility_m=visibility if visibility is not None else np.full(shape, 25000.0),
         run_time=_T,
