@@ -197,6 +197,140 @@ def test_covering_times_include_interior_bbox_sunset_extreme(monkeypatch):
     assert [time.hour for time in field.valid_times] == [10, 11, 12, 13]
 
 
+# ---------- _range_axis edge cases (lines 59, 61) ----------------------------
+
+def test_range_axis_degenerate_inverted_range():
+    # start > end → arange is empty; fallback sets [start], then end is appended (line 59 + 61).
+    result = national_field_mod._range_axis(30.0, 20.0)
+    assert result.tolist() == [30.0, 20.0]
+
+
+def test_range_axis_appends_non_aligned_end():
+    # end is not aligned to the step grid, so it must be appended explicitly.
+    result = national_field_mod._range_axis(20.0, 20.3, step=0.5)
+    assert result[0] == pytest.approx(20.0)
+    assert result[-1] == pytest.approx(20.3)
+
+
+# ---------- _active_sunsets error branches (lines 75, 77) --------------------
+
+def test_build_raises_when_domain_mask_wrong_shape():
+    def bad_mask(_lats, _lons):
+        return np.ones((1, 1), dtype=bool)
+
+    with pytest.raises(ValueError, match="domain_mask must return"):
+        build_national_field(_FakeGFS(_grid()), _BBOX, _DATE, domain_mask=bad_mask)
+
+
+def test_build_raises_when_domain_mask_excludes_all_cells():
+    def all_false(lats, lons):
+        return np.zeros((len(lats), len(lons)), dtype=bool)
+
+    with pytest.raises(ValueError, match="excludes every"):
+        build_national_field(_FakeGFS(_grid()), _BBOX, _DATE, domain_mask=all_false)
+
+
+# ---------- build_national_field input validation (lines 121, 123, 126) ------
+
+def test_build_accepts_datetime_as_target_date():
+    # A datetime is silently coerced to its .date(); should not raise.
+    dt = datetime(2026, 6, 22, 12, 0, tzinfo=timezone.utc)
+    field = build_national_field(_FakeGFS(_grid()), _BBOX, dt)
+    assert isinstance(field, NationalField)
+
+
+def test_build_raises_on_non_date_target_date():
+    with pytest.raises(TypeError, match="target_date must be a date"):
+        build_national_field(_FakeGFS(_grid()), _BBOX, "2026-06-22")
+
+
+def test_build_raises_on_inverted_lat_bbox():
+    with pytest.raises(ValueError, match="bbox must be"):
+        build_national_field(_FakeGFS(_grid()), (40.0, 20.0, 100.0, 120.0), _DATE)
+
+
+# ---------- fetch_surface_grids batch API (line 143) -------------------------
+
+def test_build_uses_batch_fetch_when_source_has_method():
+    class _BatchGFS:
+        def __init__(self, grid):
+            self.grid = grid
+            self.calls = []
+
+        def fetch_surface_grids(self, bbox, valid_times):
+            self.calls.append((bbox, list(valid_times)))
+            return [
+                replace(
+                    self.grid,
+                    valid_time=t,
+                    source_label=f"gfs@batch+f{t.hour:02d}",
+                )
+                for t in valid_times
+            ]
+
+    gfs = _BatchGFS(_grid())
+    field = build_national_field(gfs, _BBOX, _DATE)
+    assert isinstance(field, NationalField)
+    assert len(gfs.calls) == 1          # single batch call, not one per timestep
+    assert len(gfs.calls[0][1]) == len(field.valid_times)
+
+
+# ---------- coarse bbox miss (line 163) --------------------------------------
+
+def test_build_raises_when_coarse_bbox_misses_fine_grid_sunsets(monkeypatch):
+    # Call 1 (coarse bbox): all 11:10 → valid_times = hours {11, 12}.
+    # Call 2 (fine grid): one cell pushed to 13:50 → required_times adds {13, 14}.
+    # Neither 13 nor 14 is in valid_times → line 163 raises.
+    call_count = [0]
+
+    def narrow_then_wide(_date, lats, lons, **_kw):
+        call_count[0] += 1
+        base = np.datetime64("2026-06-22T11:10:00", "s")
+        result = np.full((len(lats), len(lons)), base)
+        if call_count[0] > 1:
+            result[-1, -1] = np.datetime64("2026-06-22T13:50:00", "s")
+        return result
+
+    monkeypatch.setattr(national_field_mod, "sunset_utc_grid", narrow_then_wide)
+    with pytest.raises(ValueError, match="coarse sunset range"):
+        build_national_field(_FakeGFS(_grid()), _BBOX, _DATE)
+
+
+# ---------- download_bytes summation branch (lines 183-187) ------------------
+
+def test_download_bytes_summed_when_all_grids_report_bytes(monkeypatch):
+    monkeypatch.setattr(national_field_mod, "sunset_utc_grid", _controlled_sunsets)
+
+    def grid_with_dl(valid_time):
+        return replace(
+            _grid(shape=(2, 2)),
+            download_bytes=500,
+            valid_time=valid_time,
+            source_label=f"gfs@dl+f{valid_time.hour:02d}",
+        )
+
+    field = build_national_field(_FakeGFS(grid_with_dl), _BBOX, _DATE)
+    n = len(field.valid_times)
+    assert field.download_bytes == 500 * n
+    assert field.additional_download_bytes == 500 * (n - 1)
+
+
+# ---------- tracemalloc already running (line 196) ---------------------------
+
+def test_peak_mem_nan_when_tracemalloc_already_tracing():
+    import math
+    import tracemalloc
+
+    tracemalloc.start()
+    try:
+        field = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE)
+        assert math.isnan(field.peak_mem_mb)
+    finally:
+        tracemalloc.stop()
+
+
+# ---------- existing domain_mask test ----------------------------------------
+
 def test_domain_mask_excludes_clipped_bbox_corner_times(monkeypatch):
     def late_corners(_date, lats, lons, **_kwargs):
         result = np.full(

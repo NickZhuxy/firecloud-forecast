@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+runs/
+# coverage artifacts from verify.sh / cov runs
+.coverage
+coverage.json

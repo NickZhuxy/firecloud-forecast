@@ -71,6 +71,16 @@ def test_aod_path_matches_scalar():
     assert abs(grid[0, 0] - scalar) < 1e-9
 
 
+def test_missing_clean_air_signals_are_neutral_like_scalar():
+    # When neither visibility nor AOD is available, CleanAirGate is neutral (1.0).
+    low = np.array([[5.0]]); mid = np.array([[55.0]]); high = np.array([[40.0]])
+    humidity = np.array([[60.0]])
+    grid = score_grid(GridInputs(low, mid, high, humidity))
+
+    scalar = _scalar_score(5.0, 55.0, 40.0, 60.0, None)
+    assert abs(grid[0, 0] - scalar) < 1e-9
+
+
 def test_output_shape_and_range():
     shape = (12, 20)
     rng = np.linspace(0, 100, shape[0] * shape[1]).reshape(shape)

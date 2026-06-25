@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 
 import numpy as np
+import pytest
 
 from predictor.clouds import CloudLayer
 from predictor.cross_section import SunwardCrossSection, build_cross_section, even_heights
@@ -105,3 +106,37 @@ def test_cloud_layers_are_carried_per_column():
     xsec = build_cross_section(path, profiles, [[layer], []], heights_m=even_heights(10000.0, 10))
     assert xsec.cloud_layers[0] == [layer]
     assert xsec.cloud_layers[1] == []
+
+
+def test_even_heights_count_less_than_2_returns_single_zero():
+    """even_heights with count < 2 returns [0.0] instead of calling linspace."""
+    assert even_heights(max_m=15000.0, count=1) == [0.0]
+    assert even_heights(max_m=15000.0, count=0) == [0.0]
+
+
+def test_build_cross_section_raises_on_length_mismatch():
+    """profiles/layers_per_point must align with path samples; mismatched length raises ValueError."""
+    path = _path(3)
+    profiles = [_profile(s.lat, s.lon) for s in path.samples]
+    with pytest.raises(ValueError, match="must align"):
+        build_cross_section(path, profiles, [[], []])   # 2 layers for 3-sample path
+
+
+def test_empty_profile_column_is_fully_masked():
+    """A profile with zero-length geometric_height_m is skipped (column stays NaN/masked)."""
+    path = _path(1)
+    p = _profile(31.0, 121.0)
+    object.__setattr__(p, "geometric_height_m", np.array([], dtype=float))
+    xsec = build_cross_section(path, [p], [[]], heights_m=even_heights(10000.0, 10))
+    assert not xsec.mask[:, 0].any()
+    assert np.isnan(xsec.relative_humidity_pct[:, 0]).all()
+
+
+def test_profile_span_entirely_outside_heights_is_masked():
+    """When no target heights fall within the profile span, valid is all-False → column stays masked."""
+    path = _path(1)
+    # Profile spans 1000–10000 m; requested heights are all above that.
+    p = _profile(31.0, 121.0, base_h=1000.0)
+    xsec = build_cross_section(path, [p], [[]], heights_m=[12000.0, 14000.0])
+    assert not xsec.mask[:, 0].any()
+    assert np.isnan(xsec.relative_humidity_pct[:, 0]).all()

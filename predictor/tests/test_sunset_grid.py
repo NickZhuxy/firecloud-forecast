@@ -2,10 +2,14 @@
 from datetime import date, datetime, timezone
 
 import numpy as np
+import pytest
 from astral import Observer
 from astral.sun import sun
 
 from predictor.sunset_grid import (
+    _axis,
+    _inclusive_axis,
+    _sunset_timestamp,
     hourly_valid_times,
     nearest_valid_time_indices,
     sunset_utc_grid,
@@ -71,3 +75,135 @@ def test_nearest_valid_time_uses_earlier_hour_on_tie():
     indices = nearest_valid_time_indices(sunsets, valid_times)
 
     assert indices.tolist() == [[0, 0, 1]]
+
+
+# ---------------------------------------------------------------------------
+# _axis input validation
+# ---------------------------------------------------------------------------
+
+def test_axis_rejects_empty_array():
+    with pytest.raises(ValueError, match="non-empty 1-D"):
+        _axis([], "lats")
+
+
+def test_axis_rejects_2d_array():
+    with pytest.raises(ValueError, match="non-empty 1-D"):
+        _axis([[1.0, 2.0], [3.0, 4.0]], "lats")
+
+
+def test_axis_rejects_non_finite_values():
+    with pytest.raises(ValueError, match="finite"):
+        _axis([1.0, float("nan"), 3.0], "lats")
+
+
+def test_axis_rejects_inf():
+    with pytest.raises(ValueError, match="finite"):
+        _axis([1.0, float("inf")], "lons")
+
+
+# ---------------------------------------------------------------------------
+# _inclusive_axis input validation
+# ---------------------------------------------------------------------------
+
+def test_inclusive_axis_rejects_zero_step():
+    with pytest.raises(ValueError, match="positive"):
+        _inclusive_axis(0.0, 10.0, 0.0)
+
+
+def test_inclusive_axis_rejects_negative_step():
+    with pytest.raises(ValueError, match="positive"):
+        _inclusive_axis(0.0, 10.0, -2.0)
+
+
+def test_inclusive_axis_rejects_nan_step():
+    with pytest.raises(ValueError, match="positive"):
+        _inclusive_axis(0.0, 10.0, float("nan"))
+
+
+# ---------------------------------------------------------------------------
+# Polar / midnight-sun fallback (physical invariant)
+# ---------------------------------------------------------------------------
+
+def test_polar_midnight_sun_timestamp_is_finite():
+    """At 80°N in midsummer the sun never sets; fallback must return a finite float."""
+    ts = _sunset_timestamp(date(2026, 6, 22), 80.0, 0.0)
+    assert np.isfinite(ts)
+
+
+def test_polar_midnight_sun_fallback_equals_18h_local_solar_time():
+    """Polar fallback is deterministic: midnight UTC + (18 h − lon/15 h)."""
+    lon = 0.0
+    ts = _sunset_timestamp(date(2026, 6, 22), 80.0, lon)
+    expected = datetime(2026, 6, 22, 18, 0, 0, tzinfo=timezone.utc).timestamp()
+    # The except-branch computes this exactly, no rounding.
+    assert abs(ts - expected) < 1.0
+
+
+def test_polar_midnight_sun_fallback_shifts_with_longitude():
+    """Fallback local solar time advances westward: lon=120°E → 10:00 UTC."""
+    lon = 120.0
+    ts = _sunset_timestamp(date(2026, 6, 22), 80.0, lon)
+    # 18.0 - 120/15 = 18 - 8 = 10:00 UTC
+    expected = datetime(2026, 6, 22, 10, 0, 0, tzinfo=timezone.utc).timestamp()
+    assert abs(ts - expected) < 1.0
+
+
+def test_polar_midnight_sun_propagates_through_grid():
+    """sunset_utc_grid over a domain containing polar cells must return non-NaT output."""
+    lats = np.array([70.0, 80.0])
+    lons = np.array([0.0, 30.0])
+    result = sunset_utc_grid(date(2026, 6, 22), lats, lons, coarse_step_deg=10.0)
+    assert result.shape == (2, 2)
+    assert not np.isnat(result).any()
+
+
+# ---------------------------------------------------------------------------
+# hourly_valid_times error cases
+# ---------------------------------------------------------------------------
+
+def test_hourly_valid_times_rejects_empty_array():
+    with pytest.raises(ValueError, match="non-empty"):
+        hourly_valid_times(np.array([], dtype="datetime64[s]"))
+
+
+def test_hourly_valid_times_rejects_nat_values():
+    sunsets = np.array(["2026-06-22T10:00:00", "NaT"], dtype="datetime64[s]")
+    with pytest.raises(ValueError, match="finite"):
+        hourly_valid_times(sunsets)
+
+
+# ---------------------------------------------------------------------------
+# nearest_valid_time_indices error cases
+# ---------------------------------------------------------------------------
+
+def test_nearest_valid_time_rejects_empty_sunsets():
+    with pytest.raises(ValueError, match="non-empty"):
+        nearest_valid_time_indices(
+            np.array([], dtype="datetime64[s]"),
+            (datetime(2026, 6, 22, 10, tzinfo=timezone.utc),),
+        )
+
+
+def test_nearest_valid_time_rejects_nat_in_sunsets():
+    sunsets = np.array(["2026-06-22T10:00:00", "NaT"], dtype="datetime64[s]")
+    with pytest.raises(ValueError, match="finite"):
+        nearest_valid_time_indices(
+            sunsets,
+            (datetime(2026, 6, 22, 10, tzinfo=timezone.utc),),
+        )
+
+
+def test_nearest_valid_time_rejects_empty_valid_times():
+    sunsets = np.array(["2026-06-22T10:00:00"], dtype="datetime64[s]")
+    with pytest.raises(ValueError, match="not be empty"):
+        nearest_valid_time_indices(sunsets, ())
+
+
+def test_nearest_valid_time_rejects_non_increasing_valid_times():
+    sunsets = np.array(["2026-06-22T10:00:00"], dtype="datetime64[s]")
+    valid_times = (
+        datetime(2026, 6, 22, 11, tzinfo=timezone.utc),
+        datetime(2026, 6, 22, 10, tzinfo=timezone.utc),  # out of order
+    )
+    with pytest.raises(ValueError, match="strictly increasing"):
+        nearest_valid_time_indices(sunsets, valid_times)

@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": ["Bash", "Read", "Glob", "Grep"],
+    "deny": [
+      "Edit(*)",
+      "Write(*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git restore:*)",
+      "Bash(git reset:*)",
+      "Bash(git clean:*)",
+      "Bash(rm:*)",
+      "Bash(sudo:*)",
+      "Bash(curl:*)",
+      "Bash(wget:*)",
+      "Bash(uv add:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv pip:*)",
+      "Bash(pip:*)",
+      "Bash(python -m pip:*)"
+    ]
+  }
+}

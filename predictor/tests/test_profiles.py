@@ -8,6 +8,7 @@ from predictor.profiles import (
     PROFILE_VARS,
     AtmosphericCube,
     AtmosphericProfile,
+    NormalizedProfile,
 )
 
 
@@ -91,3 +92,36 @@ def test_profile_to_dict_is_json_friendly():
     assert isinstance(d["temperature_k"], list)
     assert isinstance(d["run_time"], str)
     assert d["lat"] == 30.0
+
+
+def _build_normalized_profile() -> NormalizedProfile:
+    n = 4
+    heights = np.array([500.0, 1500.0, 4000.0, 8000.0])
+    t = datetime(2026, 6, 23, 10, tzinfo=timezone.utc)
+    return NormalizedProfile(
+        lat=31.0, lon=121.0,
+        pressure_hpa=np.array([950.0, 850.0, 600.0, 400.0]),
+        geometric_height_m=heights,
+        geopotential_height_m=heights,
+        temperature_k=np.array([290.0, 282.0, 260.0, 238.0]),
+        relative_humidity_pct=np.array([80.0, 65.0, 35.0, 20.0]),
+        dewpoint_k=np.array([286.0, 275.0, 240.0, 215.0]),
+        specific_humidity_kg_kg=np.full(n, 0.004),
+        u_wind_m_s=np.zeros(n),
+        v_wind_m_s=np.zeros(n),
+        vertical_velocity_pa_s=np.array([-0.2, -0.1, 0.0, 0.1]),
+        cloud_water_kg_kg=np.full(n, np.nan),
+        cloud_ice_kg_kg=np.full(n, np.nan),
+        run_time=t, valid_time=t, source_label="gfs@test", retrieved_at=t, missing=[],
+    )
+
+
+def test_normalized_profile_to_dict_is_json_friendly():
+    """NormalizedProfile.to_dict() serialises arrays to lists and datetimes to ISO strings."""
+    prof = _build_normalized_profile()
+    d = prof.to_dict()
+    assert isinstance(d["temperature_k"], list)
+    assert isinstance(d["geometric_height_m"], list)
+    assert isinstance(d["run_time"], str)
+    assert d["lat"] == 31.0
+    assert d["missing"] == []

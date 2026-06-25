@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Firecloud owner brief",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "source",
+    "summary",
+    "motivation",
+    "user_success",
+    "constraints",
+    "non_goals",
+    "owner_reserved_decisions",
+    "open_questions"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "source": { "type": "string" },
+    "summary": { "type": "string", "minLength": 1 },
+    "motivation": { "type": "string", "minLength": 1 },
+    "user_success": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "non_goals": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "owner_reserved_decisions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "priority_hint": {
+      "type": "string",
+      "enum": ["now", "next", "later", "unknown"]
+    }
+  }
+}

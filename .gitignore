@@ -16,6 +16,14 @@ dist/
 research/data/cache/
 research/data/raw/
 products/
+.uv-cache/
+.coverage
+.coverage.*
+coverage.json
+htmlcov/
+
+# Local reference material; useful for visual comparison, not redistributed.
+reference/
 
 # IDE
 .vscode/
