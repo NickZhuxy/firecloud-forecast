@@ -27,11 +27,14 @@ from matplotlib.ticker import FuncFormatter
 from predictor.gfs import GFSSource
 from predictor.national_field import NationalField, build_national_field
 
-PRODUCT_SCHEMA_VERSION = "v1"
+PRODUCT_SCHEMA_VERSION = "v2"
 CN_BBOX = (17.0, 73.0, 54.0, 136.0)  # south, west, north, east
+DISPLAY_PROBABILITY_THRESHOLD = 0.50
+DISPLAY_EDGE_FADE_WIDTH = 0.06
+DISPLAY_UPSAMPLE_FACTOR = 8
 _QUALITY_CMAP = LinearSegmentedColormap.from_list(
-    "firecloud_turbo",
-    matplotlib.colormaps["turbo"](np.linspace(0.10, 1.0, 256)),
+    "firecloud_orange_red",
+    ["#f97316", "#fb6a13", "#ef4444", "#dc2626", "#991b1b", "#7f1d1d"],
 )
 _QUALITY_CMAP.set_bad(alpha=0.0)
 # Rendering-only smoothing: the scored 0.25° grid can be speckled because many
@@ -119,6 +122,12 @@ def _draw_admin_lines(ax, geometries: tuple[object, ...]) -> None:
 def geometry_mask(geom, lats, lons) -> np.ndarray:
     """Boolean grid mask for the country geometry."""
     lon_grid, lat_grid = np.meshgrid(lons, lats)
+    try:
+        from shapely import contains_xy
+
+        return np.asarray(contains_xy(geom, lon_grid, lat_grid), dtype=bool)
+    except Exception:  # pragma: no cover - compatibility fallback for old shapely
+        pass
     points = np.column_stack((lon_grid.ravel(), lat_grid.ravel()))
     return _geom_to_path(geom).contains_points(points, radius=1e-9).reshape(
         lat_grid.shape
@@ -183,6 +192,86 @@ def display_quality(probability, passes: int = DISPLAY_SMOOTH_PASSES) -> np.ndar
     return np.clip(smoothed, 0.0, 1.0)
 
 
+def _interp_axis(values: np.ndarray, coordinates: np.ndarray, axis: int) -> np.ndarray:
+    """Interpolate ``values`` along one axis, preserving all-NaN slices."""
+    moved = np.moveaxis(np.asarray(values, dtype=float), axis, 0)
+    old_coordinates = np.arange(moved.shape[0], dtype=float)
+    flat = moved.reshape(moved.shape[0], -1)
+    out = np.empty((coordinates.size, flat.shape[1]), dtype=float)
+    for column_index in range(flat.shape[1]):
+        column = flat[:, column_index]
+        finite = np.isfinite(column)
+        if not np.any(finite):
+            out[:, column_index] = np.nan
+        else:
+            out[:, column_index] = np.interp(
+                coordinates,
+                old_coordinates[finite],
+                column[finite],
+                left=np.nan,
+                right=np.nan,
+            )
+    reshaped = out.reshape((coordinates.size, *moved.shape[1:]))
+    return np.moveaxis(reshaped, 0, axis)
+
+
+def upsample_display_quality(
+    quality,
+    *,
+    factor: int = DISPLAY_UPSAMPLE_FACTOR,
+) -> np.ndarray:
+    """Display-only upsample so 0.25° scores do not render as blocky tiles."""
+    factor = int(factor)
+    if factor <= 1:
+        return np.asarray(quality, dtype=float)
+    raw = np.asarray(quality, dtype=float)
+    if raw.ndim != 2:
+        raise ValueError("quality must be a 2-D array")
+    y_coords = np.linspace(0.0, raw.shape[0] - 1, (raw.shape[0] - 1) * factor + 1)
+    x_coords = np.linspace(0.0, raw.shape[1] - 1, (raw.shape[1] - 1) * factor + 1)
+    upsampled_y = _interp_axis(raw, y_coords, axis=0)
+    upsampled = _interp_axis(upsampled_y, x_coords, axis=1)
+    return np.clip(upsampled, 0.0, 1.0)
+
+
+def display_candidates(
+    probability,
+    *,
+    threshold: float = DISPLAY_PROBABILITY_THRESHOLD,
+    passes: int = DISPLAY_SMOOTH_PASSES,
+    upscale: int = DISPLAY_UPSAMPLE_FACTOR,
+) -> np.ma.MaskedArray:
+    """Display-only field that hides non-firecloud areas below ``threshold``."""
+    quality = upsample_display_quality(
+        display_quality(probability, passes=passes),
+        factor=upscale,
+    )
+    clipped = np.maximum(quality, threshold)
+    return np.ma.masked_where(
+        (~np.isfinite(quality)) | (quality < threshold),
+        clipped,
+    )
+
+
+def display_candidate_alpha(
+    candidates: np.ma.MaskedArray,
+    *,
+    threshold: float = DISPLAY_PROBABILITY_THRESHOLD,
+    fade_width: float = DISPLAY_EDGE_FADE_WIDTH,
+    max_alpha: float = 0.96,
+) -> np.ndarray:
+    """Opacity ramp for visible candidates: mostly solid with a narrow soft edge."""
+    values = np.ma.filled(candidates, np.nan).astype(float)
+    if fade_width <= 0:
+        alpha = np.where(values >= threshold, max_alpha, 0.0)
+    else:
+        t = np.clip((values - threshold) / fade_width, 0.0, 1.0)
+        smooth = t * t * (3.0 - 2.0 * t)
+        alpha = max_alpha * smooth
+    alpha[~np.isfinite(values)] = 0.0
+    return alpha
+
+
 def plot_sunsetwx_product(
     field: NationalField,
     target_date: date,
@@ -212,7 +301,8 @@ def plot_sunsetwx_product(
     for geometry in context.surrounding:
         _draw_polygon_boundary(ax, geometry, color="#777777", linewidth=0.45)
 
-    probability = np.ma.masked_invalid(display_quality(field.probability))
+    probability = display_candidates(field.probability)
+    probability_alpha = display_candidate_alpha(probability)
     image = ax.imshow(
         probability,
         extent=(
@@ -223,9 +313,10 @@ def plot_sunsetwx_product(
         ),
         origin="lower",
         cmap=_QUALITY_CMAP,
-        vmin=0.0,
+        vmin=DISPLAY_PROBABILITY_THRESHOLD,
         vmax=1.0,
-        interpolation="bilinear",
+        interpolation="bicubic",
+        alpha=probability_alpha,
         zorder=2,
     )
     country_path = PathPatch(
@@ -245,10 +336,10 @@ def plot_sunsetwx_product(
         orientation="vertical",
         fraction=0.026,
         pad=0.012,
-        ticks=np.linspace(0.0, 1.0, 6),
+        ticks=[DISPLAY_PROBABILITY_THRESHOLD, 0.6, 0.8, 1.0],
     )
     colorbar.ax.tick_params(labelsize=8)
-    colorbar.set_label("Sunset quality index", fontsize=9)
+    colorbar.set_label("Firecloud probability", fontsize=9)
 
     # The caption reflects the true per-cell sunset window, not the (wider)
     # snapped GFS hourly bracket in field.valid_times.
@@ -257,7 +348,7 @@ def plot_sunsetwx_product(
     fig.text(
         0.045,
         0.91,
-        "Sunset Quality — China GFS 0.25°",
+        "Firecloud Potential — China GFS 0.25°",
         ha="left",
         va="center",
         fontsize=19,
@@ -266,7 +357,7 @@ def plot_sunsetwx_product(
     fig.text(
         0.955,
         0.91,
-        "Warmer Colors = Better Sunset | firecloud-forecast",
+        "Orange/Red = Firecloud Potential | firecloud-forecast",
         ha="right",
         va="center",
         fontsize=10,
@@ -309,7 +400,7 @@ def _metadata(
     prob_max = float(finite.max()) if finite.size else None
     return {
         "schema_version": PRODUCT_SCHEMA_VERSION,
-        "product": "china_sunset_quality",
+        "product": "china_firecloud_potential",
         "target_date": target_date.isoformat(),
         "generated_utc": _utc(generated_at).isoformat(),
         "image": image_name,
@@ -328,6 +419,14 @@ def _metadata(
             "additional_decoded_input_bytes": field.additional_decoded_input_bytes,
             "runtime_s": field.runtime_s,
             "peak_mem_mb": field.peak_mem_mb,
+        },
+        "display": {
+            "probability_threshold": DISPLAY_PROBABILITY_THRESHOLD,
+            "edge_fade_width": DISPLAY_EDGE_FADE_WIDTH,
+            "colormap": "firecloud_orange_red",
+            "basemap": "white",
+            "boundary_resolution": "Natural Earth 10m",
+            "upsample_factor": DISPLAY_UPSAMPLE_FACTOR,
         },
     }
 
@@ -382,7 +481,7 @@ def load_map_context() -> MapContext:
     """Load Natural Earth context plus detailed China province geometry."""
     import cartopy.io.shapereader as shpreader
     countries_path = shpreader.natural_earth(
-        resolution="110m", category="cultural", name="admin_0_countries"
+        resolution="10m", category="cultural", name="admin_0_countries"
     )
     country = None
     surrounding: list[object] = []
