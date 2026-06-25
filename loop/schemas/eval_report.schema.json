@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Firecloud evaluator report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "status",
+    "deterministic_checks",
+    "findings",
+    "fake_completion_risk",
+    "product_direction_check",
+    "release_recommendation"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "status": { "type": "string", "enum": ["pass", "fail", "blocked"] },
+    "deterministic_checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "result"],
+        "properties": {
+          "command": { "type": "string" },
+          "result": { "type": "string" }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "summary", "evidence"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["blocker", "major", "minor", "note"] },
+          "summary": { "type": "string" },
+          "evidence": { "type": "string" }
+        }
+      }
+    },
+    "fake_completion_risk": { "type": "string", "enum": ["low", "medium", "high"] },
+    "product_direction_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "notes"],
+      "properties": {
+        "status": { "type": "string", "enum": ["pass", "fail", "blocked"] },
+        "notes": { "type": "string" }
+      }
+    },
+    "release_recommendation": { "type": "string" }
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Firecloud technical plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "issue",
+    "branch",
+    "allowed_files",
+    "forbidden_files",
+    "assumptions",
+    "implementation_steps",
+    "verification",
+    "risks",
+    "rollback",
+    "hard_stops"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "issue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "number", "url"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "number": { "type": ["integer", "null"], "minimum": 1 },
+        "url": { "type": ["string", "null"] }
+      }
+    },
+    "branch": { "type": "string", "pattern": "^(codex|loop|overnight)/.+" },
+    "allowed_files": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "forbidden_files": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "assumptions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "implementation_steps": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "verification": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "purpose", "required"],
+        "properties": {
+          "command": { "type": "string", "minLength": 1 },
+          "purpose": { "type": "string", "minLength": 1 },
+          "required": { "type": "boolean" }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "rollback": { "type": "string", "minLength": 1 },
+    "hard_stops": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

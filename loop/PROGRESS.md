@@ -134,3 +134,21 @@ hardened: loop harness safety before publishing the overnight workflow.
   edits.
 Added one meaningful grid-score test for the "missing visibility and AOD" clean-air fallback,
 raising strict coverage above the 95.00 floor instead of relying on rounding.
+
+### 2026-06-25  team loop v2 charter
+hardened: expanded the loop from a narrow physics-hardening runner into a role-isolated
+firecloud team workflow.
+- Added `loop/CHARTER.md` with the owner direction: algorithm-first; no website/app/hosted
+  product until the owner explicitly agrees the algorithm is successful; local CLI and local
+  PNG/JSON products are acceptable.
+- Added `loop/roles/` prompts for Intake, Sprint Planner, Technical Planner, Generator,
+  Evaluator, and Release Manager. Roles pass artifacts, not chat context.
+- Added `loop/schemas/` JSON contracts for owner briefs, sprint plans, technical plans,
+  generator reports, evaluator reports, and release reports.
+- Added `loop/team-settings/` permission profiles: Generator cannot push/PR/merge; Evaluator
+  is read-only; Release Manager may publish after gates pass.
+- Added `loop/run_team_issue.sh`, a safe local driver that defaults to planning only and
+  requires explicit opt-in for implementation (`RUN_GENERATOR=1`), GitHub planning
+  (`ALLOW_GITHUB_PLANNING=1`), and release actions (`ALLOW_RELEASE=1`).
+Validation: shell syntax and JSON syntax checks passed for the new driver, schemas, and
+role settings.

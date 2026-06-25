@@ -51,5 +51,15 @@
       `predictor/`).
 - [x] Require AGENTS.md / `.agent-progress.md` claim in the prompt.
 
+## Team loop v2
+- [x] Capture owner product direction in `loop/CHARTER.md`: algorithm-first, local-first,
+      no website/app/hosted product until owner approval.
+- [x] Split autonomous work into role prompts: Intake, Sprint Planner, Technical Planner,
+      Generator, Evaluator, Release Manager.
+- [x] Define artifact schemas for each role handoff.
+- [x] Add role-specific permission profiles so maker/checker/releaser are separated.
+- [x] Add a local driver skeleton with explicit opt-in flags for implementation, GitHub
+      planning, and release.
+
 ## Done
 <!-- move finished items here with the iteration number that closed them -->

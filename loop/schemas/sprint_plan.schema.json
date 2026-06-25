@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Firecloud sprint plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "sprint_name",
+    "sprint_goal",
+    "project_url",
+    "issues",
+    "out_of_scope",
+    "owner_gate"
+  ],
+  "properties": {
+    "version": { "const": 1 },
+    "sprint_name": { "type": "string", "minLength": 1 },
+    "sprint_goal": { "type": "string", "minLength": 1 },
+    "project_url": { "type": "string" },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "github_issue",
+          "priority",
+          "rationale",
+          "acceptance",
+          "non_goals",
+          "dependencies",
+          "labels"
+        ],
+        "properties": {
+          "title": { "type": "string", "minLength": 1 },
+          "github_issue": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["number", "url"],
+            "properties": {
+              "number": { "type": "integer", "minimum": 1 },
+              "url": { "type": "string" }
+            }
+          },
+          "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+          "rationale": { "type": "string", "minLength": 1 },
+          "acceptance": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "non_goals": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "dependencies": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "labels": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "out_of_scope": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "owner_gate": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
