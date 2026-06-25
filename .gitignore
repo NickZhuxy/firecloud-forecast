@@ -33,6 +33,11 @@ reference/
 # Local multi-agent coordination state (shared in one workspace, never committed)
 /.agent-progress.md
 
+# Local dev tooling (autonomous team-loop harness) — kept on disk as a personal
+# aid, not part of the public repo. Still present in pre-removal history; not
+# tracked going forward.
+/loop/
+
 # Large third-party reference material (kept local, not redistributed)
 research/*.pdf
 
