@@ -23,10 +23,9 @@ from predictor.sunset_grid import (
 
 @dataclass
 class NationalField:
-    lats: np.ndarray            # 1-D, ascending (south → north)
-    lons: np.ndarray            # 1-D, ascending (west → east)
-    probability: np.ndarray     # (ny, nx)
-    cloud_cover_pct: np.ndarray  # (ny, nx) random-overlap total cloud, display only
+    lats: np.ndarray         # 1-D, ascending (south → north)
+    lons: np.ndarray         # 1-D, ascending (west → east)
+    probability: np.ndarray  # (ny, nx)
     valid_times: tuple[datetime, ...]
     sunset_range_utc: tuple[datetime, datetime]
     source_label: str
@@ -168,32 +167,14 @@ def build_national_field(
             stacked = np.stack([fields[name] for _la, _lo, fields in ordered])
             return np.take_along_axis(stacked, selected_time[None, ...], axis=0)[0]
 
-        cloud_low = select("cloud_low_pct")
-        cloud_mid = select("cloud_mid_pct")
-        cloud_high = select("cloud_high_pct")
         inputs = GridInputs(
-            cloud_low_pct=cloud_low,
-            cloud_mid_pct=cloud_mid,
-            cloud_high_pct=cloud_high,
+            cloud_low_pct=select("cloud_low_pct"),
+            cloud_mid_pct=select("cloud_mid_pct"),
+            cloud_high_pct=select("cloud_high_pct"),
             humidity_pct=_finite(select("humidity_pct"), 50.0),
             visibility_m=_finite(select("visibility_m"), 25000.0),
         )
         probability = score_grid(inputs)
-
-        # Presentation-only total cloud (random-overlap of the three étages), on the
-        # same ascending grid as probability. It never feeds scoring; it exists so
-        # the renderer can colour only cloudy cells and leave clear sky as base map.
-        cloud_cover_pct = np.clip(
-            100.0
-            * (
-                1.0
-                - (1.0 - cloud_low / 100.0)
-                * (1.0 - cloud_mid / 100.0)
-                * (1.0 - cloud_high / 100.0)
-            ),
-            0.0,
-            100.0,
-        )
 
         decoded_sizes = [grid.decoded_bytes for grid in grids]
         decoded_input_bytes = sum(decoded_sizes)
@@ -218,7 +199,6 @@ def build_national_field(
             lats=lats,
             lons=lons,
             probability=probability,
-            cloud_cover_pct=cloud_cover_pct,
             valid_times=valid_times,
             sunset_range_utc=(
                 _utc_datetime(active_sunsets.min()),

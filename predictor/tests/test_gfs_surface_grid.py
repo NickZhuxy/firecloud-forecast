@@ -168,6 +168,37 @@ def test_batch_surface_fallback_moves_every_hour_together(monkeypatch, tmp_path)
     }
 
 
+def test_batch_surface_fallback_when_decoded_grid_lacks_cover(monkeypatch, tmp_path):
+    src = GFSSource(cache_dir=tmp_path)
+    calls = []
+
+    def fake_download(run_dt, fxx):
+        calls.append((run_dt, fxx))
+        if run_dt.hour == 6:
+            return _surface_ds(drop=("lcc", "mcc", "hcc"))
+        return _surface_ds()
+
+    monkeypatch.setattr(src, "_download_surface", fake_download)
+    valid_times = (
+        datetime(2026, 6, 23, 10, tzinfo=timezone.utc),
+        datetime(2026, 6, 23, 11, tzinfo=timezone.utc),
+    )
+
+    grids = src.fetch_surface_grids(
+        (15.0, 45.0, 117.0, 123.0), valid_times
+    )
+
+    assert calls == [
+        (datetime(2026, 6, 23, 6, tzinfo=timezone.utc), 4),
+        (datetime(2026, 6, 23, 6, tzinfo=timezone.utc), 5),
+        (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 10),
+        (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 11),
+    ]
+    assert {grid.run_time for grid in grids} == {
+        datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
+    }
+
+
 def test_surface_grid_records_unique_grib_payload_bytes(tmp_path):
     first = tmp_path / "cloud.grib2"
     second = tmp_path / "surface.grib2"

@@ -18,8 +18,7 @@ import matplotlib
 matplotlib.use("Agg")
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
+from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.figure import Figure
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path as MplPath
@@ -30,22 +29,16 @@ from predictor.national_field import NationalField, build_national_field
 
 PRODUCT_SCHEMA_VERSION = "v1"
 CN_BBOX = (17.0, 73.0, 54.0, 136.0)  # south, west, north, east
-
-# Cells whose random-overlap total cloud is below this are treated as clear sky
-# and left uncoloured so the base map shows through. This is a readability cutoff
-# tuned by eye (owner-tunable), NOT a calibrated value — change this one line to
-# adjust how much thin cloud counts as "cloud present".
-CLOUD_PRESENCE_THRESHOLD_PCT = 15.0
-
-# Deep, saturated, perceptually-uniform sequential ramp; warm (orange/yellow) at
-# the high-quality end. Exact hues are owner-reserved taste; the pinned invariants
-# are continuous colour (no discrete bands) and warm at the top. Masked clear-sky
-# and below-range cells render fully transparent so the base map shows through.
-_QUALITY_CMAP = matplotlib.colormaps["inferno"].copy()
+_QUALITY_CMAP = LinearSegmentedColormap.from_list(
+    "firecloud_turbo",
+    matplotlib.colormaps["turbo"](np.linspace(0.10, 1.0, 256)),
+)
 _QUALITY_CMAP.set_bad(alpha=0.0)
-_QUALITY_CMAP.set_under(alpha=0.0)
-# Many levels → a smooth continuous fill rather than visible contour bands.
-_QUALITY_LEVELS = np.linspace(0.0, 1.0, 256)
+# Rendering-only smoothing: the scored 0.25° grid can be speckled because many
+# gates are intentionally local. The product should read as a coherent weather
+# field, so the figure uses a tiny nan-aware binomial blur while metadata and
+# downstream algorithm values keep the original unsmoothed probabilities.
+DISPLAY_SMOOTH_PASSES = 2
 
 
 @dataclass(frozen=True)
@@ -66,8 +59,8 @@ class ProductArtifacts:
 def _geom_to_path(geom) -> MplPath:
     # NOTE: interior rings are appended as additional closed subpaths but are not
     # oriented to cut holes, so lakes/holes are filled rather than excluded. The
-    # production 50 m China outline has no interior rings, so this is currently
-    # latent; revisit if an outline with lakes is adopted.
+    # production 110 m China outline has no interior rings, so this is currently
+    # latent; revisit if a higher-resolution outline with lakes is adopted.
     polygons = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
     vertices: list[tuple[float, float]] = []
     codes: list[int] = []
@@ -113,14 +106,12 @@ def _draw_admin_lines(ax, geometries: tuple[object, ...]) -> None:
         for line in _line_parts(geometry):
             xy = np.asarray(line.coords, dtype=float)
             if xy.size:
-                # Visible for geographic readability but subordinate to the
-                # national border: lighter grey, thinner than the country outline.
                 ax.plot(
                     xy[:, 0],
                     xy[:, 1],
-                    color="#6a6a6a",
-                    linewidth=0.5,
-                    alpha=0.8,
+                    color="#5a5a5a",
+                    linewidth=0.35,
+                    alpha=0.75,
                     zorder=4,
                 )
 
@@ -163,26 +154,33 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def cloud_presence_mask(cloud_cover_pct, threshold: float) -> np.ndarray:
-    """Boolean grid: True where total cloud is at/above ``threshold`` (cloud present).
+def _smooth_axis(values: np.ndarray, axis: int) -> np.ndarray:
+    before = [(0, 0)] * values.ndim
+    before[axis] = (1, 1)
+    padded = np.pad(values, before, mode="edge")
+    return (
+        np.take(padded, range(0, values.shape[axis]), axis=axis)
+        + 2.0 * np.take(padded, range(1, values.shape[axis] + 1), axis=axis)
+        + np.take(padded, range(2, values.shape[axis] + 2), axis=axis)
+    ) / 4.0
 
-    Cells below the threshold are clear sky and are left as base map rather than
-    coloured. The presence gate already forces probability to 0 wherever there is
-    no mid/high cloud, so probability alone cannot tell clear sky from a cloudy
-    but firecloud-unfavourable cell — this total-cloud field makes that call.
-    """
-    return np.asarray(cloud_cover_pct, dtype=float) >= threshold
 
-
-def masked_quality(field: NationalField, threshold: float) -> np.ma.MaskedArray:
-    """``field.probability`` masked everywhere the sky is clear (or non-finite).
-
-    The renderer colours only the unmasked (cloud-present) cells, so the coloured
-    region follows the actual cloud extent while clear sky shows the base map.
-    """
-    probability = np.ma.masked_invalid(np.asarray(field.probability, dtype=float))
-    present = cloud_presence_mask(field.cloud_cover_pct, threshold)
-    return np.ma.masked_where(~present, probability)
+def display_quality(probability, passes: int = DISPLAY_SMOOTH_PASSES) -> np.ndarray:
+    """Display-only, nan-aware smoothing for the local PNG product."""
+    raw = np.asarray(probability, dtype=float)
+    finite = np.isfinite(raw)
+    values = np.where(finite, raw, 0.0)
+    weights = finite.astype(float)
+    for _ in range(max(0, int(passes))):
+        values = _smooth_axis(_smooth_axis(values, 0), 1)
+        weights = _smooth_axis(_smooth_axis(weights, 0), 1)
+    smoothed = np.divide(
+        values,
+        weights,
+        out=np.full_like(raw, np.nan, dtype=float),
+        where=weights > 0,
+    )
+    return np.clip(smoothed, 0.0, 1.0)
 
 
 def plot_sunsetwx_product(
@@ -214,20 +212,20 @@ def plot_sunsetwx_product(
     for geometry in context.surrounding:
         _draw_polygon_boundary(ax, geometry, color="#777777", linewidth=0.45)
 
-    # Colour only the clouds: clear-sky cells are masked and therefore left
-    # uncoloured, so the white base map + graticule + borders show through. The
-    # high level count gives a smooth, band-free fill rather than discrete steps.
-    quality = masked_quality(field, CLOUD_PRESENCE_THRESHOLD_PCT)
-    contour = ax.contourf(
-        field.lons,
-        field.lats,
-        quality,
-        levels=_QUALITY_LEVELS,
+    probability = np.ma.masked_invalid(display_quality(field.probability))
+    image = ax.imshow(
+        probability,
+        extent=(
+            float(field.lons[0]),
+            float(field.lons[-1]),
+            float(field.lats[0]),
+            float(field.lats[-1]),
+        ),
+        origin="lower",
         cmap=_QUALITY_CMAP,
         vmin=0.0,
         vmax=1.0,
-        extend="neither",
-        antialiased=True,
+        interpolation="bilinear",
         zorder=2,
     )
     country_path = PathPatch(
@@ -237,16 +235,12 @@ def plot_sunsetwx_product(
         edgecolor="none",
     )
     ax.add_patch(country_path)
-    contour.set_clip_path(country_path)
+    image.set_clip_path(country_path)
     _draw_admin_lines(ax, context.admin1)
-    _draw_polygon_boundary(ax, context.country, color="#151515", linewidth=1.1)
+    _draw_polygon_boundary(ax, context.country, color="#151515", linewidth=1.0)
 
-    # Build the colorbar from a fixed ScalarMappable, not the contour set, so it
-    # always renders — even on an all-clear day when the field is fully masked
-    # and contourf draws no cells (hence no mappable of its own).
-    mappable = ScalarMappable(norm=Normalize(0.0, 1.0), cmap=_QUALITY_CMAP)
     colorbar = fig.colorbar(
-        mappable,
+        image,
         ax=ax,
         orientation="vertical",
         fraction=0.026,
@@ -325,9 +319,6 @@ def _metadata(
         "sunset_range_utc": [value.isoformat() for value in field.sunset_range_utc],
         "n_points": field.n_points,
         "probability_range": {"min": prob_min, "max": prob_max},
-        # The total-cloud cutoff (percent) below which a cell is drawn as clear
-        # sky rather than coloured; documented here for owner tuning.
-        "cloud_cover_threshold_pct": CLOUD_PRESENCE_THRESHOLD_PCT,
         "performance": {
             "surface_fetches": field.surface_fetches,
             "additional_surface_fetches": field.additional_surface_fetches,
@@ -390,12 +381,8 @@ def _intersects(bounds, bbox) -> bool:
 def load_map_context() -> MapContext:
     """Load Natural Earth context plus detailed China province geometry."""
     import cartopy.io.shapereader as shpreader
-    # 50 m (vs 110 m) gives a smoother, rounded China outline and clip path. The
-    # 50 m China geometry has no interior rings, so _geom_to_path does not mis-fill
-    # lakes; surrounding borders are drawn as edges only, so their rings (if any)
-    # are harmless. Provinces below already use the finer 10 m set.
     countries_path = shpreader.natural_earth(
-        resolution="50m", category="cultural", name="admin_0_countries"
+        resolution="110m", category="cultural", name="admin_0_countries"
     )
     country = None
     surrounding: list[object] = []

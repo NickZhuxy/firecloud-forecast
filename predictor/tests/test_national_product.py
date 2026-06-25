@@ -13,10 +13,8 @@ from shapely.geometry import box, LineString, MultiLineString, Point
 import predictor.national_product as product_mod
 from predictor.national_field import NationalField
 from predictor.national_product import (
-    CLOUD_PRESENCE_THRESHOLD_PCT,
     MapContext,
-    cloud_presence_mask,
-    masked_quality,
+    display_quality,
     plot_sunsetwx_product,
     save_product,
 )
@@ -48,12 +46,6 @@ def _field() -> NationalField:
         [0.10, 0.35, 0.65, 0.90],
         [0.00, 0.25, 0.55, 1.00],
     ])
-    # Column 0 is clear sky (total cloud < threshold); the rest are cloud-present.
-    cloud_cover_pct = np.array([
-        [0.0, 50.0, 80.0, 95.0],
-        [5.0, 60.0, 90.0, 99.0],
-        [0.0, 40.0, 70.0, 100.0],
-    ])
     valid_times = tuple(
         datetime(2026, 6, 24, hour, tzinfo=timezone.utc)
         for hour in range(10, 16)
@@ -62,7 +54,6 @@ def _field() -> NationalField:
         lats=lats,
         lons=lons,
         probability=probability,
-        cloud_cover_pct=cloud_cover_pct,
         valid_times=valid_times,
         sunset_range_utc=(
             datetime(2026, 6, 24, 10, 53, tzinfo=timezone.utc),
@@ -388,97 +379,49 @@ def test_positive_int_rejects_non_positive():
 
 
 # ---------------------------------------------------------------------------
-# Cloud-only coloring: mask clear sky, color the clouds by sunset likelihood
+# Smooth SunsetWx-style colour field
 # ---------------------------------------------------------------------------
 
-def test_cloud_presence_mask_splits_clear_from_cloudy():
-    # Present where total cloud >= threshold; clear (below) is left as base map.
-    cover = np.array([[0.0, CLOUD_PRESENCE_THRESHOLD_PCT - 0.1,
-                       CLOUD_PRESENCE_THRESHOLD_PCT, 90.0]])
-    mask = cloud_presence_mask(cover, CLOUD_PRESENCE_THRESHOLD_PCT)
-    assert mask.dtype == bool
-    assert mask.tolist() == [[False, False, True, True]]
-
-
-def test_masked_quality_masks_only_clear_sky_cells():
-    field = _field()
-    mq = masked_quality(field, CLOUD_PRESENCE_THRESHOLD_PCT)
-    masks = np.ma.getmaskarray(mq)
-    # Column 0 (total cloud < threshold) is masked; cloud-present cells are not.
-    assert masks[:, 0].all()
-    assert not masks[:, 1:].any()
-    # Unmasked quality equals the underlying scored probability (color = quality).
-    np.testing.assert_allclose(mq[:, 1:].filled(np.nan), field.probability[:, 1:])
-
-
-def test_cloudy_but_low_potential_cell_is_colored_at_the_cold_end():
-    # A cloudy yet firecloud-unfavourable cell must stay colored (not base map),
-    # but rendered at the cold/low end of the ramp — not masked out.
-    import dataclasses
-
-    field = dataclasses.replace(
-        _field(),
-        probability=np.array([[0.02]]),
-        cloud_cover_pct=np.array([[85.0]]),
-    )
-    mq = masked_quality(field, CLOUD_PRESENCE_THRESHOLD_PCT)
-    assert not np.ma.getmaskarray(mq).any()  # cloudy → colored, not masked
-    assert mq[0, 0] < 0.1                     # low potential → cold/low end
-
-
-def test_quality_colormap_is_continuous_and_warm_at_high_end():
+def test_quality_colormap_keeps_sunsetwx_warm_ramp():
     cmap = product_mod._QUALITY_CMAP
-    # Continuous ramp (no discrete bands): high-resolution LUT and many levels.
+    assert cmap.name == "firecloud_turbo"
     assert cmap.N >= 256
-    assert len(product_mod._QUALITY_LEVELS) >= 256
+
     low = np.asarray(cmap(0.0))
     high = np.asarray(cmap(1.0))
     # Warmer Colors = Better Sunset: the high end is redder than the low end and
-    # redder than it is blue.
+    # redder than it is blue. The low end is blue rather than near-black.
     assert high[0] > low[0]
     assert high[0] > high[2]
+    assert low[2] > low[0]
 
 
-def test_all_clear_field_renders_opaque_png_with_colorbar_and_no_colored_cells(
-    tmp_path,
-):
-    import dataclasses
+def test_display_quality_smooths_visual_noise_without_changing_shape_or_range():
+    raw = np.zeros((5, 5), dtype=float)
+    raw[2, 2] = 1.0
+    smoothed = display_quality(raw)
+    assert smoothed.shape == raw.shape
+    assert np.all((smoothed >= 0.0) & (smoothed <= 1.0))
+    assert 0.0 < smoothed[2, 2] < 1.0
+    assert smoothed[2, 1] > 0.0
 
-    field = dataclasses.replace(
-        _field(), cloud_cover_pct=np.zeros_like(_field().cloud_cover_pct)
+
+def test_display_quality_ignores_nan_without_filling_all_nan_cells():
+    raw = np.array([[np.nan, 1.0], [0.0, 0.0]])
+    smoothed = display_quality(raw, passes=1)
+    assert np.isfinite(smoothed[0, 0])
+    assert smoothed[0, 0] > 0.0
+
+    all_nan = display_quality(np.full((2, 2), np.nan), passes=1)
+    assert np.isnan(all_nan).all()
+
+
+def test_plot_uses_one_continuous_raster_not_discrete_contour_bands():
+    fig = plot_sunsetwx_product(
+        _field(), _DATE, _context(), generated_at=_GENERATED
     )
-    # Every cell is below threshold → fully masked → zero colored cells.
-    mq = masked_quality(field, CLOUD_PRESENCE_THRESHOLD_PCT)
-    assert np.ma.getmaskarray(mq).all()
-
-    # The colorbar is built from a fixed ScalarMappable, so it still renders.
-    fig = plot_sunsetwx_product(field, _DATE, _context(), generated_at=_GENERATED)
-    assert len(fig.axes) == 2  # map + colorbar even with nothing colored
-
-    # The saved product is still a complete, opaque PNG.
-    artifacts = save_product(
-        field, _DATE, tmp_path, _context(), generated_at=_GENERATED, dpi=80
-    )
-    image = mpimg.imread(artifacts.image_path)
-    assert np.allclose(image[..., 3], 1.0)
-
-
-def test_metadata_documents_cloud_presence_threshold():
-    meta = product_mod._metadata(_field(), _DATE, "x.png", _GENERATED)
-    assert meta["cloud_cover_threshold_pct"] == CLOUD_PRESENCE_THRESHOLD_PCT
-    # Additive only: existing keys are preserved.
-    assert meta["probability_range"] == {"min": 0.0, "max": 1.0}
-
-
-def test_province_lines_drawn_lighter_and_thinner_than_national_border():
-    from matplotlib.colors import to_rgb
-
-    fig = Figure()
-    ax = fig.add_subplot(111)
-    product_mod._draw_admin_lines(ax, (LineString([(73, 17), (136, 54)]),))
-    assert len(ax.lines) == 1
-    line = ax.lines[0]
-    # Visible but subordinate: thinner than the national outline (~1.0+) and a
-    # lighter grey than the near-black national border (#151515).
-    assert 0.0 < line.get_linewidth() < 1.0
-    assert sum(to_rgb(line.get_color())) > sum(to_rgb("#151515"))
+    ax = fig.axes[0]
+    assert len(ax.images) == 1
+    image = ax.images[0]
+    assert image.get_interpolation() == "bilinear"
+    assert image.get_clim() == (0.0, 1.0)

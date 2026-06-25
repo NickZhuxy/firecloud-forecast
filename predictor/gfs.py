@@ -253,19 +253,20 @@ class GFSSource:
             fxxs = [fxx + CYCLE_HOURS * step for fxx in base_fxx]
             try:
                 datasets = [self._load_surface(run, fxx) for fxx in fxxs]
+                grids = [
+                    self._surface_grid_from_dataset(
+                        ds,
+                        bbox=bbox,
+                        run_time=run,
+                        valid_time=time,
+                        source_label=f"gfs@{run:%Y-%m-%dT%HZ}+f{fxx:02d}",
+                    )
+                    for ds, time, fxx in zip(datasets, valid_utc, fxxs)
+                ]
             except Exception as exc:  # noqa: BLE001 — batch-fallback one cycle
                 last_exc = exc
                 continue
-            return [
-                self._surface_grid_from_dataset(
-                    ds,
-                    bbox=bbox,
-                    run_time=run,
-                    valid_time=time,
-                    source_label=f"gfs@{run:%Y-%m-%dT%HZ}+f{fxx:02d}",
-                )
-                for ds, time, fxx in zip(datasets, valid_utc, fxxs)
-            ]
+            return grids
         raise GFSUnavailable(
             f"no complete GFS surface batch near {common_run:%Y-%m-%dT%HZ} "
             f"after {self.MAX_CYCLE_FALLBACK} fallbacks"
