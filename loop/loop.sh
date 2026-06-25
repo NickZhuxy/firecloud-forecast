@@ -16,7 +16,7 @@ MAX_ITERS="${MAX_ITERS:-12}"               # hard ceiling on iterations
 MAX_BUDGET_USD="${MAX_BUDGET_USD:-4}"      # cap API $ spend INSIDE one iteration
 ITER_TIMEOUT="${ITER_TIMEOUT:-30m}"        # wall-clock kill switch per iteration
 TIME_BUDGET_MIN="${TIME_BUDGET_MIN:-420}"  # total budget in minutes (420 ≈ 7h overnight)
-export COV_FLOOR="${COV_FLOOR:-95}"        # source-coverage target verify.sh enforces
+export COV_FLOOR="${COV_FLOOR:-95.00}"     # source-coverage target verify.sh enforces
 
 # Tool permissions live in loop/agent-settings.json (allow: Bash + file ops; deny:
 # git push/reset/clean, rm, sudo, curl, wget). A settings FILE is honoured reliably
@@ -26,10 +26,36 @@ SETTINGS="${SETTINGS:-loop/agent-settings.json}"
 # ----------------------------------------------------------------------------
 
 cd "$PROJECT_DIR"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$PROJECT_DIR/.uv-cache}"
 command -v claude >/dev/null || { echo "FATAL: claude CLI not found"; exit 1; }
 command -v git    >/dev/null || { echo "FATAL: git not found"; exit 1; }
 command -v uv     >/dev/null || { echo "FATAL: uv not found (project uses uv)"; exit 1; }
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "FATAL: $PROJECT_DIR is not a git repo"; exit 1; }
+if [ -n "$(git status --porcelain)" ]; then
+  echo "FATAL: worktree is not clean before loop start; review/stash/commit first."
+  git status --short
+  exit 1
+fi
+
+hash_file() {
+  if command -v shasum >/dev/null; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    sha256sum "$1" | awk '{print $1}'
+  fi
+}
+
+protected_manifest() {
+  for file in loop/PROMPT.md loop/verify.sh loop/coveragerc loop/loop.sh loop/agent-settings.json; do
+    if [ ! -f "$file" ]; then
+      echo "MISSING  $file"
+    else
+      echo "$(hash_file "$file")  $file"
+    fi
+  done
+}
+
+PROTECTED_BEFORE="$(protected_manifest)"
 
 # Per-iteration wall-clock guard is optional (macOS ships no `timeout`); when no
 # timeout binary exists, fall back to the --max-budget-usd cap. Plain string (not
@@ -68,10 +94,26 @@ for i in $(seq 1 "$MAX_ITERS"); do
   set -e
   log "claude exit=$rc  (full log: $LOG_DIR/iter-$i.log)"
 
+  PROTECTED_AFTER="$(protected_manifest)"
+  if [ "$PROTECTED_AFTER" != "$PROTECTED_BEFORE" ]; then
+    log "FATAL: protected loop guardrail files changed; refusing to autocommit."
+    git status --short | tee -a "$LOG_DIR/run.log"
+    exit 2
+  fi
+
   # Safety net: never lose work — commit anything the agent left uncommitted.
-  # Use porcelain (not `git diff`) so NEW untracked test files are caught too.
+  # Use porcelain (not `git diff`) so NEW untracked test files are caught too,
+  # but only for the expected physics-hardening surface. This avoids accidentally
+  # capturing local references, coverage artifacts, or unrelated user work.
   if [ -n "$(git status --porcelain)" ]; then
-    git add -A && git commit -q -m "harden[$i]: checkpoint (driver autocommit)" || true
+    unexpected="$(git status --porcelain -- . ':!loop/PROGRESS.md' ':!loop/TASKS.md' ':!predictor')"
+    if [ -n "$unexpected" ]; then
+      log "FATAL: unexpected paths changed; refusing to autocommit."
+      echo "$unexpected" | tee -a "$LOG_DIR/run.log"
+      exit 3
+    fi
+    git add loop/PROGRESS.md loop/TASKS.md predictor
+    git commit -q -m "harden[$i]: checkpoint (driver autocommit)" || true
     log "driver autocommit."
   fi
 

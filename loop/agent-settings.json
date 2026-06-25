@@ -5,10 +5,18 @@
       "Bash(git push:*)",
       "Bash(git reset:*)",
       "Bash(git clean:*)",
+      "Bash(git merge:*)",
+      "Bash(git rebase:*)",
+      "Bash(gh:*)",
       "Bash(rm:*)",
       "Bash(sudo:*)",
       "Bash(curl:*)",
-      "Bash(wget:*)"
+      "Bash(wget:*)",
+      "Bash(uv add:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv pip:*)",
+      "Bash(pip:*)",
+      "Bash(python -m pip:*)"
     ]
   }
 }

@@ -4,7 +4,8 @@
 
 ## Mission
 Harden the physics of `predictor/` (robustness, physical correctness, offline test coverage).
-External gate (verify.sh): offline suite green AND predictor/ source coverage ≥ COV_FLOOR (95%).
+External gate (verify.sh): offline suite green AND predictor/ source coverage ≥ COV_FLOOR
+(95.00%, measured with two-decimal precision).
 No ML, no labelled data, no probability calibration — this project validates with offline
 physics scenarios + public-data cross-checks (see repo README).
 
@@ -115,3 +116,21 @@ features.py 10, rules.py 11, clouds.py 6, cross_section_plot.py 3, sounding_plot
 fetch.py 10, geometry.py 2, spatial.py 2, sunset_grid.py 1 (line 33 unreachable), others 2.
 next: headroom — push to 96%+ by covering reachable branches in rules.py (11 missed),
 features.py (10 missed), clouds.py (6 missed). Or wait for external verify to confirm gate passes.
+
+### 2026-06-25  guardrail patch
+hardened: loop harness safety before publishing the overnight workflow.
+- Root `.gitignore` now ignores `reference/`, coverage artifacts, `htmlcov/`, and project-local
+  `.uv-cache/` so `git add` cannot accidentally capture visual references or coverage output.
+- `verify.sh` and `loop.sh` default to project-local `UV_CACHE_DIR=.uv-cache`, avoiding
+  environment/user-cache failures.
+- `coveragerc` now reports two-decimal coverage and the default floor is 95.00, so 94.99 no
+  longer passes by display rounding.
+- `loop.sh` refuses to start on a dirty worktree, hashes protected loop guardrail files
+  (`PROMPT.md`, `verify.sh`, `coveragerc`, `loop.sh`, `agent-settings.json`), and refuses to
+  autocommit if they change during an agent iteration.
+- Driver autocommit is now whitelisted to `loop/PROGRESS.md`, `loop/TASKS.md`, and `predictor/`
+  instead of broad `git add -A`.
+- Prompt now requires reading `AGENTS.md` / `.agent-progress.md` and claiming loop work before
+  edits.
+Added one meaningful grid-score test for the "missing visibility and AOD" clean-air fallback,
+raising strict coverage above the 95.00 floor instead of relying on rounding.

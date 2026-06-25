@@ -6,6 +6,7 @@ omit =
     predictor/gfs_smoke.py
 
 [report]
+precision = 2
 exclude_also =
     if __name__ == .__main__.:
     raise NotImplementedError

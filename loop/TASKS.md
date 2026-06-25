@@ -37,9 +37,19 @@
       — close reachable branches for headroom above 95%.
 
 ## Target
-- [x] predictor/ source coverage ≥ 95% (verify.sh floor) — REACHED iter 5 (95%, 325 tests green).
+- [x] predictor/ source coverage ≥ 95.00% (verify.sh floor, two-decimal precision) — REACHED after
+      guardrail patch with strict coverage above 95.00 and 326 tests green.
       Next target: 96%+ by covering reachable branches in rules.py (11 missed), features.py (10),
       clouds.py (6). Ratchet COV_FLOOR once external verify confirms pass.
+
+## Harness guardrails
+- [x] Use project-local ignored UV cache for loop verification.
+- [x] Enforce two-decimal coverage precision so 94.99 does not satisfy a 95.00 floor.
+- [x] Refuse loop start on a dirty worktree.
+- [x] Hash protected loop files and abort rather than autocommit if the agent edits them.
+- [x] Replace broad driver autocommit with a whitelist (`loop/PROGRESS.md`, `loop/TASKS.md`,
+      `predictor/`).
+- [x] Require AGENTS.md / `.agent-progress.md` claim in the prompt.
 
 ## Done
 <!-- move finished items here with the iteration number that closed them -->

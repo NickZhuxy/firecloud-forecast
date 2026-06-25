@@ -15,16 +15,19 @@ inventing data or a learned model.
 ## Goal — verified EXTERNALLY (not by you)
 Harden `predictor/` until BOTH:
   - the offline physics suite is green:  `PYTHONPATH=. uv run pytest -m "not integration" -q`
-  - `predictor/` SOURCE coverage  >= COV_FLOOR (currently 95%).
+  - `predictor/` SOURCE coverage  >= COV_FLOOR (currently 95.00%, measured to 2 decimals).
 You do NOT decide when the goal is met. The outer loop runs `verify.sh` and decides.
 Your only job each run: leave the repo greener, more robust, and better tested than you
 found it — with coverage that comes from **genuine physical assertions**, not vacuous tests.
 
 ## FIRST THING EVERY RUN — your memory is wiped between iterations
 Durable memory is on disk. Before anything:
-  1. Read `loop/PROGRESS.md` — what past runs hardened / found / decided (don't repeat).
-  2. Read `loop/TASKS.md`     — the hardening backlog, most important first.
-  3. See the current weak spots:
+  1. Read `AGENTS.md` and `.agent-progress.md`, then claim the overnight loop task in
+     `.agent-progress.md` before editing. This file is ignored by Git; keep it local and
+     never write secrets into it.
+  2. Read `loop/PROGRESS.md` — what past runs hardened / found / decided (don't repeat).
+  3. Read `loop/TASKS.md`     — the hardening backlog, most important first.
+  4. See the current weak spots:
      `PYTHONPATH=. uv run pytest -m "not integration" -q --cov=predictor --cov-config=loop/coveragerc --cov-report=term-missing`
 Rebuild your understanding from these. Assume nothing that isn't written down or measured.
 
@@ -50,17 +53,23 @@ One real weakness pinned beats five line-touching tests. Keep the diff small.
   1. Append a dated entry to `loop/PROGRESS.md`: what you hardened, the coverage delta,
      any bug found, your decision.
   2. Update `loop/TASKS.md`: tick done items, add concrete follow-ups you discovered.
-  3. `git add -A && git commit -m "harden: <one-line summary> (cov=<x>%)"`
+  3. Stage only the intended hardening surface:
+     `git add loop/PROGRESS.md loop/TASKS.md predictor`.
+     Then commit: `git commit -m "harden: <one-line summary> (cov=<x>%)"`.
+     Do not use broad `git add -A`; the driver also refuses to autocommit outside this
+     whitelist.
 
 ## HARD GUARDRAILS — never violate, even to reach the goal
-  - NEVER run `git push`, `git reset --hard`, `git clean`, `rm -rf`, `sudo`, `curl`, `wget`.
+  - NEVER run `git push`, `git reset --hard`, `git clean`, `git merge`, `git rebase`,
+    `gh`, `rm -rf`, `sudo`, `curl`, `wget`, or package-install commands.
     Local commits only. Nothing leaves this machine. Stay OFFLINE — do not add network calls
     to the default test path; integration/network tests stay excluded from the gate.
   - NEVER weaken, skip, `xfail`, comment out, or delete an existing test to go green. If a
     test is genuinely wrong, FIX it and explain why in PROGRESS.md — don't silence it.
   - Coverage must come from real physics assertions. NO assertion-free or tautological tests
     written just to touch lines. That is fake completion.
-  - NEVER edit `verify.sh`, `loop.sh`, `coveragerc`, or this prompt to lower the bar. If the
+  - NEVER edit `verify.sh`, `loop.sh`, `coveragerc`, `agent-settings.json`, or this prompt.
+    The driver hashes these files and will stop rather than autocommit if they change. If the
     goal is mis-specified, WRITE that into PROGRESS.md and stop — do not move the goalposts.
   - Do NOT modify `reference/`, `research/` data, or anything under `data/`/cache dirs.
   - Keep secrets/keys out of code and logs.
