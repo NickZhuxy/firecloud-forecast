@@ -7,9 +7,12 @@ slot selection, S3 key/URL construction, and nearest-pixel sampling.
 from datetime import datetime, timezone
 
 import numpy as np
+import pytest
 
 from predictor.satellite import (
     BrightnessTempField,
+    Himawari9Source,
+    SatelliteUnavailable,
     himawari_keys,
     himawari_urls,
     nearest_slot,
@@ -80,3 +83,17 @@ def test_sample_returns_nan_when_nearest_pixel_is_masked():
     f = _field()
     # Nearest to (31.0, 118.0) is the NaN corner pixel.
     assert np.isnan(f.sample(31.0, 118.0))
+
+
+def test_unsupported_band_is_rejected():
+    slot = datetime(2026, 6, 22, 11, 0, tzinfo=timezone.utc)
+    with pytest.raises(SatelliteUnavailable, match="unsupported"):
+        himawari_keys(slot, band="B99")
+
+
+def test_source_constructor_sets_state_and_creates_cache_dir(tmp_path):
+    cache = tmp_path / "himawari"
+    src = Himawari9Source(cache_dir=cache, resolution_deg=0.5, n_segments=4)
+    assert cache.is_dir()                 # __init__ creates the cache dir
+    assert src.resolution_deg == 0.5
+    assert src.n_segments == 4

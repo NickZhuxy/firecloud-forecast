@@ -136,7 +136,7 @@ class Himawari9Source:
         valid_time: datetime,
         bbox: tuple[float, float, float, float] = CHINA_BBOX,
         band: str = "B13",
-    ) -> BrightnessTempField:
+    ) -> BrightnessTempField:  # pragma: no cover - network/satpy path, integration-only
         slot = nearest_slot(valid_time)
         keys = himawari_keys(slot, band=band, n_segments=self.n_segments)
         try:
@@ -157,7 +157,7 @@ class Himawari9Source:
 
     # ---- internals ------------------------------------------------------
 
-    def _ensure_segment(self, key: str) -> Path:
+    def _ensure_segment(self, key: str) -> Path:  # pragma: no cover - network, integration-only
         """Download + decompress one ``.DAT.bz2`` segment, caching the ``.DAT``."""
         import requests
 
@@ -173,7 +173,7 @@ class Himawari9Source:
         tmp.replace(dat_path)
         return dat_path
 
-    def _decode_and_grid(self, paths, bbox, band):
+    def _decode_and_grid(self, paths, bbox, band):  # pragma: no cover - satpy/pyresample, integration-only
         """satpy decode of B13 → nearest-neighbour resample onto the bbox grid."""
         from pyresample.geometry import AreaDefinition
         from satpy import Scene
