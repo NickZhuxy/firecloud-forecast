@@ -36,7 +36,9 @@ class _FakeGFS:
         )
 
 
-def _grid(*, humidity=None, visibility=None, shape=(3, 3)) -> SurfaceGrid:
+def _grid(
+    *, humidity=None, visibility=None, shape=(3, 3), low=5.0, mid=55.0, high=40.0
+) -> SurfaceGrid:
     if shape == (3, 3):
         lats = np.array([40.0, 30.0, 20.0])  # north→south, like GFS
         lons = np.array([100.0, 110.0, 120.0])
@@ -46,9 +48,9 @@ def _grid(*, humidity=None, visibility=None, shape=(3, 3)) -> SurfaceGrid:
     return SurfaceGrid(
         lats=lats,
         lons=lons,
-        cloud_low_pct=np.full(shape, 5.0),
-        cloud_mid_pct=np.full(shape, 55.0),
-        cloud_high_pct=np.full(shape, 40.0),
+        cloud_low_pct=np.full(shape, low),
+        cloud_mid_pct=np.full(shape, mid),
+        cloud_high_pct=np.full(shape, high),
         humidity_pct=humidity if humidity is not None else np.full(shape, 60.0),
         visibility_m=visibility if visibility is not None else np.full(shape, 25000.0),
         run_time=_T,
@@ -358,3 +360,43 @@ def test_domain_mask_excludes_clipped_bbox_corner_times(monkeypatch):
         datetime(2026, 6, 22, 11, 10, tzinfo=timezone.utc),
         datetime(2026, 6, 22, 11, 10, tzinfo=timezone.utc),
     )
+
+
+# ---------- cloud_cover_pct total-cloud field (display rework) ---------------
+
+def test_cloud_cover_pct_is_random_overlap_total():
+    # cloud_cover_pct is presentation metadata: the random-overlap total cloud
+    # fraction, computed on the same ascending grid as probability.
+    field = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE)
+    expected = 100.0 * (1 - (1 - 5 / 100) * (1 - 55 / 100) * (1 - 40 / 100))
+    assert field.cloud_cover_pct.shape == field.probability.shape
+    np.testing.assert_allclose(field.cloud_cover_pct, expected, atol=1e-9)
+    assert np.all((field.cloud_cover_pct >= 0.0) & (field.cloud_cover_pct <= 100.0))
+
+
+def test_cloud_cover_pct_monotonic_nondecreasing_in_each_layer():
+    # Raising any single layer's cover must never lower the total cloud field.
+    base = build_national_field(
+        _FakeGFS(_grid(low=10.0, mid=20.0, high=30.0)), _BBOX, _DATE
+    ).cloud_cover_pct
+    for layer in ("low", "mid", "high"):
+        raised = build_national_field(
+            _FakeGFS(_grid(**{"low": 10.0, "mid": 20.0, "high": 30.0, layer: 85.0})),
+            _BBOX,
+            _DATE,
+        ).cloud_cover_pct
+        assert np.all(raised >= base - 1e-9), f"raising {layer} lowered total cloud"
+
+
+def test_cloud_cover_pct_does_not_perturb_probability():
+    # The new presentation field must not change the scored probability at all.
+    gfs = _FakeGFS(_grid())
+    field = build_national_field(gfs, _BBOX, _DATE)
+    inputs = GridInputs(
+        cloud_low_pct=np.full((3, 3), 5.0),
+        cloud_mid_pct=np.full((3, 3), 55.0),
+        cloud_high_pct=np.full((3, 3), 40.0),
+        humidity_pct=np.full((3, 3), 60.0),
+        visibility_m=np.full((3, 3), 25000.0),
+    )
+    np.testing.assert_allclose(field.probability, score_grid(inputs), atol=1e-12)
