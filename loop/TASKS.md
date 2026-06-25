@@ -60,6 +60,8 @@
 - [x] Add role-specific permission profiles so maker/checker/releaser are separated.
 - [x] Add a local driver skeleton with explicit opt-in flags for implementation, GitHub
       planning, and release.
+- [x] Enforce schema validation for role artifacts in the driver.
+- [x] Hard-gate release manager execution on evaluator pass + product-direction pass.
 
 ## Done
 <!-- move finished items here with the iteration number that closed them -->

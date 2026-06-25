@@ -67,6 +67,11 @@ Release actions are intentionally separated from generation. A Generator may
 commit locally, but only the Release Manager may push, open PRs, merge, and
 close/update issues.
 
+The driver validates every role output against its JSON schema, not just JSON
+syntax. Release is also hard-gated in the driver: `ALLOW_RELEASE=1` only invokes
+the Release Manager when the evaluator report has both `status: "pass"` and
+`product_direction_check.status: "pass"`.
+
 ## Product stance
 
 For now firecloud is algorithm-first. Do not build a website, app, sharing

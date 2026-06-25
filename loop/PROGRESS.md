@@ -152,3 +152,18 @@ firecloud team workflow.
   (`ALLOW_GITHUB_PLANNING=1`), and release actions (`ALLOW_RELEASE=1`).
 Validation: shell syntax and JSON syntax checks passed for the new driver, schemas, and
 role settings.
+
+### 2026-06-25  PR #49 self-review fixes
+review finding: the first team-loop driver only checked artifact JSON syntax, not schema
+contracts; and `ALLOW_RELEASE=1` would invoke the Release Manager even if the evaluator
+reported failure.
+fix:
+- `run_team_issue.sh` now validates each role artifact against the matching JSON schema via
+  `jsonschema.Draft202012Validator`.
+- The driver now hard-blocks release unless evaluator `status == "pass"` and
+  `product_direction_check.status == "pass"`.
+- Non-generator roles now explicitly deny local `git add`, `git commit`, `git checkout`,
+  `git switch`, and `git restore` in their role settings. Release Manager still owns
+  publishing, but not local implementation edits.
+next validation: run shell syntax, JSON syntax, targeted fake-driver gate tests, and
+`bash loop/verify.sh`.

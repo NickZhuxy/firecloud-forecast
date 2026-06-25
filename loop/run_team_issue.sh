@@ -60,8 +60,61 @@ log() {
   echo "[$(date +%T)] $*" | tee -a "$RUN_DIR/run.log"
 }
 
-json_check() {
-  python3 -m json.tool "$1" >/dev/null
+schema_check() {
+  schema="$1"
+  artifact="$2"
+  python3 - "$schema" "$artifact" <<'PY'
+import json
+import sys
+
+try:
+    import jsonschema
+except ImportError:
+    print(
+        "FATAL: Python package 'jsonschema' is required to validate loop artifacts.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+schema_path, artifact_path = sys.argv[1:3]
+with open(schema_path, "r", encoding="utf-8") as f:
+    schema = json.load(f)
+with open(artifact_path, "r", encoding="utf-8") as f:
+    artifact = json.load(f)
+
+jsonschema.Draft202012Validator.check_schema(schema)
+validator = jsonschema.Draft202012Validator(schema)
+errors = sorted(validator.iter_errors(artifact), key=lambda e: list(e.path))
+if errors:
+    print(f"FATAL: {artifact_path} does not match {schema_path}", file=sys.stderr)
+    for error in errors[:10]:
+        path = ".".join(str(p) for p in error.path) or "<root>"
+        print(f"- {path}: {error.message}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+eval_release_gate() {
+  eval_report="$1"
+  python3 - "$eval_report" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    report = json.load(f)
+
+status = report.get("status")
+product_status = report.get("product_direction_check", {}).get("status")
+if status == "pass" and product_status == "pass":
+    raise SystemExit(0)
+
+print(
+    "FATAL: release gate blocked; evaluator status="
+    f"{status!r}, product_direction_check.status={product_status!r}",
+    file=sys.stderr,
+)
+raise SystemExit(1)
+PY
 }
 
 run_role() {
@@ -70,7 +123,8 @@ run_role() {
   settings="$3"
   model="$4"
   output="$5"
-  shift 5
+  schema="$6"
+  shift 6
 
   prompt_file="$RUN_DIR/.prompt-$role_name.md"
   {
@@ -98,7 +152,7 @@ run_role() {
     --max-budget-usd "$MAX_BUDGET_USD" \
     --output-format text \
     > "$output"
-  json_check "$output"
+  schema_check "$schema" "$output"
 }
 
 run_role \
@@ -107,6 +161,7 @@ run_role \
   "loop/team-settings/intake.json" \
   "$MODEL_INTAKE" \
   "$RUN_DIR/01-owner-brief.json" \
+  "loop/schemas/owner_brief.schema.json" \
   "loop/CHARTER.md" \
   "$RUN_DIR/00-owner-input.md"
 
@@ -117,6 +172,7 @@ if [ "$ALLOW_GITHUB_PLANNING" = "1" ]; then
     "loop/team-settings/sprint-planner.json" \
     "$MODEL_SPRINT" \
     "$RUN_DIR/02-sprint-plan.json" \
+    "loop/schemas/sprint_plan.schema.json" \
     "loop/CHARTER.md" \
     "$RUN_DIR/01-owner-brief.json"
 else
@@ -134,6 +190,7 @@ run_role \
   "loop/team-settings/technical-planner.json" \
   "$MODEL_TECHNICAL" \
   "$RUN_DIR/03-tech-plan.json" \
+  "loop/schemas/tech_plan.schema.json" \
   "${technical_inputs[@]}"
 
 if [ "$RUN_GENERATOR" != "1" ]; then
@@ -148,6 +205,7 @@ run_role \
   "loop/team-settings/generator.json" \
   "$MODEL_GENERATOR" \
   "$RUN_DIR/04-generator-report.json" \
+  "loop/schemas/generator_report.schema.json" \
   "loop/CHARTER.md" \
   "$RUN_DIR/03-tech-plan.json"
 
@@ -157,6 +215,7 @@ run_role \
   "loop/team-settings/evaluator.json" \
   "$MODEL_EVALUATOR" \
   "$RUN_DIR/05-eval-report.json" \
+  "loop/schemas/eval_report.schema.json" \
   "loop/CHARTER.md" \
   "$RUN_DIR/01-owner-brief.json" \
   "$RUN_DIR/03-tech-plan.json" \
@@ -168,12 +227,15 @@ if [ "$ALLOW_RELEASE" != "1" ]; then
   exit 0
 fi
 
+eval_release_gate "$RUN_DIR/05-eval-report.json"
+
 run_role \
   "release-manager" \
   "loop/roles/release_manager.md" \
   "loop/team-settings/release-manager.json" \
   "$MODEL_RELEASE" \
   "$RUN_DIR/06-release-report.json" \
+  "loop/schemas/release_report.schema.json" \
   "loop/CHARTER.md" \
   "$RUN_DIR/01-owner-brief.json" \
   "$RUN_DIR/03-tech-plan.json" \

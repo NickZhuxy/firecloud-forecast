@@ -4,6 +4,11 @@
     "deny": [
       "Edit(*)",
       "Write(*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git restore:*)",
       "Bash(gh:*)",
       "Bash(git push:*)",
       "Bash(git merge:*)",
