@@ -111,12 +111,16 @@ def test_fetch_surface_grid_uses_cache(monkeypatch):
 
 def test_batch_surface_grids_use_one_common_model_run(monkeypatch, tmp_path):
     src = GFSSource(cache_dir=tmp_path)
-    calls = []
+    prefetched, parsed = [], []
+
+    def fake_prefetch(run_dt, fxx):
+        prefetched.append((run_dt, fxx))
 
     def fake_download(run_dt, fxx):
-        calls.append((run_dt, fxx))
+        parsed.append((run_dt, fxx))
         return _surface_ds()
 
+    monkeypatch.setattr(src, "_prefetch_surface", fake_prefetch)
     monkeypatch.setattr(src, "_download_surface", fake_download)
     valid_times = (
         datetime(2026, 6, 23, 8, tzinfo=timezone.utc),
@@ -127,28 +131,81 @@ def test_batch_surface_grids_use_one_common_model_run(monkeypatch, tmp_path):
         (15.0, 45.0, 117.0, 123.0), valid_times
     )
 
-    # Per-time selection would choose 00Z for 08Z and 06Z for 10Z. The batch
-    # pins both forecast hours to 00Z so longitude does not imply model-cycle age.
-    assert calls == [
-        (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 8),
-        (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 10),
-    ]
-    assert {grid.run_time for grid in grids} == {
-        datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
-    }
+    common = datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
+    # Per-time selection would choose 00Z for 08Z and 06Z for 10Z. The batch pins
+    # both forecast hours to 00Z. Network prefetch runs in parallel (order not
+    # guaranteed); the parse is serial.
+    assert sorted(prefetched) == [(common, 8), (common, 10)]
+    assert sorted(parsed) == [(common, 8), (common, 10)]
+    assert {grid.run_time for grid in grids} == {common}
+
+
+def test_surface_download_retries_transient_then_succeeds(monkeypatch, tmp_path):
+    src = GFSSource(cache_dir=tmp_path)
+    src.SURFACE_RETRY_BACKOFF_S = 0.0   # no sleeping in the test
+    attempts = {"n": 0}
+
+    def flaky_download(run_dt, fxx):
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise RuntimeError("Processing failed: HTTPSConnectionPool(...): Read timed out.")
+        return _surface_ds()
+
+    monkeypatch.setattr(src, "_download_surface", flaky_download)
+    grid = src.fetch_surface_grid((15.0, 45.0, 117.0, 123.0), _T6)
+    assert attempts["n"] == 3                 # retried the two transient timeouts
+    assert grid.cloud_low_pct.shape[0] > 0
+
+
+def test_surface_download_does_not_retry_non_transient(monkeypatch, tmp_path):
+    src = GFSSource(cache_dir=tmp_path)
+    src.SURFACE_RETRY_BACKOFF_S = 0.0
+    attempts = {"n": 0}
+
+    def missing(run_dt, fxx):
+        attempts["n"] += 1
+        raise FileNotFoundError("cycle not published")
+
+    monkeypatch.setattr(src, "_download_surface", missing)
+    with pytest.raises(GFSUnavailable):       # a real 404 is not retried; falls through
+        src.fetch_surface_grid((15.0, 45.0, 117.0, 123.0), _T6)
+    # one attempt per cycle tried (no per-hour retry), across the fallback cycles
+    assert attempts["n"] == src.MAX_CYCLE_FALLBACK + 1
+
+
+def test_surface_parallel_prefetch_retries_transient(monkeypatch, tmp_path):
+    src = GFSSource(cache_dir=tmp_path)
+    src.SURFACE_RETRY_BACKOFF_S = 0.0
+    attempts: dict[int, int] = {}
+
+    def flaky_prefetch(run_dt, fxx):
+        attempts[fxx] = attempts.get(fxx, 0) + 1
+        if attempts[fxx] < 2:                 # one transient timeout per hour
+            raise RuntimeError("Processing failed: HTTPSConnectionPool(...): Read timed out.")
+
+    monkeypatch.setattr(src, "_prefetch_surface", flaky_prefetch)
+    monkeypatch.setattr(src, "_download_surface", lambda run_dt, fxx: _surface_ds())
+    valid_times = (
+        datetime(2026, 6, 23, 8, tzinfo=timezone.utc),
+        datetime(2026, 6, 23, 10, tzinfo=timezone.utc),
+    )
+
+    grids = src.fetch_surface_grids((15.0, 45.0, 117.0, 123.0), valid_times)
+    assert len(grids) == 2
+    assert attempts == {8: 2, 10: 2}          # each parallel hour retried once
 
 
 def test_batch_surface_fallback_moves_every_hour_together(monkeypatch, tmp_path):
     src = GFSSource(cache_dir=tmp_path)
-    calls = []
+    prefetched = []
 
-    def fake_download(run_dt, fxx):
-        calls.append((run_dt, fxx))
-        if run_dt.hour == 6:
+    def fake_prefetch(run_dt, fxx):
+        prefetched.append((run_dt, fxx))
+        if run_dt.hour == 6:                          # cycle still publishing
             raise FileNotFoundError("cycle still publishing")
-        return _surface_ds()
 
-    monkeypatch.setattr(src, "_download_surface", fake_download)
+    monkeypatch.setattr(src, "_prefetch_surface", fake_prefetch)
+    monkeypatch.setattr(src, "_download_surface", lambda run_dt, fxx: _surface_ds())
     valid_times = (
         datetime(2026, 6, 23, 10, tzinfo=timezone.utc),
         datetime(2026, 6, 23, 11, tzinfo=timezone.utc),
@@ -158,11 +215,14 @@ def test_batch_surface_fallback_moves_every_hour_together(monkeypatch, tmp_path)
         (15.0, 45.0, 117.0, 123.0), valid_times
     )
 
-    assert calls == [
+    # The 06Z cycle is unavailable; the parallel prefetch attempts both of its
+    # hours, then the whole batch falls back together to 00Z (order-insensitive).
+    assert sorted(prefetched) == sorted([
         (datetime(2026, 6, 23, 6, tzinfo=timezone.utc), 4),
+        (datetime(2026, 6, 23, 6, tzinfo=timezone.utc), 5),
         (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 10),
         (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 11),
-    ]
+    ])
     assert {grid.run_time for grid in grids} == {
         datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
     }
@@ -178,6 +238,8 @@ def test_batch_surface_fallback_when_decoded_grid_lacks_cover(monkeypatch, tmp_p
             return _surface_ds(drop=("lcc", "mcc", "hcc"))
         return _surface_ds()
 
+    # Prefetch (network) succeeds; the 06Z grid only fails at parse for lacking cover.
+    monkeypatch.setattr(src, "_prefetch_surface", lambda run_dt, fxx: None)
     monkeypatch.setattr(src, "_download_surface", fake_download)
     valid_times = (
         datetime(2026, 6, 23, 10, tzinfo=timezone.utc),
