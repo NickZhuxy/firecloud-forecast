@@ -189,6 +189,9 @@ class GFSSource:
     # fallback. (Genuinely-unpublished cycles fail fast — not retried.)
     SURFACE_DOWNLOAD_ATTEMPTS = 3
     SURFACE_RETRY_BACKOFF_S = 1.5
+    # The surface subset (étage cover, 2 m RH, visibility). Shared by the parallel
+    # prefetch (network) and the serial parse so both reference the same file.
+    _SURFACE_SEARCH = r":(?:LCDC|MCDC|HCDC):|:RH:2 m above ground:|:VIS:surface:"
 
     def __init__(
         self,
@@ -351,45 +354,48 @@ class GFSSource:
         self._cover_cache[key] = ds
         return ds
 
-    def _load_surface(self, run_dt: datetime, fxx: int) -> xr.Dataset:
-        key = (run_dt, fxx)
-        cached = self._surface_cache.get(key)
-        if cached is not None:
-            return cached
-        ds = self._download_surface_with_retries(run_dt, fxx)
-        self._surface_cache[key] = ds
-        return ds
-
-    def _download_surface_with_retries(self, run_dt: datetime, fxx: int) -> xr.Dataset:
-        """Download one surface hour, retrying transient network failures.
+    def _retry_transient(self, action, fxx: int, what: str):
+        """Run a download ``action``, retrying transient network failures.
 
         Without this a single AWS read timeout among the many sunset hours fails
-        the whole national batch and forces a wasteful cycle fallback.
+        the whole national batch and forces a wasteful cycle fallback. A genuine
+        404 (unpublished cycle) is not transient and is re-raised immediately.
         """
         last_exc: Exception | None = None
         for attempt in range(1, self.SURFACE_DOWNLOAD_ATTEMPTS + 1):
             try:
-                return self._download_surface(run_dt, fxx)
+                return action()
             except Exception as exc:  # noqa: BLE001 — retry only transient network errors
                 last_exc = exc
                 if attempt == self.SURFACE_DOWNLOAD_ATTEMPTS or not _is_transient_network_error(exc):
                     raise
                 logger.warning(
-                    "GFS surface f%02d: transient error (attempt %d/%d): %s — retrying",
-                    fxx, attempt, self.SURFACE_DOWNLOAD_ATTEMPTS, exc,
+                    "GFS surface %s f%02d: transient error (attempt %d/%d): %s — retrying",
+                    what, fxx, attempt, self.SURFACE_DOWNLOAD_ATTEMPTS, exc,
                 )
                 time.sleep(self.SURFACE_RETRY_BACKOFF_S * attempt)
         raise last_exc  # pragma: no cover - loop returns or raises above
 
+    def _load_surface(self, run_dt: datetime, fxx: int) -> xr.Dataset:
+        key = (run_dt, fxx)
+        cached = self._surface_cache.get(key)
+        if cached is not None:
+            return cached
+        # Parse (eccodes/cfgrib). If the file was prefetched this is a local read;
+        # otherwise _download_surface also fetches it. Retried for the latter case.
+        ds = self._retry_transient(lambda: self._download_surface(run_dt, fxx), fxx, "parse")
+        self._surface_cache[key] = ds
+        return ds
+
     def _load_surface_batch(self, run_dt: datetime, fxxs: list[int]) -> list[xr.Dataset]:
-        """Load several forecast hours for one cycle, downloading misses in parallel.
+        """Load several forecast hours for one cycle: parallel download, serial parse.
 
         The national map spans several sunset forecast hours; downloading them
-        serially is the dominant cost (and looks like a hang). Each hour is an
-        independent network read, so fetch the uncached, de-duplicated hours
-        concurrently to fill the cache, then return datasets in ``fxxs`` order.
-        Any download error propagates so the caller's whole-batch cycle fallback
-        still triggers.
+        serially is the dominant cost (and looks like a hang). The *network* reads
+        are independent, so prefetch the uncached, de-duplicated hours to disk
+        concurrently — but PARSE them serially, because eccodes/cfgrib is not
+        assumed thread-safe. Any download error propagates so the caller's
+        whole-batch cycle fallback still triggers.
         """
         pending = [
             f for f in dict.fromkeys(fxxs) if (run_dt, f) not in self._surface_cache
@@ -401,12 +407,23 @@ class GFSSource:
             )
             workers = min(len(pending), self.MAX_SURFACE_WORKERS)
             with ThreadPoolExecutor(max_workers=workers) as pool:
-                # Submit all, let the pool drain, THEN surface errors — so the set
-                # of attempted hours is deterministic (no map early-exit race).
-                futures = [pool.submit(self._load_surface, run_dt, f) for f in pending]
+                # Submit all, let the pool drain, THEN surface errors — deterministic
+                # attempt set (no map early-exit race). Download only, no parse.
+                futures = [
+                    pool.submit(
+                        self._retry_transient,
+                        lambda f=f: self._prefetch_surface(run_dt, f), f, "download",
+                    )
+                    for f in pending
+                ]
             for future in futures:
                 future.result()   # re-raise the first failure → caller's cycle fallback
+        # Parse serially; prefetched hours are now local files.
         return [self._load_surface(run_dt, f) for f in fxxs]
+
+    def _prefetch_surface(self, run_dt: datetime, fxx: int) -> None:
+        """Download one surface hour's GRIB subset to disk — network only, no parse."""
+        self._herbie(run_dt, fxx).download(self._SURFACE_SEARCH)
 
     def _herbie(self, run_dt: datetime, fxx: int):
         """Construct a Herbie handle for a GFS 0.25° cycle (network on .xarray)."""
@@ -448,9 +465,9 @@ class GFSSource:
         return parsed
 
     def _download_surface(self, run_dt: datetime, fxx: int) -> xr.Dataset:
-        """Download GFS surface fields (étage cover, 2 m RH, visibility)."""
+        """Download (if needed) + parse GFS surface fields (cover, 2 m RH, visibility)."""
         H = self._herbie(run_dt, fxx)
-        search = r":(?:LCDC|MCDC|HCDC):|:RH:2 m above ground:|:VIS:surface:"
+        search = self._SURFACE_SEARCH
         download_bytes = _subset_payload_bytes(H, search)
         parsed = H.xarray(search)
         if isinstance(parsed, list):
