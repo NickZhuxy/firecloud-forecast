@@ -36,6 +36,16 @@ class CloudLayer:
     # layer). Near 1 means the layer barely crossed the threshold (edge case);
     # large means a robust detection. NaN when unset. Consumed by #11.
     signal_margin: float = float("nan")
+    # Visible cloud optical depth τ from condensate (FA-C1, manual §1.3.2). NaN
+    # when not derivable (RH-fallback layer, or a single-level layer that cannot
+    # be integrated); consumers then fall back to the thickness×phase proxy.
+    optical_depth: float = float("nan")
+
+
+# Standard cloud optics (FA-C1): τ = 1.5·WP / (ρ_cond·r_e), WP = ∫ ρ_air·q dz.
+_R_DRY_AIR = 287.05         # J/(kg·K)
+_RHO_WATER = 1000.0         # kg/m³
+_RHO_ICE = 917.0            # kg/m³
 
 
 @dataclass(frozen=True)
@@ -58,6 +68,10 @@ class CloudDiagnosisConfig:
     rh_confidence: float = 0.5
     single_level_factor: float = 0.6   # one level → weak vertical support
     open_edge_factor: float = 0.9      # layer runs to the profile edge → unknown extent
+    # Effective radii for the optical-depth conversion (FA-C1). Liquid droplets
+    # ~10 µm (manual §1.1.2); ice crystals larger → same path is more transparent.
+    liquid_eff_radius_m: float = 1.0e-5
+    ice_eff_radius_m: float = 3.0e-5
 
 
 DEFAULT_CLOUD_CONFIG = CloudDiagnosisConfig()
@@ -76,6 +90,7 @@ def diagnose_clouds(
     rh = np.asarray(profile.relative_humidity_pct, dtype=float)[keep]
     clw = np.asarray(profile.cloud_water_kg_kg, dtype=float)[keep]
     ice = np.asarray(profile.cloud_ice_kg_kg, dtype=float)[keep]
+    pressure = np.asarray(profile.pressure_hpa, dtype=float)[keep]
 
     condensate_available = np.isfinite(clw).any() or np.isfinite(ice).any()
     if condensate_available:
@@ -113,6 +128,11 @@ def diagnose_clouds(
     layers: list[CloudLayer] = []
     for i0, i1, base, top in merged:
         peak = float(np.max(signal[i0:i1 + 1]))
+        optical_depth = (
+            _layer_optical_depth(pressure, temp, h, clw, ice, i0, i1, config)
+            if source == "condensate"
+            else float("nan")
+        )
         layers.append(
             CloudLayer(
                 base_m=float(base),
@@ -122,9 +142,33 @@ def diagnose_clouds(
                 confidence=_confidence(i0, i1, n, source, config),
                 source=source,
                 signal_margin=peak / threshold if threshold else float("nan"),
+                optical_depth=optical_depth,
             )
         )
     return layers
+
+
+def _layer_optical_depth(p_hpa, t_k, h_m, clw, ice, i0: int, i1: int, config) -> float:
+    """Visible cloud optical depth τ over levels ``[i0, i1]`` (FA-C1, manual §1.3.2).
+
+    ``τ = 1.5·WP/(ρ_cond·r_e)`` with the condensate water path
+    ``WP = ∫ ρ_air·q dz`` integrated trapezoidally; ``ρ_air = p/(R_d·T)``. Liquid
+    and ice are summed with their own densities and effective radii. A single in-
+    cloud level (``i1 == i0``) cannot be integrated → NaN.
+    """
+    if i1 <= i0:
+        return float("nan")
+    sl = slice(i0, i1 + 1)
+    rho_air = (np.asarray(p_hpa[sl]) * 100.0) / (_R_DRY_AIR * np.asarray(t_k[sl]))
+    dz = np.diff(np.asarray(h_m[sl]))
+    f_liq = rho_air * np.nan_to_num(np.asarray(clw[sl]))
+    f_ice = rho_air * np.nan_to_num(np.asarray(ice[sl]))
+    lwp = float(np.sum(0.5 * (f_liq[:-1] + f_liq[1:]) * dz))
+    iwp = float(np.sum(0.5 * (f_ice[:-1] + f_ice[1:]) * dz))
+    return (
+        1.5 * lwp / (_RHO_WATER * config.liquid_eff_radius_m)
+        + 1.5 * iwp / (_RHO_ICE * config.ice_eff_radius_m)
+    )
 
 
 def _true_spans(mask: np.ndarray) -> list[tuple[int, int]]:
