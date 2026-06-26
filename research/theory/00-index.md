@@ -2,6 +2,10 @@
 
 > 全部笔记 `stage: claude-draft`（事实层 Claude 写、判断层等 Nick 复核）。每篇都以"对预测规则的启示"小节结尾，把研究结论接回 [predictor/rules.py](../../predictor/rules.py)。可作为论文 "Theoretical Background" 章节的基础。
 
+> 🎯 **权威目标模型**：`research/人工火烧云预报速成（长三角适用）.pdf`（外部作者手册）含完整的火烧云几何模型、消光/颜色物理与操作化预报流程，**权威性高于本目录的 claude-draft 笔记**——是项目逆向逼近的目标。
+>
+> 📋 **[single-point-fidelity-audit.md](single-point-fidelity-audit.md)** — Spike #56 单点物理保真度审计：对照上述手册逐环节列出"当前简化 vs 真实物理"的差距，给出有优先级的拟真 backlog（几何/云/气溶胶/散射四类），供 Epic #54 的 #57 立项。**优先级待 Nick 复核定稿。**
+
 ## 推荐阅读顺序
 
 依赖关系：
