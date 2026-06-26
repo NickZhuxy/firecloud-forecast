@@ -27,6 +27,7 @@ from predictor.spatial import (
     SunwardProfile, destination_point, sunward_coordinates,
     DEFAULT_SUNWARD_DISTANCES_KM,
 )
+from predictor.ray_path import RayClearance, ray_height_m, trace_ray_clearance
 
 __all__ = [
     "Forecast", "Predictor", "Features", "derive", "estimate_cloud_base_m",
@@ -46,4 +47,5 @@ __all__ = [
     "viewing_extension_min", "total_observed_duration_min",
     "SunwardProfile", "destination_point", "sunward_coordinates",
     "DEFAULT_SUNWARD_DISTANCES_KM",
+    "RayClearance", "ray_height_m", "trace_ray_clearance",
 ]
