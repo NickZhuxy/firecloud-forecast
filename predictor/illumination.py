@@ -38,19 +38,27 @@ class LayerContribution:
 
 
 def _layer_opacity(layer: CloudLayer) -> float:
-    """Opacity (0–1) of a single layer from its thickness, phase, and confidence.
+    """Opacity (0–1) of a single layer, confidence-weighted.
 
-    Confidence weights the opacity so an uncertain (e.g. RH-fallback,
-    single-level) deck cannot, on its own, drive the LowCloudObstruction gate to
-    zero the whole forecast — a shaky diagnosis hedges rather than vetoes.
+    Prefers the diagnosed cloud optical depth τ (FA-C1): transmittance
+    ``1 − exp(−τ)`` supersedes the coarse thickness×phase proxy, so a thin-but-
+    dense water deck reads opaque and a deep-but-wispy cirrus reads sheer. When τ
+    is unavailable (RH-fallback or single-level layer → NaN), it falls back to the
+    ``thickness × phase`` estimate. Confidence weights the result either way, so an
+    uncertain deck hedges rather than vetoes the whole forecast.
     """
+    confidence = layer.confidence if math.isfinite(layer.confidence) else 0.0
+    confidence = min(1.0, max(0.0, confidence))
+
+    optical_depth = layer.optical_depth
+    if math.isfinite(optical_depth):
+        return (1.0 - math.exp(-max(0.0, optical_depth))) * confidence
+
     thickness_m = layer.thickness_m
     if not math.isfinite(thickness_m) or thickness_m <= 0:
         return 0.0
     thickness = min(1.0, thickness_m / _FULL_OPACITY_THICKNESS_M)
     phase = _PHASE_OPACITY.get(layer.phase_hint, _PHASE_OPACITY["mixed"])
-    confidence = layer.confidence if math.isfinite(layer.confidence) else 0.0
-    confidence = min(1.0, max(0.0, confidence))
     return thickness * phase * confidence
 
 

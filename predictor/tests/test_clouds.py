@@ -147,3 +147,76 @@ def test_single_level_layer_has_reduced_confidence():
     layers = diagnose_clouds(p)
     assert len(layers) == 1
     assert layers[0].confidence < 0.8  # single-level support penalized
+
+
+# ---------------------------------------------------------------------------
+# FA-C1: cloud optical depth from condensate (manual §1.3.2)
+# τ = 1.5·∫ρ·q dz / (ρ_cond·r_e); dense liquid low cloud opaque (τ>10), cirrus τ<1.
+# ---------------------------------------------------------------------------
+
+
+def test_liquid_layer_optical_depth_is_opaque():
+    p = _profile(
+        [500, 1500, 2000, 3000, 4000, 8000],
+        clw=[0, 0, 5e-4, 5e-4, 0, 0], ice=[0, 0, 0, 0, 0, 0],
+        temp=[288, 283, 280, 274, 268, 230],
+    )
+    layers = diagnose_clouds(p)
+    assert len(layers) == 1
+    assert np.isfinite(layers[0].optical_depth)
+    assert layers[0].optical_depth > 10.0  # dense low water deck → opaque
+    # Pin the value so a coefficient/unit/Q_ext slip can't hide behind the bound.
+    assert layers[0].optical_depth == pytest.approx(51.8, rel=0.02)
+
+
+def test_thin_cirrus_optical_depth_is_transparent():
+    p = _profile(
+        [500, 5000, 8000, 10000, 12000],
+        clw=[0, 0, 0, 0, 0], ice=[0, 0, 5e-6, 5e-6, 0],
+        temp=[288, 250, 230, 220, 215],
+    )
+    layers = diagnose_clouds(p)
+    assert len(layers) == 1
+    assert 0.0 < layers[0].optical_depth < 1.0  # ice + large crystals → transparent
+    # Pin it: would read ~1.07 (fails) if ice used liquid optics — locks the ice path.
+    assert layers[0].optical_depth == pytest.approx(0.389, rel=0.03)
+
+
+def test_optical_depth_increases_with_condensate():
+    geom = dict(heights=[500, 1500, 2000, 3000, 4000, 8000],
+                temp=[288, 283, 280, 274, 268, 230])
+    light = diagnose_clouds(_profile(clw=[0, 0, 3e-4, 3e-4, 0, 0], ice=[0] * 6, **geom))
+    dense = diagnose_clouds(_profile(clw=[0, 0, 9e-4, 9e-4, 0, 0], ice=[0] * 6, **geom))
+    assert dense[0].optical_depth > light[0].optical_depth
+
+
+def test_low_water_more_opaque_than_high_cirrus():
+    # The manual's point, now from real content: a thin dense low water deck is
+    # optically thicker than a deep wispy cirrus.
+    low = diagnose_clouds(_profile(
+        [500, 1500, 2000, 2500, 4000, 8000],
+        clw=[0, 0, 5e-4, 5e-4, 0, 0], ice=[0] * 6, temp=[288, 283, 280, 277, 268, 230],
+    ))
+    cirrus = diagnose_clouds(_profile(
+        [500, 5000, 8000, 11000, 12000],
+        clw=[0] * 5, ice=[0, 0, 5e-6, 5e-6, 0], temp=[288, 250, 230, 218, 215],
+    ))
+    assert low[0].optical_depth > cirrus[0].optical_depth
+
+
+def test_rh_diagnosed_layer_has_nan_optical_depth():
+    # No condensate reported → RH-fallback layer carries no optical depth.
+    p = _profile([500, 1500, 3000, 4000, 6000, 8000],
+                 rh=[30, 30, 95, 95, 30, 30])  # clw/ice default NaN
+    layers = diagnose_clouds(p)
+    assert len(layers) == 1
+    assert layers[0].source == "rh"
+    assert np.isnan(layers[0].optical_depth)
+
+
+def test_single_level_condensate_layer_optical_depth_nan():
+    # One in-cloud level can't be trapezoid-integrated → NaN (falls back later).
+    p = _profile([500, 1500, 3000, 5000, 8000], clw=[0, 0, 1e-4, 0, 0], ice=[0] * 5)
+    layers = diagnose_clouds(p)
+    assert len(layers) == 1
+    assert np.isnan(layers[0].optical_depth)
