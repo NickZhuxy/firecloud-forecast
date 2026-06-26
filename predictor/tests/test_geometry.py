@@ -5,14 +5,21 @@ import math
 import pytest
 
 from predictor.geometry import (
+    AerosolGroundRange,
     GeometryResult,
     EARTH_RADIUS_KM,
+    OverheadWindow,
     characteristic_duration_min,
     compute_geometry,
     equivalent_cloud_base_m,
     equivalent_cloud_base_from_aod_m,
+    equivalent_cloud_base_range_from_aod_m,
     max_penetration_km,
+    overhead_firecloud_window,
     sunset_speed_km_min,
+    total_observed_duration_min,
+    viewing_elevation_deg,
+    viewing_extension_min,
 )
 
 
@@ -227,3 +234,202 @@ def test_compute_geometry_numeric_types():
     assert isinstance(result.max_reach_km, float)
     assert isinstance(result.duration_min, float)
     assert isinstance(result.sunset_speed_km_min, float)
+
+
+# ---------------------------------------------------------------------------
+# viewing_elevation_deg (FA-G3) — manual §1.2.4, θ = h/l − l/(2R)
+# Golden values from the manual's worked examples (Shenzhen / Yichun / Qingdao).
+# ---------------------------------------------------------------------------
+
+
+def test_viewing_elevation_shenzhen_boundary_below_horizon():
+    # D=200 km, h=2000 m → −0.32° (manual §4.1.1): boundary below the horizon.
+    assert viewing_elevation_deg(200.0, 2000.0) == pytest.approx(-0.326, abs=0.02)
+
+
+def test_viewing_elevation_yichun_boundary():
+    # D=166 km, h=7219 m → 1.75° (manual §4.1.1 Yichun).
+    assert viewing_elevation_deg(166.0, 7219.0) == pytest.approx(1.745, abs=0.02)
+
+
+def test_viewing_elevation_qingdao_boundary():
+    # D=200 km, h=9200 m → 1.74° (manual §1.2.4 Qingdao).
+    assert viewing_elevation_deg(200.0, 9200.0) == pytest.approx(1.736, abs=0.02)
+
+
+def test_viewing_elevation_farther_boundary_lower_angle():
+    near = viewing_elevation_deg(100.0, 5000.0)
+    far = viewing_elevation_deg(300.0, 5000.0)
+    assert near > far
+
+
+def test_viewing_elevation_higher_cloud_larger_angle():
+    low = viewing_elevation_deg(150.0, 3000.0)
+    high = viewing_elevation_deg(150.0, 9000.0)
+    assert high > low
+
+
+def test_viewing_elevation_curvature_can_drive_angle_negative():
+    # A low, distant boundary sits below the horizon (curvature term dominates).
+    assert viewing_elevation_deg(250.0, 1500.0) < 0.0
+
+
+def test_viewing_elevation_overhead_when_distance_zero():
+    assert viewing_elevation_deg(0.0, 5000.0) == 90.0
+
+
+# ---------------------------------------------------------------------------
+# overhead_firecloud_window (FA-G1) — manual §1.2.2 firecloud triangle
+# duration = √(2R·h_eff)/v − D/(2v); relative to the observer's local sunset.
+# ---------------------------------------------------------------------------
+
+
+def test_overhead_window_shenzhen():
+    # h_eff=2 km, D=200 km, v=21 km/min → start 4.76, end 7.60, duration 2.84 min.
+    w = overhead_firecloud_window(boundary_km=200.0, cloud_base_eff_m=2000.0,
+                                  sunset_speed_km_min=21.0)
+    assert isinstance(w, OverheadWindow)
+    assert w.start_min == pytest.approx(4.76, abs=0.05)
+    assert w.end_min == pytest.approx(7.60, abs=0.05)
+    assert w.duration_min == pytest.approx(2.84, abs=0.05)
+
+
+def test_overhead_window_yichun_low_eff_base():
+    # h_eff=4.65 km, D=166 km, v=18 → duration 8.91 min (manual lower bound 8.9).
+    w = overhead_firecloud_window(166.0, 4650.0, 18.0)
+    assert w.duration_min == pytest.approx(8.91, abs=0.05)
+
+
+def test_overhead_window_yichun_high_eff_base():
+    # h_eff=5.9 km, D=166 km, v=18 → duration 10.62 min (manual upper bound 10.6).
+    w = overhead_firecloud_window(166.0, 5900.0, 18.0)
+    assert w.duration_min == pytest.approx(10.62, abs=0.05)
+
+
+def test_overhead_window_none_when_boundary_beyond_reach():
+    # D ≥ 2√(2R·h) = max reach → no overhead firecloud.
+    reach = max_penetration_km(2000.0)  # ≈ 319 km
+    assert overhead_firecloud_window(reach + 50.0, 2000.0, 21.0) is None
+
+
+def test_overhead_window_none_for_nonpositive_eff_base():
+    # Aerosol correction can push the effective base to/below zero → no glow.
+    assert overhead_firecloud_window(100.0, 0.0, 21.0) is None
+
+
+def test_viewing_extension_zero_for_nonpositive_inputs():
+    assert viewing_extension_min(0.0, 21.0) == 0.0
+    assert viewing_extension_min(2000.0, 0.0) == 0.0
+
+
+def test_overhead_duration_shrinks_with_farther_boundary():
+    near = overhead_firecloud_window(100.0, 5000.0, 20.0).duration_min
+    far = overhead_firecloud_window(250.0, 5000.0, 20.0).duration_min
+    assert far < near
+
+
+def test_overhead_duration_grows_with_higher_base():
+    low = overhead_firecloud_window(150.0, 3000.0, 20.0).duration_min
+    high = overhead_firecloud_window(150.0, 9000.0, 20.0).duration_min
+    assert high > low
+
+
+# ---------------------------------------------------------------------------
+# viewing_extension_min + total_observed_duration_min (FA-G2) — manual §1.2.4/§4.1.1
+# 5° sky extension uses the RAW cloud base; overhead uses the equivalent base.
+# ---------------------------------------------------------------------------
+
+
+def test_viewing_extension_shenzhen():
+    # h=2 km, v=21: 2/tan(5°)=22.86 km, /21 = 1.09 min.
+    assert viewing_extension_min(2000.0, 21.0) == pytest.approx(1.09, abs=0.03)
+
+
+def test_total_duration_shenzhen():
+    # overhead 2.84 + extension 1.09 = 3.93 min (manual ~3.9).
+    total = total_observed_duration_min(boundary_km=200.0, cloud_base_eff_m=2000.0,
+                                        cloud_base_raw_m=2000.0, sunset_speed_km_min=21.0)
+    assert total == pytest.approx(3.93, abs=0.06)
+
+
+def test_total_duration_yichun_range_matches_manual_13_to_15():
+    # Manual: 13.5–15.2 min. overhead(h_eff) uses 4.65/5.9 km; extension uses raw 7.291 km.
+    low = total_observed_duration_min(166.0, 4650.0, 7291.0, 18.0)
+    high = total_observed_duration_min(166.0, 5900.0, 7291.0, 18.0)
+    assert low == pytest.approx(13.5, abs=0.2)
+    assert high == pytest.approx(15.2, abs=0.2)
+
+
+def test_total_duration_none_when_no_overhead_firecloud():
+    reach = max_penetration_km(2000.0)
+    assert total_observed_duration_min(reach + 50.0, 2000.0, 2000.0, 21.0) is None
+
+
+# ---------------------------------------------------------------------------
+# equivalent_cloud_base_range_from_aod_m (FA-A1) — manual §1.3.3 / Table 4.1
+# Sweep aerosol scale height H∈[0.5,4] km; h_x non-monotonic, peaks ~2.75 km
+# at H≈3 for AOD=0.15.
+# ---------------------------------------------------------------------------
+
+
+def test_aerosol_range_unknown_aod_is_none():
+    assert equivalent_cloud_base_range_from_aod_m(9200.0, None) is None
+
+
+def test_aerosol_range_table_4_1_peak_h_x():
+    r = equivalent_cloud_base_range_from_aod_m(9200.0, 0.15)
+    assert isinstance(r, AerosolGroundRange)
+    # Table 4.1: h_x peaks ≈ 2.75 km near H = 3.0 km.
+    assert r.h_x_max_m == pytest.approx(2750.0, abs=30.0)
+    assert r.scale_height_at_max_h_x_km == pytest.approx(3.0, abs=0.01)
+    # H = 0.5 km row gives the minimum h_x ≈ 1.35 km.
+    assert r.h_x_min_m == pytest.approx(1354.0, abs=30.0)
+
+
+def test_aerosol_range_is_non_monotonic_peak_interior():
+    # The peak h_x must come from an interior H, not an endpoint (non-monotonicity).
+    r = equivalent_cloud_base_range_from_aod_m(9200.0, 0.15)
+    assert 0.5 < r.scale_height_at_max_h_x_km < 4.0
+
+
+def test_aerosol_range_eff_base_is_cloud_base_minus_h_x():
+    r = equivalent_cloud_base_range_from_aod_m(9200.0, 0.15)
+    # The largest h_x gives the smallest effective base, and vice versa.
+    assert r.eff_base_min_m == pytest.approx(9200.0 - r.h_x_max_m, abs=1.0)
+    assert r.eff_base_max_m == pytest.approx(9200.0 - r.h_x_min_m, abs=1.0)
+
+
+def test_aerosol_range_consistent_with_fixed_H_function_at_2km():
+    # The fixed-H=2000m scalar function must equal the H=2.0 km sample of the sweep.
+    fixed = equivalent_cloud_base_from_aod_m(9200.0, 0.15, scale_height_m=2000.0)
+    r = equivalent_cloud_base_range_from_aod_m(9200.0, 0.15, scale_heights_km=(2.0,))
+    assert r.eff_base_min_m == pytest.approx(fixed, abs=1.0)
+
+
+# ---------------------------------------------------------------------------
+# compute_geometry enrichment (FA-G1/G2/G3 + FA-A1 wired in, additive)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_geometry_populates_new_fields_when_boundary_given():
+    # High deck (7 km) so the aerosol-corrected base stays positive and a
+    # window exists; a 2 km base under AOD=0.15 would correct below ground.
+    result = compute_geometry(
+        cloud_base_m=7000.0, visibility_m=None, lat=22.5,
+        aerosol_optical_depth=0.15, boundary_km=200.0, cloud_base_raw_m=7000.0,
+        sunset_speed_km_min=21.0,
+    )
+    assert isinstance(result.overhead_window, OverheadWindow)
+    assert result.total_duration_min is not None
+    assert result.boundary_elevation_deg is not None
+    assert isinstance(result.aerosol_ground_range, AerosolGroundRange)
+
+
+def test_compute_geometry_new_fields_none_without_boundary():
+    result = compute_geometry(cloud_base_m=5000.0, visibility_m=None, lat=45.0)
+    assert result.overhead_window is None
+    assert result.total_duration_min is None
+    assert result.boundary_elevation_deg is None
+    # Existing behaviour unchanged.
+    assert result.max_reach_km is not None
+    assert result.duration_min is not None

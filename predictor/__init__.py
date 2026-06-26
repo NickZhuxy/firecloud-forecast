@@ -17,7 +17,11 @@ from predictor.rules import (
     standard_predictor, STANDARD_WEIGHTS, STANDARD_GATES,
 )
 from predictor.geometry import (
-    GeometryResult, compute_geometry, equivalent_cloud_base_from_aod_m,
+    GeometryResult, OverheadWindow, AerosolGroundRange,
+    compute_geometry, equivalent_cloud_base_from_aod_m,
+    equivalent_cloud_base_range_from_aod_m,
+    viewing_elevation_deg, overhead_firecloud_window,
+    viewing_extension_min, total_observed_duration_min,
 )
 from predictor.spatial import (
     SunwardProfile, destination_point, sunward_coordinates,
@@ -35,7 +39,11 @@ __all__ = [
     "SolarAngleAtSunset", "HumidityFactor",
     "CleanAirGate", "CloudAltitudePreference", "CloudCoverSweetSpot",
     "SunwardIlluminationGate", "BoundaryConfidence",
-    "GeometryResult", "compute_geometry", "equivalent_cloud_base_from_aod_m",
+    "GeometryResult", "OverheadWindow", "AerosolGroundRange",
+    "compute_geometry", "equivalent_cloud_base_from_aod_m",
+    "equivalent_cloud_base_range_from_aod_m",
+    "viewing_elevation_deg", "overhead_firecloud_window",
+    "viewing_extension_min", "total_observed_duration_min",
     "SunwardProfile", "destination_point", "sunward_coordinates",
     "DEFAULT_SUNWARD_DISTANCES_KM",
 ]
