@@ -129,13 +129,47 @@ def test_batch_surface_grids_use_one_common_model_run(monkeypatch, tmp_path):
 
     # Per-time selection would choose 00Z for 08Z and 06Z for 10Z. The batch
     # pins both forecast hours to 00Z so longitude does not imply model-cycle age.
-    assert calls == [
+    # Hours download in parallel, so the call order is not guaranteed.
+    assert sorted(calls) == [
         (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 8),
         (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 10),
     ]
     assert {grid.run_time for grid in grids} == {
         datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
     }
+
+
+def test_surface_download_retries_transient_then_succeeds(monkeypatch, tmp_path):
+    src = GFSSource(cache_dir=tmp_path)
+    src.SURFACE_RETRY_BACKOFF_S = 0.0   # no sleeping in the test
+    attempts = {"n": 0}
+
+    def flaky_download(run_dt, fxx):
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise RuntimeError("Processing failed: HTTPSConnectionPool(...): Read timed out.")
+        return _surface_ds()
+
+    monkeypatch.setattr(src, "_download_surface", flaky_download)
+    grid = src.fetch_surface_grid((15.0, 45.0, 117.0, 123.0), _T6)
+    assert attempts["n"] == 3                 # retried the two transient timeouts
+    assert grid.cloud_low_pct.shape[0] > 0
+
+
+def test_surface_download_does_not_retry_non_transient(monkeypatch, tmp_path):
+    src = GFSSource(cache_dir=tmp_path)
+    src.SURFACE_RETRY_BACKOFF_S = 0.0
+    attempts = {"n": 0}
+
+    def missing(run_dt, fxx):
+        attempts["n"] += 1
+        raise FileNotFoundError("cycle not published")
+
+    monkeypatch.setattr(src, "_download_surface", missing)
+    with pytest.raises(GFSUnavailable):       # a real 404 is not retried; falls through
+        src.fetch_surface_grid((15.0, 45.0, 117.0, 123.0), _T6)
+    # one attempt per cycle tried (no per-hour retry), across the fallback cycles
+    assert attempts["n"] == src.MAX_CYCLE_FALLBACK + 1
 
 
 def test_batch_surface_fallback_moves_every_hour_together(monkeypatch, tmp_path):
@@ -158,11 +192,15 @@ def test_batch_surface_fallback_moves_every_hour_together(monkeypatch, tmp_path)
         (15.0, 45.0, 117.0, 123.0), valid_times
     )
 
-    assert calls == [
+    # The 06Z cycle is unavailable; the parallel batch attempts both of its hours
+    # (deterministically), then the whole batch falls back together to 00Z. Order
+    # within a cycle is not guaranteed.
+    assert sorted(calls) == sorted([
         (datetime(2026, 6, 23, 6, tzinfo=timezone.utc), 4),
+        (datetime(2026, 6, 23, 6, tzinfo=timezone.utc), 5),
         (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 10),
         (datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 11),
-    ]
+    ])
     assert {grid.run_time for grid in grids} == {
         datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
     }

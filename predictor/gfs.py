@@ -12,7 +12,10 @@ cropped in memory after parsing. A global cube over 20 levels × 8 variables is
 """
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -20,6 +23,8 @@ import numpy as np
 import xarray as xr
 
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 from predictor.profiles import (
     PROFILE_VARS,
@@ -148,6 +153,23 @@ class GFSUnavailable(RuntimeError):
     """Raised when no usable GFS cycle could be loaded after fallbacks."""
 
 
+_TRANSIENT_NETWORK_MARKERS = (
+    "timed out", "timeout", "connection", "reset by peer",
+    "temporarily unavailable", "throttl", " 500", " 502", " 503", " 504",
+)
+
+
+def _is_transient_network_error(exc: Exception) -> bool:
+    """Heuristic: does this look like a transient S3/network hiccup worth a retry?
+
+    A read timeout or dropped connection to AWS is transient — the cycle exists,
+    the socket just stalled — so retrying the single hour is right. A genuinely
+    unpublished cycle raises a different message and is NOT retried (it falls
+    through to the caller's cycle fallback immediately).
+    """
+    return any(marker in str(exc).lower() for marker in _TRANSIENT_NETWORK_MARKERS)
+
+
 class GFSSource:
     """Fetch GFS 0.25° pressure-level profiles and region cubes."""
 
@@ -159,6 +181,14 @@ class GFSSource:
     # Half-width (degrees) of the bbox used to crop a single-point fetch.
     POINT_PAD_DEG = 0.5
     MAX_CYCLE_FALLBACK = 2
+    # The national grid spans several sunset forecast hours; each is an
+    # independent network read, so download cache-misses concurrently.
+    MAX_SURFACE_WORKERS = 8
+    # A transient S3 read timeout on one hour shouldn't fail the whole batch;
+    # retry the individual download a few times before giving up to the cycle
+    # fallback. (Genuinely-unpublished cycles fail fast — not retried.)
+    SURFACE_DOWNLOAD_ATTEMPTS = 3
+    SURFACE_RETRY_BACKOFF_S = 1.5
 
     def __init__(
         self,
@@ -252,7 +282,7 @@ class GFSSource:
             run = common_run - timedelta(hours=CYCLE_HOURS * step)
             fxxs = [fxx + CYCLE_HOURS * step for fxx in base_fxx]
             try:
-                datasets = [self._load_surface(run, fxx) for fxx in fxxs]
+                datasets = self._load_surface_batch(run, fxxs)
                 grids = [
                     self._surface_grid_from_dataset(
                         ds,
@@ -326,9 +356,57 @@ class GFSSource:
         cached = self._surface_cache.get(key)
         if cached is not None:
             return cached
-        ds = self._download_surface(run_dt, fxx)
+        ds = self._download_surface_with_retries(run_dt, fxx)
         self._surface_cache[key] = ds
         return ds
+
+    def _download_surface_with_retries(self, run_dt: datetime, fxx: int) -> xr.Dataset:
+        """Download one surface hour, retrying transient network failures.
+
+        Without this a single AWS read timeout among the many sunset hours fails
+        the whole national batch and forces a wasteful cycle fallback.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(1, self.SURFACE_DOWNLOAD_ATTEMPTS + 1):
+            try:
+                return self._download_surface(run_dt, fxx)
+            except Exception as exc:  # noqa: BLE001 — retry only transient network errors
+                last_exc = exc
+                if attempt == self.SURFACE_DOWNLOAD_ATTEMPTS or not _is_transient_network_error(exc):
+                    raise
+                logger.warning(
+                    "GFS surface f%02d: transient error (attempt %d/%d): %s — retrying",
+                    fxx, attempt, self.SURFACE_DOWNLOAD_ATTEMPTS, exc,
+                )
+                time.sleep(self.SURFACE_RETRY_BACKOFF_S * attempt)
+        raise last_exc  # pragma: no cover - loop returns or raises above
+
+    def _load_surface_batch(self, run_dt: datetime, fxxs: list[int]) -> list[xr.Dataset]:
+        """Load several forecast hours for one cycle, downloading misses in parallel.
+
+        The national map spans several sunset forecast hours; downloading them
+        serially is the dominant cost (and looks like a hang). Each hour is an
+        independent network read, so fetch the uncached, de-duplicated hours
+        concurrently to fill the cache, then return datasets in ``fxxs`` order.
+        Any download error propagates so the caller's whole-batch cycle fallback
+        still triggers.
+        """
+        pending = [
+            f for f in dict.fromkeys(fxxs) if (run_dt, f) not in self._surface_cache
+        ]
+        if len(pending) > 1:
+            logger.info(
+                "GFS surface: downloading %d forecast hours for %s (parallel)…",
+                len(pending), f"{run_dt:%Y-%m-%dT%HZ}",
+            )
+            workers = min(len(pending), self.MAX_SURFACE_WORKERS)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                # Submit all, let the pool drain, THEN surface errors — so the set
+                # of attempted hours is deterministic (no map early-exit race).
+                futures = [pool.submit(self._load_surface, run_dt, f) for f in pending]
+            for future in futures:
+                future.result()   # re-raise the first failure → caller's cycle fallback
+        return [self._load_surface(run_dt, f) for f in fxxs]
 
     def _herbie(self, run_dt: datetime, fxx: int):
         """Construct a Herbie handle for a GFS 0.25° cycle (network on .xarray)."""

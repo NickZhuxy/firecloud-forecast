@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -562,6 +563,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--dpi", type=_positive_int, default=160)
     args = parser.parse_args(argv)
+
+    # Surface the GFS download progress / retry messages so a slow multi-hour
+    # fetch reads as working, not hung.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     artifacts = generate_product(args.date, args.output_dir, dpi=args.dpi)
     print(f"image    : {artifacts.image_path}")
