@@ -7,11 +7,14 @@ from datetime import datetime, timezone
 import numpy as np
 
 from predictor.cross_section import SunwardCrossSection
+from predictor.fetch import FakeSource, WeatherSnapshot
 from predictor.profiles import AtmosphericCube
 from predictor.ray_path import trace_ray_clearance
+from predictor.rules import standard_predictor
 from predictor.spatial import build_sunward_path
 from predictor.sunward_section import (
     assemble_sunward_cross_section,
+    score_point_with_sunward_section,
     sunward_cross_section_for_point,
 )
 
@@ -53,6 +56,7 @@ def _uniform_cube(clw) -> AtmosphericCube:
 _CLEAR = np.zeros(6)
 _MID_DECK = np.array([0.0, 0.0, 5e-4, 5e-4, 0.0, 0.0])   # ~3000–5500 m
 _LOW_DECK = np.array([5e-4, 5e-4, 0.0, 0.0, 0.0, 0.0])   # ~750–1500 m
+_LOW_AND_HIGH = np.array([5e-4, 5e-4, 0.0, 0.0, 5e-4, 5e-4])  # low ~750–1500 + high ~7200–9000
 
 
 def _path(distances_km, *, domain=None):
@@ -152,3 +156,39 @@ def test_orchestrator_fetches_path_bbox_and_assembles():
     assert lon_min < 115.85 < lon_max
     assert lat_min < 30.0 < lat_max
     assert when == _VALID
+
+
+# ---------------------------------------------------------------------------
+# score_point_with_sunward_section — activate FA-G5 in a real scoring flow
+# ---------------------------------------------------------------------------
+
+
+def _detail_snapshot():
+    return WeatherSnapshot(
+        cloud_low_pct=0.0, cloud_mid_pct=0.0, cloud_high_pct=60.0, humidity_pct=50.0,
+        source_label="t", retrieved_at=_VALID, sunset_time=_VALID,
+        aerosol_optical_depth=0.1,
+    )
+
+
+def test_score_point_with_section_vetoes_gate_on_path_obstruction():
+    # A high canvas (~7 km) is diagnosed at the observer, but a low deck lies on the
+    # ray path → the assembled cross-section makes trace_ray_clearance veto the
+    # sunward gate. This proves FA-G5 is wired end-to-end through scoring.
+    predictor = standard_predictor(FakeSource(snapshot=_detail_snapshot()))
+    cube_source = _FakeCubeSource(_uniform_cube(_LOW_AND_HIGH))
+    fc = score_point_with_sunward_section(
+        predictor, cube_source, 30.0, 120.0, _VALID,
+        azimuth_deg=270.0, distances_km=[0.0, 100.0, 200.0, 300.0, 400.0],
+    )
+    assert fc.components["sunward_illumination"] == 0.0
+
+
+def test_score_point_with_section_returns_forecast():
+    predictor = standard_predictor(FakeSource(snapshot=_detail_snapshot()))
+    cube_source = _FakeCubeSource(_uniform_cube(_CLEAR))
+    fc = score_point_with_sunward_section(
+        predictor, cube_source, 30.0, 120.0, _VALID,
+        azimuth_deg=270.0, distances_km=[0.0, 100.0, 200.0],
+    )
+    assert 0.0 <= fc.probability <= 1.0
