@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 
 import numpy as np
+import pytest
 
 from predictor.clouds import CloudLayer
 from predictor.cross_section import SunwardCrossSection
@@ -19,6 +20,7 @@ from predictor.rules import (
     SolarAngleAtSunset,
     SunwardIlluminationGate,
 )
+from predictor.spatial import SunwardProfile
 
 
 def _xsec_with_low_deck(distances_km, deck_at_idx=None, aod_per_column=None):
@@ -251,6 +253,58 @@ def test_derive_without_cross_section_leaves_clearance_none():
         datetime(2026, 6, 27, 9, tzinfo=timezone.utc),
     )
     assert feats.sunward_ray_clearance is None
+
+
+def _sunward_profile_for_advection():
+    # A mid canvas with the sunward edge detected ~138.9 km out, and a 20 m/s 700 hPa
+    # wind from the east (travels west = azimuth 270°) → +20 m/s outward advection.
+    return SunwardProfile(
+        azimuth_deg=270.0,
+        distances_km=[0.0, 50.0, 100.0, 150.0, 250.0],
+        cloud_low_pct=[5.0, 10.0, 30.0, 40.0, 5.0],
+        cloud_mid_pct=[70.0, 65.0, 55.0, 10.0, 0.0],
+        cloud_high_pct=[0.0] * 5,
+        aerosol_optical_depth=[None] * 5,
+        wind_speed_850_m_s=[None] * 5, wind_direction_850_deg=[None] * 5,
+        wind_speed_700_m_s=[20.0] * 5, wind_direction_700_deg=[90.0] * 5,
+        wind_speed_400_m_s=[None] * 5, wind_direction_400_deg=[None] * 5,
+    )
+
+
+def test_fa_t1_advecting_boundary_out_of_reach_drops_illumination_gate():
+    # FA-T1 composite metamorphic: holding everything else fixed, advecting the
+    # sunward edge outward to sunset (here ~+216 km over 3 h) pushes it beyond the
+    # grazing reach (~319 km for a 2 km base) → the illumination gate falls 1.0 → 0.
+    t0 = datetime(2026, 6, 27, 9, 0, tzinfo=timezone.utc)
+    sunset = datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc)  # Δt = 3 h
+    snap = WeatherSnapshot(
+        cloud_low_pct=0.0, cloud_mid_pct=60.0, cloud_high_pct=0.0, humidity_pct=50.0,
+        source_label="t", retrieved_at=t0, cloud_base_m=2000.0, sunset_time=sunset,
+        sunward_profile=_sunward_profile_for_advection(),
+    )
+    gate = SunwardIlluminationGate()
+    at_valid = gate.evaluate(derive(snap, 30.0, 120.0, t0, valid_time=sunset))   # Δt=0
+    at_sunset = gate.evaluate(derive(snap, 30.0, 120.0, t0, valid_time=t0))      # Δt=3h
+    assert at_valid == 1.0
+    assert at_sunset == 0.0
+    assert at_sunset <= at_valid
+
+
+def test_fa_t1_derive_default_valid_time_advects_to_sunset():
+    # The production seam: score()/score_snapshot() call derive() WITHOUT valid_time,
+    # so it defaults to the query time and Δt = sunset − time drives the advection.
+    # Here the query is 3 h before sunset with +20 m/s outward wind → +216 km.
+    t0 = datetime(2026, 6, 27, 9, 0, tzinfo=timezone.utc)
+    sunset = datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc)  # Δt = 3 h
+    snap = WeatherSnapshot(
+        cloud_low_pct=0.0, cloud_mid_pct=60.0, cloud_high_pct=0.0, humidity_pct=50.0,
+        source_label="t", retrieved_at=t0, cloud_base_m=7000.0, sunset_time=sunset,
+        sunward_profile=_sunward_profile_for_advection(),
+    )
+    feats = derive(snap, 30.0, 120.0, t0)   # no valid_time → default = t0
+    raw = feats.sunward_cloud_boundary_raw_km
+    assert raw == pytest.approx(138.889, abs=0.1)
+    assert feats.sunward_cloud_boundary_km == pytest.approx(raw + 216.0)
 
 
 def test_derive_observer_column_aod_lowers_effective_base_and_blocks():

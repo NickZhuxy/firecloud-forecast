@@ -13,6 +13,7 @@
 | 文件 | 因子 | 主题 | 手册依据 |
 |---|---|---|---|
 | [fa-a2-path-extinction](fa-a2-path-extinction.md) | FA-A2 | 沿光线逐列路径消光（替代沿程 AOD 均值）；逐列等效不透明地表 | §1.3.1–4 / §4.1.1 / §2.4.2 |
+| [fa-t1-boundary-advection](fa-t1-boundary-advection.md) | FA-T1 | 云边界按云高风平移到日落时刻（Δt=日落−valid_time）| §4.1.1 / §4.2 |
 
 ## 推荐阅读顺序
 

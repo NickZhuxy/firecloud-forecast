@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import pytest
 import predictor.features as features_mod
 from predictor.features import (
     Features,
@@ -80,6 +81,72 @@ def test_sunward_profile_extracts_boundary_obstruction_aod_and_motion():
     assert result["sunward_obstruction_pct"] == 40.0
     assert result["sunward_aod_mean"] == 0.2
     assert abs(result["boundary_motion_m_s"] - 20.0) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# FA-T1: advect the sunward boundary to sunset by the cloud-height wind
+# ---------------------------------------------------------------------------
+
+def _advection_profile(wind_dir_700_deg, *, wind_speed_700=20.0):
+    # Mid canvas with a boundary near ~138.9 km and a 20 m/s 700 hPa wind whose
+    # direction the caller controls (to flip the advection sign).
+    return SunwardProfile(
+        azimuth_deg=270.0,
+        distances_km=[0.0, 50.0, 100.0, 150.0, 250.0],
+        cloud_low_pct=[5.0, 10.0, 30.0, 40.0, 5.0],
+        cloud_mid_pct=[70.0, 65.0, 55.0, 10.0, 0.0],
+        cloud_high_pct=[0.0] * 5,
+        aerosol_optical_depth=[None] * 5,
+        wind_speed_850_m_s=[None] * 5, wind_direction_850_deg=[None] * 5,
+        wind_speed_700_m_s=[wind_speed_700] * 5, wind_direction_700_deg=[wind_dir_700_deg] * 5,
+        wind_speed_400_m_s=[None] * 5, wind_direction_400_deg=[None] * 5,
+    )
+
+
+_T0 = datetime(2026, 6, 27, 9, 0, tzinfo=timezone.utc)
+_SUNSET_30MIN = datetime(2026, 6, 27, 9, 30, tzinfo=timezone.utc)  # Δt = 1800 s
+
+
+def test_boundary_not_advected_without_times():
+    # Two-arg call (no sunset/valid_time) leaves the boundary at the snapshot time.
+    result = analyze_sunward_profile(_advection_profile(90.0), "mid")
+    assert result["sunward_cloud_boundary_raw_km"] == result["sunward_cloud_boundary_km"]
+
+
+def test_boundary_advected_outward_to_sunset():
+    # Wind from the east (90°) travels west = azimuth 270° → +20 m/s outward.
+    # Over 30 min that is +36 km: the sunward edge recedes by 36 km by sunset.
+    p = _advection_profile(90.0)
+    raw = analyze_sunward_profile(p, "mid")["sunward_cloud_boundary_km"]
+    result = analyze_sunward_profile(p, "mid", sunset_time=_SUNSET_30MIN, valid_time=_T0)
+    assert result["sunward_cloud_boundary_raw_km"] == pytest.approx(raw)
+    assert result["sunward_cloud_boundary_km"] == pytest.approx(raw + 36.0)
+
+
+def test_boundary_advected_inward_when_wind_reverses():
+    # Wind from the west (270°) travels east = opposite azimuth → −20 m/s inward.
+    p = _advection_profile(270.0)
+    raw = analyze_sunward_profile(p, "mid")["sunward_cloud_boundary_km"]
+    result = analyze_sunward_profile(p, "mid", sunset_time=_SUNSET_30MIN, valid_time=_T0)
+    assert result["sunward_cloud_boundary_km"] == pytest.approx(raw - 36.0)
+    # boundary_motion_m_s stays the unsigned magnitude (BoundaryConfidence unchanged).
+    assert result["boundary_motion_m_s"] == pytest.approx(20.0)
+
+
+def test_boundary_zero_dt_is_identity():
+    p = _advection_profile(90.0)
+    raw = analyze_sunward_profile(p, "mid")["sunward_cloud_boundary_km"]
+    result = analyze_sunward_profile(p, "mid", sunset_time=_T0, valid_time=_T0)
+    assert result["sunward_cloud_boundary_km"] == pytest.approx(raw)
+
+
+def test_boundary_missing_wind_is_identity_even_with_dt():
+    # No canvas-layer wind → no advection (identity), even with Δt > 0. Pins the
+    # documented degeneracy: a detected boundary but absent wind stays put.
+    p = _advection_profile(None, wind_speed_700=None)  # 700 hPa wind absent
+    result = analyze_sunward_profile(p, "mid", sunset_time=_SUNSET_30MIN, valid_time=_T0)
+    assert result["sunward_cloud_boundary_km"] == result["sunward_cloud_boundary_raw_km"]
+    assert result["boundary_motion_m_s"] is None
 
 
 # ---------------------------------------------------------------------------
