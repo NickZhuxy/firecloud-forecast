@@ -108,6 +108,33 @@ def test_cloud_layers_are_carried_per_column():
     assert xsec.cloud_layers[1] == []
 
 
+# ---------------------------------------------------------------------------
+# Per-column AOD carrier (FA-A2)
+# ---------------------------------------------------------------------------
+
+
+def test_per_column_aod_defaults_to_none():
+    path = _path(2)
+    profiles = [_profile(s.lat, s.lon) for s in path.samples]
+    xsec = build_cross_section(path, profiles, [[], []])
+    assert xsec.aerosol_optical_depth_per_column is None
+
+
+def test_per_column_aod_is_carried_aligned_with_distances():
+    path = _path(3)
+    profiles = [_profile(s.lat, s.lon) for s in path.samples]
+    aod = [0.1, 0.4, None]
+    xsec = build_cross_section(path, profiles, [[], [], []], aod_per_column=aod)
+    assert xsec.aerosol_optical_depth_per_column == [0.1, 0.4, None]
+
+
+def test_per_column_aod_length_mismatch_raises():
+    path = _path(3)
+    profiles = [_profile(s.lat, s.lon) for s in path.samples]
+    with pytest.raises(ValueError, match="must align"):
+        build_cross_section(path, profiles, [[], [], []], aod_per_column=[0.1, 0.2])
+
+
 def test_even_heights_count_less_than_2_returns_single_zero():
     """even_heights with count < 2 returns [0.0] instead of calling linspace."""
     assert even_heights(max_m=15000.0, count=1) == [0.0]

@@ -21,7 +21,7 @@ from predictor.rules import (
 )
 
 
-def _xsec_with_low_deck(distances_km, deck_at_idx=None):
+def _xsec_with_low_deck(distances_km, deck_at_idx=None, aod_per_column=None):
     """Minimal cross-section; an opaque low deck (0–1000 m) at one column if given."""
     n = len(distances_km)
     heights = [0.0, 5000.0, 10000.0]
@@ -37,6 +37,7 @@ def _xsec_with_low_deck(distances_km, deck_at_idx=None):
         temperature_k=empty.copy(), mask=np.ones((3, n), dtype=bool),
         cloud_layers=layers, observer=(30.0, 120.0), azimuth_deg=270.0,
         target_time=datetime(2026, 6, 27, tzinfo=timezone.utc),
+        aerosol_optical_depth_per_column=aod_per_column,
     )
 
 
@@ -250,6 +251,37 @@ def test_derive_without_cross_section_leaves_clearance_none():
         datetime(2026, 6, 27, 9, tzinfo=timezone.utc),
     )
     assert feats.sunward_ray_clearance is None
+
+
+def test_derive_observer_column_aod_lowers_effective_base_and_blocks():
+    # FA-A2 local channel: a low 2 km canvas with NO cloud anywhere on the path, but
+    # the OBSERVER's own column (index 0) is very turbid (AOD 0.8 → h_x ≈ 6 km). That
+    # drives the effective base to/below 0, so the ray cannot reach the canvas →
+    # clearance is not clear. Clean elsewhere, so the only cause is the observer column.
+    xsec = _xsec_with_low_deck(
+        [0.0, 100.0, 200.0, 300.0, 400.0], deck_at_idx=None,
+        aod_per_column=[0.8, None, None, None, None],
+    )
+    feats = derive(
+        _detail_snapshot(2000.0), 30.0, 120.0,
+        datetime(2026, 6, 27, 9, tzinfo=timezone.utc), sunward_cross_section=xsec,
+    )
+    assert feats.sunward_ray_clearance.clear is False
+
+
+def test_derive_clean_observer_column_keeps_clear():
+    # Same scene, observer column clean (AOD 0.0) → effective base stays at 2 km, no
+    # cloud and no upstream excess → clear. Pins that index 0 (not another column)
+    # is the effective-base source.
+    xsec = _xsec_with_low_deck(
+        [0.0, 100.0, 200.0, 300.0, 400.0], deck_at_idx=None,
+        aod_per_column=[0.0, None, None, None, None],
+    )
+    feats = derive(
+        _detail_snapshot(2000.0), 30.0, 120.0,
+        datetime(2026, 6, 27, 9, tzinfo=timezone.utc), sunward_cross_section=xsec,
+    )
+    assert feats.sunward_ray_clearance.clear is True
 
 
 def test_boundary_confidence_penalizes_fuzzy_fast_boundary(base_features):

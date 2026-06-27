@@ -80,3 +80,29 @@ def test_sunward_profile_extracts_boundary_obstruction_aod_and_motion():
     assert result["sunward_obstruction_pct"] == 40.0
     assert result["sunward_aod_mean"] == 0.2
     assert abs(result["boundary_motion_m_s"] - 20.0) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# _observer_column_aod (FA-A2): the observer's own column AOD = index 0
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+from predictor.features import _observer_column_aod
+
+
+def test_observer_column_aod_returns_first_column():
+    xs = SimpleNamespace(aerosol_optical_depth_per_column=[0.1, 0.4, None])
+    assert _observer_column_aod(xs) == 0.1
+
+
+def test_observer_column_aod_zero_is_a_real_value_not_none():
+    # A clean observer (0.0) must read as 0.0, not be coerced to None.
+    xs = SimpleNamespace(aerosol_optical_depth_per_column=[0.0, 0.5])
+    assert _observer_column_aod(xs) == 0.0
+
+
+def test_observer_column_aod_none_when_unknown_or_absent():
+    assert _observer_column_aod(SimpleNamespace(aerosol_optical_depth_per_column=None)) is None
+    assert _observer_column_aod(SimpleNamespace(aerosol_optical_depth_per_column=[])) is None
+    assert _observer_column_aod(SimpleNamespace(aerosol_optical_depth_per_column=[None, 0.4])) is None

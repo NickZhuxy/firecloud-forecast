@@ -57,6 +57,7 @@ _CLEAR = np.zeros(6)
 _MID_DECK = np.array([0.0, 0.0, 5e-4, 5e-4, 0.0, 0.0])   # ~3000–5500 m
 _LOW_DECK = np.array([5e-4, 5e-4, 0.0, 0.0, 0.0, 0.0])   # ~750–1500 m
 _LOW_AND_HIGH = np.array([5e-4, 5e-4, 0.0, 0.0, 5e-4, 5e-4])  # low ~750–1500 + high ~7200–9000
+_HIGH_DECK = np.array([0.0, 0.0, 0.0, 0.0, 5e-4, 5e-4])  # high ~7200–9000 m only
 
 
 def _path(distances_km, *, domain=None):
@@ -101,6 +102,37 @@ def test_assemble_out_of_domain_column_is_masked_and_layerless():
     assert xsec.cloud_layers[-1] == []
     assert not xsec.mask[:, -1].any()      # whole column masked out
     assert xsec.mask[:, 0].any()           # observer column has real data
+
+
+# ---------------------------------------------------------------------------
+# Per-column AOD injection (FA-A2)
+# ---------------------------------------------------------------------------
+
+
+def test_assemble_fills_per_column_aod_from_injected_fn():
+    path = _path([0.0, 100.0, 200.0, 400.0])
+    # aod_fn keyed on longitude so each column gets a distinct, checkable value.
+    xsec = assemble_sunward_cross_section(
+        path, _uniform_cube(_CLEAR), aod_fn=lambda la, lo: round(abs(lo) / 1000.0, 4)
+    )
+    expected = [round(abs(s.lon) / 1000.0, 4) for s in path.samples]
+    assert xsec.aerosol_optical_depth_per_column == expected
+
+
+def test_assemble_out_of_domain_column_has_none_aod():
+    path = _path([0.0, 100.0, 200.0, 400.0], domain=(20.0, 40.0, 117.0, 130.0))
+    assert path.samples[-1].in_domain is False
+    xsec = assemble_sunward_cross_section(
+        path, _uniform_cube(_CLEAR), aod_fn=lambda la, lo: 0.2
+    )
+    assert xsec.aerosol_optical_depth_per_column[-1] is None
+    assert xsec.aerosol_optical_depth_per_column[0] == 0.2
+
+
+def test_assemble_without_aod_fn_leaves_aod_none():
+    path = _path([0.0, 100.0, 200.0])
+    xsec = assemble_sunward_cross_section(path, _uniform_cube(_CLEAR))
+    assert xsec.aerosol_optical_depth_per_column is None
 
 
 # ---------------------------------------------------------------------------
@@ -192,3 +224,63 @@ def test_score_point_with_section_returns_forecast():
         azimuth_deg=270.0, distances_km=[0.0, 100.0, 200.0],
     )
     assert 0.0 <= fc.probability <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# FA-A2 end-to-end: per-column path aerosol extinction vetoes the gate
+# ---------------------------------------------------------------------------
+
+# A high-only canvas: the diagnosed observer base is ~6.36 km (deck 6356–9013 m), so
+# the grazing ray stays low (≲3 km) over the whole sampled path and the high deck
+# never blocks it. Vertex for a 6.36 km base ≈ 285 km.
+_FA_A2_DISTANCES = [0.0, 100.0, 200.0, 300.0, 400.0]
+
+
+def test_dense_upstream_aerosol_vetoes_sunward_gate_end_to_end():
+    # Observer air is clean, but dense aerosol (AOD 0.6) sits on the upstream light
+    # path (lon < 118 → the 200–400 km columns, around the ~285 km vertex). The
+    # per-column trace extinguishes the ray → the sunward gate is vetoed.
+    predictor = standard_predictor(FakeSource(snapshot=_detail_snapshot()))
+    cube_source = _FakeCubeSource(_uniform_cube(_HIGH_DECK))
+    fc = score_point_with_sunward_section(
+        predictor, cube_source, 30.0, 120.0, _VALID,
+        azimuth_deg=270.0, distances_km=_FA_A2_DISTANCES,
+        aod_fn=lambda la, lo: 0.6 if lo < 118.0 else 0.0,
+    )
+    assert fc.components["sunward_illumination"] == 0.0
+
+
+def test_clean_path_aerosol_does_not_veto_sunward_gate_end_to_end():
+    # Same scene, but uniformly clean aerosol (below the opaque threshold) → ray is
+    # clear, the gate falls through to its 1-D geometry branch, and since the FakeSource
+    # snapshot carries no sunward transect that branch returns None. So the component
+    # is ABSENT (not 0.0): path extinction did not veto. (The over-veto failure mode
+    # would instead put a 0.0 here, which this pins against.)
+    predictor = standard_predictor(FakeSource(snapshot=_detail_snapshot()))
+    cube_source = _FakeCubeSource(_uniform_cube(_HIGH_DECK))
+    fc = score_point_with_sunward_section(
+        predictor, cube_source, 30.0, 120.0, _VALID,
+        azimuth_deg=270.0, distances_km=_FA_A2_DISTANCES,
+        aod_fn=lambda la, lo: 0.03,
+    )
+    assert "sunward_illumination" not in fc.components
+
+
+def test_more_upstream_aerosol_never_raises_composite_probability():
+    # FA-A2 composite metamorphic, through the REAL aod_fn → assemble → trace → gate
+    # path: making the upstream path dirtier can only lower the composite. Clean is
+    # lit (>0); dense upstream is vetoed (=0). Strictly lower here (non-vacuous).
+    predictor = standard_predictor(FakeSource(snapshot=_detail_snapshot()))
+    cube_source = _FakeCubeSource(_uniform_cube(_HIGH_DECK))
+
+    def score(aod_fn):
+        return score_point_with_sunward_section(
+            predictor, cube_source, 30.0, 120.0, _VALID,
+            azimuth_deg=270.0, distances_km=_FA_A2_DISTANCES, aod_fn=aod_fn,
+        ).probability
+
+    clean = score(lambda la, lo: 0.03)
+    dirty_upstream = score(lambda la, lo: 0.6 if lo < 118.0 else 0.0)
+    assert dirty_upstream <= clean + 1e-12
+    assert clean > 0.0
+    assert dirty_upstream == 0.0
