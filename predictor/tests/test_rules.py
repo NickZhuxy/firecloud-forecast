@@ -2,7 +2,13 @@
 from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 
+import numpy as np
+
+from predictor.clouds import CloudLayer
+from predictor.cross_section import SunwardCrossSection
+from predictor.features import derive
 from predictor.fetch import FakeSource, WeatherSnapshot
+from predictor.ray_path import RayClearance
 from predictor.rules import (
     BoundaryConfidence,
     CleanAirGate,
@@ -13,6 +19,33 @@ from predictor.rules import (
     SolarAngleAtSunset,
     SunwardIlluminationGate,
 )
+
+
+def _xsec_with_low_deck(distances_km, deck_at_idx=None):
+    """Minimal cross-section; an opaque low deck (0–1000 m) at one column if given."""
+    n = len(distances_km)
+    heights = [0.0, 5000.0, 10000.0]
+    empty = np.full((3, n), np.nan)
+    layers = [[] for _ in range(n)]
+    if deck_at_idx is not None:
+        layers[deck_at_idx] = [
+            CloudLayer(0.0, 1000.0, 1000.0, "liquid", 1.0, "condensate", optical_depth=50.0)
+        ]
+    return SunwardCrossSection(
+        distances_km=list(distances_km), heights_m=heights,
+        relative_humidity_pct=empty.copy(), vertical_velocity_pa_s=empty.copy(),
+        temperature_k=empty.copy(), mask=np.ones((3, n), dtype=bool),
+        cloud_layers=layers, observer=(30.0, 120.0), azimuth_deg=270.0,
+        target_time=datetime(2026, 6, 27, tzinfo=timezone.utc),
+    )
+
+
+def _detail_snapshot(cloud_base_m):
+    t = datetime(2026, 6, 27, 9, tzinfo=timezone.utc)
+    return WeatherSnapshot(
+        cloud_low_pct=0.0, cloud_mid_pct=0.0, cloud_high_pct=50.0, humidity_pct=50.0,
+        source_label="test", retrieved_at=t, cloud_base_m=cloud_base_m, sunset_time=t,
+    )
 
 
 def test_mid_high_cloud_zero_cover_scores_zero(base_features):
@@ -145,6 +178,78 @@ def test_sunward_illumination_fails_when_no_edge_within_physical_reach(base_feat
 
 def test_sunward_illumination_skips_without_profile(base_features):
     assert SunwardIlluminationGate().evaluate(base_features) is None
+
+
+# --- FA-G5 second cut: gate consumes the ray-trace clearance when present -----
+
+
+def test_sunward_illumination_clear_ray_trace_keeps_scalar_pass(base_features):
+    # A clear path does not override the geometry: with a valid sunward edge within
+    # reach the scalar still passes (1.0); the clear trace simply does not veto.
+    f = replace(
+        base_features, cloud_base_m=7000.0, sunward_aod_mean=0.1,
+        sunward_profile_max_km=800.0, sunward_cloud_boundary_km=150.0,
+        sunward_ray_clearance=RayClearance(True, None, None, None, 5),
+    )
+    assert SunwardIlluminationGate().evaluate(f) == 1.0
+
+
+def test_sunward_illumination_clear_alone_does_not_force_pass(base_features):
+    # Clear trace but no 1-D geometry → the gate is omitted (None), NOT a free pass:
+    # the trace samples coarsely and cannot, by itself, confirm a sunward edge.
+    f = replace(base_features, sunward_ray_clearance=RayClearance(True, None, None, None, 5))
+    assert SunwardIlluminationGate().evaluate(f) is None
+
+
+def test_sunward_illumination_blocked_ray_trace_fails(base_features):
+    f = replace(base_features, sunward_ray_clearance=RayClearance(False, 150.0, 800.0, None, 5))
+    assert SunwardIlluminationGate().evaluate(f) == 0.0
+
+
+def test_sunward_illumination_blocked_vetoes_even_without_profile(base_features):
+    # The obstruction veto works even when the 1-D scalar would be None.
+    f = replace(base_features, sunward_ray_clearance=RayClearance(False, 200.0, 100.0, None, 6))
+    assert SunwardIlluminationGate().evaluate(f) == 0.0
+
+
+def test_sunward_illumination_ray_trace_overrides_scalar(base_features):
+    # The scalar heuristic would PASS (edge within reach), but the ray trace finds
+    # an opaque deck on the path → the faithful 2-D result wins → gate fails.
+    f = replace(
+        base_features, cloud_base_m=7000.0, sunward_aod_mean=0.1,
+        sunward_profile_max_km=800.0, sunward_cloud_boundary_km=150.0,
+        sunward_ray_clearance=RayClearance(False, 200.0, 100.0, None, 6),
+    )
+    assert SunwardIlluminationGate().evaluate(f) == 0.0
+
+
+def test_derive_sets_ray_clearance_from_cross_section():
+    # A high canvas (7 km, vertex ~298 km) with an opaque low deck at the ~300 km
+    # column → the descending ray is blocked → clearance.clear is False.
+    xsec = _xsec_with_low_deck([0.0, 100.0, 200.0, 300.0, 400.0], deck_at_idx=3)
+    feats = derive(
+        _detail_snapshot(7000.0), 30.0, 120.0,
+        datetime(2026, 6, 27, 9, tzinfo=timezone.utc), sunward_cross_section=xsec,
+    )
+    assert feats.sunward_ray_clearance is not None
+    assert feats.sunward_ray_clearance.clear is False
+
+
+def test_derive_ray_clearance_clear_when_path_open():
+    xsec = _xsec_with_low_deck([0.0, 100.0, 200.0, 300.0, 400.0], deck_at_idx=None)
+    feats = derive(
+        _detail_snapshot(7000.0), 30.0, 120.0,
+        datetime(2026, 6, 27, 9, tzinfo=timezone.utc), sunward_cross_section=xsec,
+    )
+    assert feats.sunward_ray_clearance.clear is True
+
+
+def test_derive_without_cross_section_leaves_clearance_none():
+    feats = derive(
+        _detail_snapshot(7000.0), 30.0, 120.0,
+        datetime(2026, 6, 27, 9, tzinfo=timezone.utc),
+    )
+    assert feats.sunward_ray_clearance is None
 
 
 def test_boundary_confidence_penalizes_fuzzy_fast_boundary(base_features):

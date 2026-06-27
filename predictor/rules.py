@@ -201,6 +201,16 @@ class SunwardIlluminationGate:
     name = "sunward_illumination"
 
     def evaluate(self, f: Features) -> float | None:
+        # FA-G5 second cut: the 2-D ray trace across the sunward cross-section
+        # (manual §4.1.2) acts as an obstruction VETO on top of the geometric
+        # reach/edge check below — an opaque deck on the light path zeroes the
+        # gate. A "clear" result does NOT override the geometry: the trace samples
+        # columns coarsely and could miss a deck between them, so it must not turn
+        # a geometrically-impossible canvas (no sunward edge within reach) into a
+        # pass. Both conditions are physically necessary.
+        if f.sunward_ray_clearance is not None and not f.sunward_ray_clearance.clear:
+            return 0.0
+
         if f.sunward_profile_max_km is None or f.cloud_base_m is None:
             return None
         effective_base = equivalent_cloud_base_from_aod_m(
@@ -383,7 +393,7 @@ class RuleBasedPredictor:
         snapshot = self.source.fetch(lat, lon, time)
         return self.score_snapshot(snapshot, lat, lon, time)
 
-    def score_snapshot(self, snapshot, lat: float, lon: float, time, cloud_layers=None, cloud_cover=None) -> Forecast:
+    def score_snapshot(self, snapshot, lat: float, lon: float, time, cloud_layers=None, cloud_cover=None, sunward_cross_section=None) -> Forecast:
         """Score a pre-fetched snapshot (the compute half, no IO).
 
         Lets batch callers (e.g. the map grid) fetch many points in one request
@@ -394,7 +404,7 @@ class RuleBasedPredictor:
         base and coverage from fixed/Open-Meteo values to GFS-diagnosed ones
         (#13/#35). Batch/grid callers omit them to stay fast.
         """
-        feats = derive(snapshot, lat, lon, time, cloud_layers=cloud_layers, cloud_cover=cloud_cover)
+        feats = derive(snapshot, lat, lon, time, cloud_layers=cloud_layers, cloud_cover=cloud_cover, sunward_cross_section=sunward_cross_section)
         components = {}
         for rule in self.rules:
             value = rule.evaluate(feats)
