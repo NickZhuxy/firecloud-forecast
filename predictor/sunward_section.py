@@ -100,3 +100,48 @@ def sunward_cross_section_for_point(
     )
     cube = source.fetch_cube(_path_bbox(path, margin_deg), time)
     return assemble_sunward_cross_section(path, cube, heights_m=heights_m, config=config)
+
+
+# A denser column set for the detailed point trace than the 1-D sampling, so the
+# parabola can't leap an opaque deck between columns near the (low) vertex region.
+DETAIL_SUNWARD_DISTANCES_KM = tuple(float(d) for d in range(0, 801, 25))
+
+
+def score_point_with_sunward_section(
+    predictor,
+    cube_source,
+    lat: float,
+    lon: float,
+    time: datetime,
+    *,
+    distances_km: tuple[float, ...] | list[float] = DETAIL_SUNWARD_DISTANCES_KM,
+    azimuth_deg: float | None = None,
+    margin_deg: float = 0.5,
+    elevation_fn=None,
+    domain: tuple[float, float, float, float] | None = None,
+    config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
+):
+    """Score one point with the 2-D sunward ray trace wired in (activates FA-G5).
+
+    Ties the pieces together: the snapshot from ``predictor.source``; one GFS cube
+    from ``cube_source`` over the sunward path (reused for both the observer's own
+    cloud-layer diagnosis and the cross-section); then ``predictor.score_snapshot``
+    with the diagnosed canvas and the cross-section, so ``SunwardIlluminationGate``
+    can veto when an opaque deck obstructs the light path. Returns a ``Forecast``.
+    """
+    snapshot = predictor.source.fetch(lat, lon, time)
+    path = build_sunward_path(
+        lat, lon, time,
+        azimuth_deg=azimuth_deg,
+        distances_km=distances_km,
+        elevation_fn=elevation_fn,
+        domain=domain,
+    )
+    cube = cube_source.fetch_cube(_path_bbox(path, margin_deg), time)
+    observer = normalize(cube.profile_at(lat, lon))
+    cloud_layers = diagnose_clouds(observer, config)
+    cross_section = assemble_sunward_cross_section(path, cube, config=config)
+    return predictor.score_snapshot(
+        snapshot, lat, lon, time,
+        cloud_layers=cloud_layers, sunward_cross_section=cross_section,
+    )

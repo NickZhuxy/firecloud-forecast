@@ -30,6 +30,7 @@ from predictor.spatial import (
 from predictor.ray_path import RayClearance, ray_height_m, trace_ray_clearance
 from predictor.sunward_section import (
     assemble_sunward_cross_section, sunward_cross_section_for_point,
+    score_point_with_sunward_section,
 )
 
 __all__ = [
@@ -52,4 +53,5 @@ __all__ = [
     "DEFAULT_SUNWARD_DISTANCES_KM",
     "RayClearance", "ray_height_m", "trace_ray_clearance",
     "assemble_sunward_cross_section", "sunward_cross_section_for_point",
+    "score_point_with_sunward_section",
 ]
