@@ -28,6 +28,9 @@ from predictor.spatial import (
     DEFAULT_SUNWARD_DISTANCES_KM,
 )
 from predictor.ray_path import RayClearance, ray_height_m, trace_ray_clearance
+from predictor.sunward_section import (
+    assemble_sunward_cross_section, sunward_cross_section_for_point,
+)
 
 __all__ = [
     "Forecast", "Predictor", "Features", "derive", "estimate_cloud_base_m",
@@ -48,4 +51,5 @@ __all__ = [
     "SunwardProfile", "destination_point", "sunward_coordinates",
     "DEFAULT_SUNWARD_DISTANCES_KM",
     "RayClearance", "ray_height_m", "trace_ray_clearance",
+    "assemble_sunward_cross_section", "sunward_cross_section_for_point",
 ]
