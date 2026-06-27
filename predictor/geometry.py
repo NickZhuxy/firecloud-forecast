@@ -84,6 +84,27 @@ def sunset_speed_km_min(lat: float) -> float:
     return _SUNSET_SPEED_EQUATOR_KM_MIN * math.cos(math.radians(lat))
 
 
+# Manual appendix (人工火烧云预报速成) terminator-speed values cluster in a narrow
+# 18–21 km/min band across China, centred near 20 — notably below the cos-lat
+# physical speed and flatter in latitude (see research/theory/fa-g4-terminator-speed.md).
+_MANUAL_TERMINATOR_SPEED_KM_MIN = 20.0
+
+
+def representative_terminator_speed_km_min(lat: float) -> float:
+    """A statistical-midpoint terminator speed for the *duration* estimate (FA-G4).
+
+    The manual's appendix v (~18–21, central 20) is lower than both the cos-lat
+    physical speed (~18–26) and astral's dα/dt speed (~22–33), by a definition we
+    can't reproduce in closed form. Since duration precision is not a priority
+    (owner call 2026-06-27) and v does not enter the probability at all, we don't
+    chase the manual's exact formula nor switch to astral. Instead we take the mean
+    of the cos-lat physical speed and the manual's central value — a rough blend
+    that pulls the low-latitude cos-lat overestimate back toward the manual while
+    staying consistent at higher latitudes. Used only for the duration ballpark.
+    """
+    return 0.5 * (sunset_speed_km_min(lat) + _MANUAL_TERMINATOR_SPEED_KM_MIN)
+
+
 def max_penetration_km(cloud_base_m: float) -> float:
     """Maximum horizontal distance a grazing ray can reach a cloud base (km).
 
@@ -240,10 +261,14 @@ def characteristic_duration_min(cloud_base_eff_m: float, lat: float) -> float:
     its full width 2L/v is the time over which the terminator sweeps the
     illuminated zone — a proxy for "how long the show lasts". Scales as
     sqrt(h_eff), matching the high-cloud-lasts-longer intuition.
+
+    FA-G4: uses the representative (blended) terminator speed for a rough,
+    both-definitions ballpark rather than the bare cos-lat speed. Duration is a
+    secondary, informational output and never enters the probability.
     """
     if cloud_base_eff_m <= 0:
         return 0.0
-    v = sunset_speed_km_min(lat)
+    v = representative_terminator_speed_km_min(lat)
     if v <= 0:
         return 0.0
     L_km = math.sqrt(2.0 * EARTH_RADIUS_KM * (cloud_base_eff_m / 1000.0))
