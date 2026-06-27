@@ -7,11 +7,13 @@ from astral import Observer
 from astral.sun import sun
 
 from predictor.spatial import SunwardProfile
+from predictor.geometry import equivalent_cloud_base_from_aod_m
 from predictor.illumination import (
     assess_layer_contributions,
     canvas_layer_from_diagnosis,
     canvas_obstruction_fraction,
 )
+from predictor.ray_path import RayClearance, trace_ray_clearance
 
 
 # Representative base altitudes (metres) for the WMO three-tier cloud layers,
@@ -57,6 +59,10 @@ class Features:
     # possibly-disagreeing Open-Meteo value. Independent of which tier is the
     # canvas. None without diagnosis or GFS cover.
     diagnosed_mid_high_cover_pct: float | None = None
+    # FA-G5 second cut: result of tracing the sunlight parabola across the 2-D
+    # sunward cross-section (manual §4.1.2). Present only when a cross-section was
+    # supplied (detailed point path); the gate then uses it over the 1-D heuristic.
+    sunward_ray_clearance: RayClearance | None = None
 
 
 def select_canvas_layer(
@@ -208,7 +214,7 @@ def compute_sunset(lat: float, lon: float, dt: datetime) -> datetime:
     return sun(observer, date=dt.date(), tzinfo=dt.tzinfo)["sunset"]
 
 
-def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, cloud_cover=None) -> Features:
+def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, cloud_cover=None, sunward_cross_section=None) -> Features:
     """Build a Features instance from a WeatherSnapshot + location + query time.
 
     `snapshot` is duck-typed — it must expose cloud_low_pct, cloud_mid_pct,
@@ -293,6 +299,16 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, 
         else {}
     )
 
+    # FA-G5 second cut: when a 2-D cross-section is supplied (detailed point path),
+    # trace the sunlight parabola across it to the (aerosol-effective) canvas base.
+    # The gate prefers this faithful result over the 1-D boundary-distance heuristic.
+    sunward_ray_clearance = None
+    if sunward_cross_section is not None and cloud_base_m is not None:
+        effective_base = equivalent_cloud_base_from_aod_m(
+            cloud_base_m, spatial.get("sunward_aod_mean")
+        )
+        sunward_ray_clearance = trace_ray_clearance(sunward_cross_section, effective_base)
+
     return Features(
         cloud_low_pct=snapshot.cloud_low_pct,
         cloud_mid_pct=snapshot.cloud_mid_pct,
@@ -312,5 +328,6 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, 
         diagnosed_obstruction_pct=diagnosed_obstruction_pct,
         layer_contributions=layer_contributions,
         diagnosed_mid_high_cover_pct=diagnosed_mid_high_cover_pct,
+        sunward_ray_clearance=sunward_ray_clearance,
         **spatial,
     )
