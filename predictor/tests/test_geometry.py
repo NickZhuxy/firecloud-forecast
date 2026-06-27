@@ -18,6 +18,7 @@ from predictor.geometry import (
     equivalent_cloud_base_range_from_aod_m,
     max_penetration_km,
     overhead_firecloud_window,
+    representative_terminator_speed_km_min,
     sunset_speed_km_min,
     total_observed_duration_min,
     viewing_elevation_deg,
@@ -235,6 +236,39 @@ def test_advect_boundary_matches_manual_section_4_2_magnitude():
 # ---------------------------------------------------------------------------
 # characteristic_duration_min
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# representative_terminator_speed_km_min (FA-G4): statistical mid of the cos-lat
+# physical speed and the manual appendix's ~20 km/min central value.
+# ---------------------------------------------------------------------------
+
+
+def test_representative_speed_is_mean_of_physical_and_manual():
+    for lat in (10.0, 22.5, 31.0, 47.7):
+        assert representative_terminator_speed_km_min(lat) == pytest.approx(
+            0.5 * (sunset_speed_km_min(lat) + 20.0)
+        )
+
+
+def test_representative_speed_between_manual_and_physical_at_low_lat():
+    # Where cos-lat overestimates (low latitude, cos-lat > 20), the blend sits
+    # between the manual (~20) and the physical cos-lat value.
+    lat = 22.5
+    assert 20.0 < representative_terminator_speed_km_min(lat) < sunset_speed_km_min(lat)
+
+
+def test_representative_speed_decreases_with_abs_lat():
+    assert representative_terminator_speed_km_min(20.0) > representative_terminator_speed_km_min(50.0)
+
+
+def test_characteristic_duration_uses_representative_speed():
+    # The reported duration now divides by the representative (blended) speed.
+    h = 5000.0
+    lat = 31.0
+    L_km = math.sqrt(2.0 * EARTH_RADIUS_KM * (h / 1000.0))
+    expected = 2.0 * L_km / representative_terminator_speed_km_min(lat)
+    assert characteristic_duration_min(h, lat) == pytest.approx(expected)
 
 
 def test_characteristic_duration_zero_base_returns_zero():
