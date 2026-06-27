@@ -35,6 +35,9 @@ class SunwardCrossSection:
     azimuth_deg: float
     target_time: datetime
     source_label: str | None = None
+    # Per-column column AOD (FA-A2), aligned with ``distances_km``; None entries are
+    # unknown columns, the whole attribute is None when no aerosol field was supplied.
+    aerosol_optical_depth_per_column: list[float | None] | None = None
 
 
 def even_heights(max_m: float = 15000.0, count: int = 31) -> list[float]:
@@ -58,17 +61,22 @@ def build_cross_section(
     layers_per_point: list,
     *,
     heights_m: list[float] | None = None,
+    aod_per_column: list[float | None] | None = None,
 ) -> SunwardCrossSection:
     """Assemble the cross-section from a path and a profile per sample.
 
     ``profiles[j]`` is the normalized column at ``path.samples[j]`` (or None when
     that point is out of domain / unavailable). ``layers_per_point[j]`` is the
     diagnosed cloud layers there. Each column is linearly interpolated onto the
-    shared ``heights_m`` axis and masked outside its valid span.
+    shared ``heights_m`` axis and masked outside its valid span. ``aod_per_column``
+    (FA-A2), when given, is the column AOD per sample and must align with the path;
+    it rides along on the cross-section for the per-column path-extinction trace.
     """
     samples = path.samples
     if not (len(profiles) == len(layers_per_point) == len(samples)):
         raise ValueError("profiles, layers_per_point and path samples must align")
+    if aod_per_column is not None and len(aod_per_column) != len(samples):
+        raise ValueError("aod_per_column and path samples must align")
 
     heights = list(heights_m) if heights_m is not None else even_heights()
     h_axis = np.asarray(heights, dtype=float)
@@ -109,4 +117,7 @@ def build_cross_section(
         azimuth_deg=path.azimuth_deg,
         target_time=path.target_time,
         source_label=source_label,
+        aerosol_optical_depth_per_column=(
+            list(aod_per_column) if aod_per_column is not None else None
+        ),
     )

@@ -39,8 +39,8 @@ def _thin(base_m, top_m):
     )
 
 
-def _xsec(distances_km, cloud_layers_per_col):
-    """Minimal synthetic cross-section: only distances + per-column layers matter."""
+def _xsec(distances_km, cloud_layers_per_col, aod_per_column=None):
+    """Minimal synthetic cross-section: only distances + per-column layers/AOD matter."""
     n = len(distances_km)
     heights = [0.0, 5000.0, 10000.0]
     empty = np.full((len(heights), n), np.nan)
@@ -55,6 +55,7 @@ def _xsec(distances_km, cloud_layers_per_col):
         observer=(31.0, 121.0),
         azimuth_deg=270.0,
         target_time=datetime(2026, 6, 26, tzinfo=timezone.utc),
+        aerosol_optical_depth_per_column=aod_per_column,
     )
 
 
@@ -189,3 +190,144 @@ def test_metamorphic_more_obstruction_never_increases_clearance():
     assert trace_ray_clearance(
         _xsec([0, 50, 100, 150, 200], with_two), observer_cloud_base_eff_m=2000.0
     ).clear is False
+
+
+# ---------------------------------------------------------------------------
+# Per-column aerosol path extinction (FA-A2)
+#
+# With a 2000 m effective base the vertex is ~159.6 km, so the ray is only ~7 m up
+# at 150 km. A dense upstream column (high AOD → tall equivalent opaque ground h_x)
+# there extinguishes the grazing ray even with no cloud present.
+# ---------------------------------------------------------------------------
+
+_CLEAR5 = [[], [], [], [], []]
+
+
+def test_dense_upstream_aerosol_blocks_clear_sky_ray():
+    # No clouds anywhere; AOD=0.5 at the 150 km column (h_x≈5 km) ≫ ray height → block.
+    aod = [None, None, None, 0.5, None]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is False
+    assert result.blocked_at_km == pytest.approx(150.0)
+    assert result.blocked_layer is None          # aerosol block, not a cloud layer
+    assert result.blocked_height_m == pytest.approx(ray_height_m(150.0, VERTEX_2KM))
+
+
+def test_removing_aerosol_clears_the_ray():
+    aod = [None, None, None, None, None]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True
+
+
+def test_clean_uniform_aerosol_below_threshold_does_not_block():
+    # AOD=0.03 → beta_0=0.015 < beta_x=0.02 → h_x=0 → no opaque ground anywhere.
+    aod = [0.03, 0.03, 0.03, 0.03, 0.03]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True
+
+
+def test_observer_column_aerosol_does_not_self_block():
+    # Dense AOD only at the observer's own column (distance 0) is skipped, like clouds.
+    aod = [0.8, None, None, None, None]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True
+
+
+def test_missing_per_column_aod_matches_no_aerosol_behaviour():
+    # aerosol_optical_depth_per_column=None (default) must trace exactly as before.
+    with_block = [[], [], [], [_opaque(0.0, 2000.0)], []]
+    none_aod = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], with_block, aod_per_column=None), 2000.0
+    )
+    explicit_none = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], with_block, aod_per_column=[None] * 5), 2000.0
+    )
+    assert none_aod.clear is False and explicit_none.clear is False
+    assert none_aod.blocked_at_km == explicit_none.blocked_at_km
+
+
+def test_nearest_obstruction_wins_aerosol_before_cloud():
+    # Aerosol block at 100 km precedes a cloud deck at 150 km → aerosol reported.
+    cloud = [[], [], [], [_opaque(0.0, 2000.0)], []]
+    aod = [None, None, 0.6, None, None]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], cloud, aod_per_column=aod), 2000.0
+    )
+    assert result.blocked_at_km == pytest.approx(100.0)
+    assert result.blocked_layer is None
+
+
+def test_nearest_obstruction_wins_cloud_before_aerosol():
+    # Cloud deck at 50 km precedes dense aerosol at 150 km → cloud reported.
+    cloud = [[], [_opaque(0.0, 2000.0)], [], [], []]
+    aod = [None, None, None, 0.6, None]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], cloud, aod_per_column=aod), 2000.0
+    )
+    assert result.blocked_at_km == pytest.approx(50.0)
+    assert result.blocked_layer is not None
+
+
+def test_metamorphic_more_aerosol_never_increases_clearance():
+    cols = [0, 50, 100, 150, 200]
+    clear = trace_ray_clearance(_xsec(cols, _CLEAR5, aod_per_column=[None] * 5), 2000.0).clear
+    one = trace_ray_clearance(
+        _xsec(cols, _CLEAR5, aod_per_column=[None, None, None, 0.5, None]), 2000.0
+    ).clear
+    denser = trace_ray_clearance(
+        _xsec(cols, _CLEAR5, aod_per_column=[None, None, 0.4, 0.9, None]), 2000.0
+    ).clear
+    assert clear is True
+    assert one is False
+    assert denser is False
+
+
+# --- aerosol blocks on UPSTREAM EXCESS over the observer's own ground, not on an
+# --- absolute floor (the observer's local haze is already in the effective base).
+
+
+def test_uniform_aerosol_does_not_block():
+    # Every column equally turbid (AOD 0.3, h_x≈4 km > 0): the observer's own haze
+    # set the grazing datum (effective base), so no column is *excess* → not blocked.
+    aod = [0.3, 0.3, 0.3, 0.3, 0.3]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True
+
+
+def test_upstream_cleaner_than_hazy_observer_does_not_block():
+    # Observer hazy (AOD 0.5), upstream cleaner (0.1): the ray already grazes above
+    # the upstream column's lower equivalent ground → no excess → not blocked.
+    aod = [0.5, None, None, 0.1, None]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True
+
+
+def test_upstream_excess_over_hazy_observer_blocks():
+    # Observer mildly hazy (0.1, h_x≈1.8 km); a denser upstream plume (0.6, h_x≈5.4 km)
+    # rises well above the observer's ground → excess intercepts the low ray.
+    aod = [0.1, None, None, 0.6, None]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is False
+    assert result.blocked_at_km == pytest.approx(150.0)
+    assert result.blocked_layer is None

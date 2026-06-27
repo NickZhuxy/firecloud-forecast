@@ -214,6 +214,13 @@ def compute_sunset(lat: float, lon: float, dt: datetime) -> datetime:
     return sun(observer, date=dt.date(), tzinfo=dt.tzinfo)["sunset"]
 
 
+def _observer_column_aod(cross_section) -> float | None:
+    """The observer's own column AOD (FA-A2): index 0 of the cross-section's
+    per-column AOD, or None when no aerosol field was assembled."""
+    aod = cross_section.aerosol_optical_depth_per_column
+    return aod[0] if aod else None
+
+
 def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, cloud_cover=None, sunward_cross_section=None) -> Features:
     """Build a Features instance from a WeatherSnapshot + location + query time.
 
@@ -302,11 +309,16 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, 
     # FA-G5 second cut: when a 2-D cross-section is supplied (detailed point path),
     # trace the sunlight parabola across it to the (aerosol-effective) canvas base.
     # The gate prefers this faithful result over the 1-D boundary-distance heuristic.
+    # FA-A2: the vertex uses the observer's *own* column AOD (the near-ground haze
+    # the canvas light must clear locally); upstream path aerosol is handled per
+    # column inside the trace, so the two aerosol channels don't double-count.
+    # Falls back to the 1-D path-mean, then to no aerosol, when column AOD is absent.
     sunward_ray_clearance = None
     if sunward_cross_section is not None and cloud_base_m is not None:
-        effective_base = equivalent_cloud_base_from_aod_m(
-            cloud_base_m, spatial.get("sunward_aod_mean")
-        )
+        observer_aod = _observer_column_aod(sunward_cross_section)
+        if observer_aod is None:
+            observer_aod = spatial.get("sunward_aod_mean")
+        effective_base = equivalent_cloud_base_from_aod_m(cloud_base_m, observer_aod)
         sunward_ray_clearance = trace_ray_clearance(sunward_cross_section, effective_base)
 
     return Features(

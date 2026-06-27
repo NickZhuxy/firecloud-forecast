@@ -9,6 +9,7 @@ from predictor.geometry import (
     GeometryResult,
     EARTH_RADIUS_KM,
     OverheadWindow,
+    aerosol_ground_height_m,
     characteristic_duration_min,
     compute_geometry,
     equivalent_cloud_base_m,
@@ -157,6 +158,48 @@ def test_equivalent_cloud_base_from_aod_reduces_height_as_column_dirties():
     clean = equivalent_cloud_base_from_aod_m(7000.0, 0.1)
     dirty = equivalent_cloud_base_from_aod_m(7000.0, 0.5)
     assert 0.0 < dirty < clean < 7000.0
+
+
+# ---------------------------------------------------------------------------
+# aerosol_ground_height_m (FA-A2) — the equivalent opaque-ground height h_x
+# alone, so the per-column ray trace can apply it without a cloud base.
+# ---------------------------------------------------------------------------
+
+
+def test_aerosol_ground_height_unknown_aod_is_zero():
+    assert aerosol_ground_height_m(None) == 0.0
+
+
+def test_aerosol_ground_height_nonpositive_aod_is_zero():
+    assert aerosol_ground_height_m(0.0) == 0.0
+    assert aerosol_ground_height_m(-0.3) == 0.0
+
+
+def test_aerosol_ground_height_below_threshold_is_zero():
+    # beta_0 = AOD/H = 0.04/2 = 0.02 km^-1 == beta_x → already at the threshold, h_x=0.
+    assert aerosol_ground_height_m(0.04) == 0.0
+
+
+def test_aerosol_ground_height_dirty_matches_closed_form():
+    # h_x = H·ln(beta_0/beta_x) = 2000·ln((0.1/2)/0.02) = 2000·ln(2.5).
+    assert aerosol_ground_height_m(0.1) == pytest.approx(2000.0 * math.log(2.5))
+
+
+def test_aerosol_ground_height_monotonic_in_aod():
+    assert aerosol_ground_height_m(0.5) > aerosol_ground_height_m(0.1) > 0.0
+
+
+def test_aerosol_ground_height_custom_scale_height():
+    # H = 1 km: beta_0 = 0.1/1 = 0.1 → h_x = 1000·ln(0.1/0.02) = 1000·ln(5).
+    assert aerosol_ground_height_m(0.1, scale_height_m=1000.0) == pytest.approx(
+        1000.0 * math.log(5.0)
+    )
+
+
+def test_aerosol_ground_height_consistent_with_equivalent_base():
+    # equivalent_cloud_base_from_aod_m is just cloud_base − h_x, floored at 0.
+    h_x = aerosol_ground_height_m(0.3)
+    assert equivalent_cloud_base_from_aod_m(10000.0, 0.3) == pytest.approx(10000.0 - h_x)
 
 
 # ---------------------------------------------------------------------------

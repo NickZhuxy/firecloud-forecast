@@ -32,24 +32,37 @@ def assemble_sunward_cross_section(
     *,
     heights_m: list[float] | None = None,
     config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
+    aod_fn=None,
 ) -> SunwardCrossSection:
     """Build the cross-section by extracting one column per path sample.
 
     Each in-domain sample's nearest cube column is normalized and cloud-diagnosed;
     out-of-domain samples get a ``None`` profile and empty layers, which
     ``build_cross_section`` masks out. Pure — no network.
+
+    ``aod_fn(lat, lon) -> float | None`` (FA-A2), when supplied, gives the column
+    AOD at each in-domain sample for the per-column path-extinction trace (injected
+    so the assembly stays network-free, mirroring ``elevation_fn``); out-of-domain
+    columns get ``None``. Without it, the cross-section carries no aerosol field.
     """
     profiles: list = []
     layers_per_point: list = []
+    aod_per_column: list | None = [] if aod_fn is not None else None
     for sample in path.samples:
         if not sample.in_domain:
             profiles.append(None)
             layers_per_point.append([])
+            if aod_per_column is not None:
+                aod_per_column.append(None)
             continue
         normalized = normalize(cube.profile_at(sample.lat, sample.lon))
         profiles.append(normalized)
         layers_per_point.append(diagnose_clouds(normalized, config))
-    return build_cross_section(path, profiles, layers_per_point, heights_m=heights_m)
+        if aod_per_column is not None:
+            aod_per_column.append(aod_fn(sample.lat, sample.lon))
+    return build_cross_section(
+        path, profiles, layers_per_point, heights_m=heights_m, aod_per_column=aod_per_column
+    )
 
 
 def _path_bbox(
@@ -84,12 +97,15 @@ def sunward_cross_section_for_point(
     elevation_fn=None,
     domain: tuple[float, float, float, float] | None = None,
     config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
+    aod_fn=None,
 ) -> SunwardCrossSection:
     """Fetch one GFS cube over the sunward path's bbox and assemble the cross-section.
 
     The network half: builds the observer→sun path, fetches a single cube spanning
     it (so per-column extraction is in-memory), then delegates to the pure
-    ``assemble_sunward_cross_section``.
+    ``assemble_sunward_cross_section``. ``aod_fn(lat, lon)`` (FA-A2) supplies the
+    per-column AOD for path extinction; production wires it to the Open-Meteo
+    air-quality endpoint.
     """
     path = build_sunward_path(
         lat, lon, time,
@@ -99,7 +115,9 @@ def sunward_cross_section_for_point(
         domain=domain,
     )
     cube = source.fetch_cube(_path_bbox(path, margin_deg), time)
-    return assemble_sunward_cross_section(path, cube, heights_m=heights_m, config=config)
+    return assemble_sunward_cross_section(
+        path, cube, heights_m=heights_m, config=config, aod_fn=aod_fn
+    )
 
 
 # A denser column set for the detailed point trace than the 1-D sampling, so the
@@ -120,6 +138,7 @@ def score_point_with_sunward_section(
     elevation_fn=None,
     domain: tuple[float, float, float, float] | None = None,
     config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
+    aod_fn=None,
 ):
     """Score one point with the 2-D sunward ray trace wired in (activates FA-G5).
 
@@ -127,7 +146,9 @@ def score_point_with_sunward_section(
     from ``cube_source`` over the sunward path (reused for both the observer's own
     cloud-layer diagnosis and the cross-section); then ``predictor.score_snapshot``
     with the diagnosed canvas and the cross-section, so ``SunwardIlluminationGate``
-    can veto when an opaque deck obstructs the light path. Returns a ``Forecast``.
+    can veto when an opaque deck obstructs the light path. ``aod_fn(lat, lon)``
+    (FA-A2) supplies the per-column AOD so dense path aerosol also vetoes. Returns a
+    ``Forecast``.
     """
     snapshot = predictor.source.fetch(lat, lon, time)
     path = build_sunward_path(
@@ -140,7 +161,7 @@ def score_point_with_sunward_section(
     cube = cube_source.fetch_cube(_path_bbox(path, margin_deg), time)
     observer = normalize(cube.profile_at(lat, lon))
     cloud_layers = diagnose_clouds(observer, config)
-    cross_section = assemble_sunward_cross_section(path, cube, config=config)
+    cross_section = assemble_sunward_cross_section(path, cube, config=config, aod_fn=aod_fn)
     return predictor.score_snapshot(
         snapshot, lat, lon, time,
         cloud_layers=cloud_layers, sunward_cross_section=cross_section,

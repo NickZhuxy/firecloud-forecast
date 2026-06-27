@@ -18,13 +18,20 @@ cloud base ``h_eff`` grazes the equivalent ground at the vertex
 (where low cloud blocks it) and rises to ``h_eff`` at the observer's own column —
 which is the canvas itself and is therefore excluded from obstruction.
 
-Wiring this into ``SunwardIlluminationGate`` (upgrade when a cross-section is
-available, scalar fallback otherwise) and per-column aerosol extinction (FA-A2)
-are deliberate follow-ups. Aerosol enters correctly through the *effective base*
-(P0's ``equivalent_cloud_base_*`` lowers ``h_eff``, raising the graze and pulling
-the vertex inward); FA-A2 will vary that per column. A flat opaque-ground floor is
-deliberately NOT used here — since the parabola dips to 0 at the vertex, clipping
-it at a fixed height would block essentially any ray, which is the wrong physics.
+FA-A2 (per-column aerosol path extinction) is now live, but as an UPSTREAM-EXCESS
+test, not an absolute floor. Each column's AOD gives an equivalent opaque-ground
+height ``h_x`` (``geometry.aerosol_ground_height_m``). A fixed floor would be wrong:
+the parabola dips to 0 at the vertex, so comparing the ray to an absolute ``h_x``
+would veto on any turbid near-vertex column — including a uniformly hazy path that
+is firecloud-viable. Instead, the observer's OWN ``h_x`` is the grazing datum (it
+already lowered the effective base / pulled the vertex in, P0's
+``equivalent_cloud_base_*``), and an upstream column obstructs only when its ``h_x``
+rises ABOVE that datum by more than the ray height — i.e. its EXCESS over the
+observer. So uniform haze never self-vetoes (it is in the effective base), and only a
+genuinely denser upstream plume — the grazing ray's longest near-ground segment,
+often hundreds of km upstream, where the manual warns extinction is higher than
+expected (§1.3.4) — intercepts the low ray. The observer column is skipped for
+obstruction, so the local and upstream aerosol channels never double-count.
 """
 from __future__ import annotations
 
@@ -33,7 +40,11 @@ from dataclasses import dataclass
 
 from predictor.clouds import CloudLayer
 from predictor.cross_section import SunwardCrossSection
-from predictor.geometry import EARTH_RADIUS_KM
+from predictor.geometry import (
+    _DEFAULT_AEROSOL_SCALE_HEIGHT_M,
+    EARTH_RADIUS_KM,
+    aerosol_ground_height_m,
+)
 from predictor.illumination import _layer_opacity
 
 
@@ -62,34 +73,61 @@ def trace_ray_clearance(
     *,
     opacity_threshold: float = 0.5,
     min_path_distance_km: float = 1.0,
+    aerosol_scale_height_m: float = _DEFAULT_AEROSOL_SCALE_HEIGHT_M,
 ) -> RayClearance:
     """Trace the grazing ray to ``observer_cloud_base_eff_m`` and report obstruction.
 
     Walks the cross-section columns from the observer outward; at each column the
     ray height is ``ray_height_m(distance, vertex)``. A column blocks the ray when
-    a diagnosed cloud layer there spans that height with
-    ``_layer_opacity(layer) >= opacity_threshold``. The observer's own column
-    (``distance < min_path_distance_km``) is skipped so the canvas deck does not
-    count as self-obstruction. Returns the first blockage, or ``clear=True`` when
-    none is found. ``columns_checked == 0`` flags a path with no usable columns.
+    either (a) a diagnosed cloud layer there spans that height with
+    ``_layer_opacity(layer) >= opacity_threshold``, or (b) per-column aerosol
+    (FA-A2): the column's AOD gives an equivalent opaque-ground height
+    ``h_x = aerosol_ground_height_m(aod)`` and the ray dips to/below it
+    (``height <= h_x``, ``h_x > 0``). Clouds are checked before aerosol within a
+    column, so a real deck is reported in preference to the aerosol floor it shares
+    the column with. The observer's own column (``distance < min_path_distance_km``)
+    is skipped — its near-ground aerosol enters through the effective base, not here.
+    Returns the first (nearest) blockage, or ``clear=True`` when none is found.
+    ``columns_checked == 0`` flags a path with no usable columns.
 
-    Assumes ``cross_section.cloud_layers`` is aligned with ``distances_km`` (as
-    ``build_cross_section`` emits it). A non-finite or non-positive effective base
-    means light cannot reach it → ``clear=False``.
+    Assumes ``cross_section.cloud_layers`` (and ``aerosol_optical_depth_per_column``
+    when present) is aligned with ``distances_km`` (as ``build_cross_section`` emits
+    it); a None aerosol attribute means no per-column aerosol data → cloud-only
+    behaviour. A non-finite or non-positive effective base means light cannot reach
+    it → ``clear=False``.
     """
     if not math.isfinite(observer_cloud_base_eff_m) or observer_cloud_base_eff_m <= 0:
         return RayClearance(False, 0.0, 0.0, None, 0)
 
+    aod_per_column = cross_section.aerosol_optical_depth_per_column
+    if aod_per_column is None:
+        aod_per_column = [None] * len(cross_section.distances_km)
+
+    # The observer's own equivalent aerosol ground is the grazing datum: it already
+    # lowered the effective base (vertex), so the ray height here is measured *above*
+    # it. An upstream column only obstructs when its equivalent ground rises ABOVE
+    # that datum — i.e. by its EXCESS over the observer — so uniform haze (already in
+    # the effective base) never self-vetoes and only a genuinely denser upstream
+    # plume (manual §1.3.4) intercepts the low ray.
+    observer_ground_m = 0.0
+    for distance_km, aod in zip(cross_section.distances_km, aod_per_column):
+        if distance_km < min_path_distance_km:
+            observer_ground_m = aerosol_ground_height_m(aod, aerosol_scale_height_m)
+            break
+
     vertex_km = math.sqrt(2.0 * EARTH_RADIUS_KM * (observer_cloud_base_eff_m / 1000.0))
     checked = 0
-    for distance_km, layers in zip(cross_section.distances_km, cross_section.cloud_layers):
+    for distance_km, layers, aod in zip(
+        cross_section.distances_km, cross_section.cloud_layers, aod_per_column
+    ):
         if distance_km < min_path_distance_km:
             continue
         height_m = ray_height_m(distance_km, vertex_km)
         checked += 1
-        if not layers:
-            continue
-        for layer in layers:
+        for layer in layers or []:
             if layer.base_m <= height_m <= layer.top_m and _layer_opacity(layer) >= opacity_threshold:
                 return RayClearance(False, float(distance_km), height_m, layer, checked)
+        aerosol_excess_m = aerosol_ground_height_m(aod, aerosol_scale_height_m) - observer_ground_m
+        if aerosol_excess_m > 0.0 and height_m <= aerosol_excess_m:
+            return RayClearance(False, float(distance_km), height_m, None, checked)
     return RayClearance(True, None, None, None, checked)

@@ -133,6 +133,33 @@ def equivalent_cloud_base_m(
     return max(0.0, cloud_base_m - h_x_m)
 
 
+def aerosol_ground_height_m(
+    aerosol_optical_depth: float | None,
+    scale_height_m: float = _DEFAULT_AEROSOL_SCALE_HEIGHT_M,
+) -> float:
+    """Equivalent opaque-ground height ``h_x`` from a column AOD (paper §5.4).
+
+    For the manual's exponential profile ``beta(z)=beta_0*exp(-z/H)`` with column
+    optical depth ``AOD=beta_0*H``, the equivalent opaque ground sits where
+    extinction falls to ``beta_x = 0.02 km^-1``:
+
+        ``h_x = H · ln(beta_0 / beta_x)``  (``beta_0 = AOD/H``).
+
+    Below ``h_x`` the near-surface aerosol is "effectively opaque" to grazing
+    sunlight. Returns 0 when AOD is unknown / non-positive, or when the surface is
+    already cleaner than the threshold (``beta_0 <= beta_x``). This is the per-
+    column primitive the sunward ray trace uses (FA-A2); ``equivalent_cloud_base_*``
+    is just a cloud base lowered by this height.
+    """
+    if aerosol_optical_depth is None or aerosol_optical_depth <= 0:
+        return 0.0
+    scale_height_km = scale_height_m / 1000.0
+    beta_0 = aerosol_optical_depth / scale_height_km
+    if beta_0 <= _BETA_X_KM_INV:
+        return 0.0
+    return scale_height_m * math.log(beta_0 / _BETA_X_KM_INV)
+
+
 def equivalent_cloud_base_from_aod_m(
     cloud_base_m: float,
     aerosol_optical_depth: float | None,
@@ -143,16 +170,12 @@ def equivalent_cloud_base_from_aod_m(
     For ``beta(z)=beta_0*exp(-z/H)``, the column optical depth is
     ``AOD=beta_0*H``. This lets us estimate the equivalent opaque-ground height
     without treating fog-sensitive surface visibility as a column aerosol
-    measurement. Unknown AOD leaves the cloud base unchanged.
+    measurement. The base drops by ``aerosol_ground_height_m`` (floored at 0);
+    unknown AOD leaves the cloud base unchanged.
     """
-    if aerosol_optical_depth is None or aerosol_optical_depth <= 0:
-        return cloud_base_m
-    scale_height_km = scale_height_m / 1000.0
-    beta_0 = aerosol_optical_depth / scale_height_km
-    if beta_0 <= _BETA_X_KM_INV:
-        return cloud_base_m
-    h_x_m = scale_height_m * math.log(beta_0 / _BETA_X_KM_INV)
-    return max(0.0, cloud_base_m - h_x_m)
+    return max(
+        0.0, cloud_base_m - aerosol_ground_height_m(aerosol_optical_depth, scale_height_m)
+    )
 
 
 _DEFAULT_AEROSOL_SCALE_HEIGHTS_KM = (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0)
