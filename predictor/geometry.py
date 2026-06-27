@@ -218,6 +218,21 @@ def equivalent_cloud_base_range_from_aod_m(
     )
 
 
+def advect_boundary_km(
+    boundary_km: float, signed_wind_m_s: float, dt_seconds: float
+) -> float:
+    """Advect the sunward cloud boundary by the cloud-height wind (FA-T1).
+
+    Frozen-boundary kinematic extrapolation to sunset (manual §4.1.1/§4.2): the
+    edge moves ``signed_wind_m_s · dt`` along the observer→sun axis, where
+    ``signed_wind_m_s`` is the boundary-normal wind projected onto that axis
+    (positive = cloud moving sunward / outward, increasing the boundary distance;
+    negative = toward the observer). ``dt_seconds = sunset − valid_time``. Floored
+    at 0 (the edge cannot cross the observer). ``dt=0`` is the identity.
+    """
+    return max(0.0, boundary_km + signed_wind_m_s * dt_seconds / 1000.0)
+
+
 def characteristic_duration_min(cloud_base_eff_m: float, lat: float) -> float:
     """Characteristic fire-cloud illumination window (minutes).
 

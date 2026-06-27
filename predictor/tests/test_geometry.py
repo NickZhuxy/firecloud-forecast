@@ -9,6 +9,7 @@ from predictor.geometry import (
     GeometryResult,
     EARTH_RADIUS_KM,
     OverheadWindow,
+    advect_boundary_km,
     aerosol_ground_height_m,
     characteristic_duration_min,
     compute_geometry,
@@ -200,6 +201,35 @@ def test_aerosol_ground_height_consistent_with_equivalent_base():
     # equivalent_cloud_base_from_aod_m is just cloud_base − h_x, floored at 0.
     h_x = aerosol_ground_height_m(0.3)
     assert equivalent_cloud_base_from_aod_m(10000.0, 0.3) == pytest.approx(10000.0 - h_x)
+
+
+# ---------------------------------------------------------------------------
+# advect_boundary_km (FA-T1): move the sunward boundary by signed wind over Δt
+# ---------------------------------------------------------------------------
+
+
+def test_advect_boundary_closed_form():
+    # 100 km + 10 m/s · 1800 s / 1000 = 118 km.
+    assert advect_boundary_km(100.0, 10.0, 1800.0) == pytest.approx(118.0)
+
+
+def test_advect_boundary_outward_increases_inward_decreases():
+    assert advect_boundary_km(100.0, 20.0, 1800.0) > 100.0   # cloud moving sunward
+    assert advect_boundary_km(100.0, -20.0, 1800.0) < 100.0  # cloud moving toward observer
+
+
+def test_advect_boundary_floors_at_zero():
+    # Strong inward wind cannot push the boundary negative.
+    assert advect_boundary_km(10.0, -100.0, 1800.0) == 0.0
+
+
+def test_advect_boundary_zero_dt_is_identity():
+    assert advect_boundary_km(123.0, 25.0, 0.0) == 123.0
+
+
+def test_advect_boundary_matches_manual_section_4_2_magnitude():
+    # Manual §4.2: a mid-cloud gap advects ~40 km in 30 min at ~22 m/s.
+    assert advect_boundary_km(0.0, 22.0, 1800.0) == pytest.approx(39.6, abs=0.1)
 
 
 # ---------------------------------------------------------------------------

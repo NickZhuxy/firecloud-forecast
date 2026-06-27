@@ -7,7 +7,7 @@ from astral import Observer
 from astral.sun import sun
 
 from predictor.spatial import SunwardProfile
-from predictor.geometry import equivalent_cloud_base_from_aod_m
+from predictor.geometry import advect_boundary_km, equivalent_cloud_base_from_aod_m
 from predictor.illumination import (
     assess_layer_contributions,
     canvas_layer_from_diagnosis,
@@ -39,6 +39,9 @@ class Features:
     sun_azimuth_deg: float | None = None
     sunward_aod_mean: float | None = None
     sunward_cloud_boundary_km: float | None = None
+    # FA-T1: the snapshot-time boundary before wind advection to sunset, kept for
+    # transparency. ``sunward_cloud_boundary_km`` is the advected value the gate uses.
+    sunward_cloud_boundary_raw_km: float | None = None
     sunward_profile_max_km: float | None = None
     sunward_boundary_gradient_pct_per_km: float | None = None
     sunward_obstruction_pct: float | None = None
@@ -141,11 +144,26 @@ def _projected_boundary_wind(
         projections.append(float(speed) * math.cos(delta))
     if not projections:
         return None
-    return abs(sum(projections) / len(projections))
+    # Signed projection onto the observer→sun axis: positive = cloud moving sunward
+    # (outward, boundary recedes), negative = toward the observer. FA-T1 advection
+    # needs the sign; the BoundaryConfidence "motion" signal takes its magnitude.
+    return sum(projections) / len(projections)
 
 
-def analyze_sunward_profile(profile: SunwardProfile, canvas_layer: str) -> dict:
-    """Extract cloud boundary, obstruction, AOD and motion from a transect."""
+def analyze_sunward_profile(
+    profile: SunwardProfile,
+    canvas_layer: str,
+    *,
+    sunset_time: datetime | None = None,
+    valid_time: datetime | None = None,
+) -> dict:
+    """Extract cloud boundary, obstruction, AOD and motion from a transect.
+
+    FA-T1: when ``sunset_time`` and ``valid_time`` are both given, the sunward
+    boundary is advected by the cloud-height wind over ``Δt = sunset − valid`` to
+    the sunset moment (manual §4.1.1/§4.2); the raw snapshot-time boundary is kept
+    as ``sunward_cloud_boundary_raw_km``. Without the times (or with no boundary /
+    no wind) the boundary is unmoved — the national/1-D callers are unaffected."""
     distances = profile.distances_km
     canvas = _layer_values(profile, canvas_layer)
     if len(distances) != len(canvas) or not distances:
@@ -185,15 +203,29 @@ def analyze_sunward_profile(profile: SunwardProfile, canvas_layer: str) -> dict:
             obstruction_values.append(0.0)
 
     aod_values = [v for v in profile.aerosol_optical_depth if v is not None]
-    motion = (
+    signed_motion = (
         _projected_boundary_wind(profile, canvas_layer, boundary_indices)
         if boundary_indices is not None
         else None
     )
+    motion = abs(signed_motion) if signed_motion is not None else None
+
+    # FA-T1: advect the boundary to sunset by the (signed) cloud-height wind.
+    advected_boundary_km = boundary_km
+    if (
+        boundary_km is not None
+        and signed_motion is not None
+        and sunset_time is not None
+        and valid_time is not None
+    ):
+        dt_seconds = (sunset_time - valid_time).total_seconds()
+        advected_boundary_km = advect_boundary_km(boundary_km, signed_motion, dt_seconds)
+
     return {
         "sun_azimuth_deg": profile.azimuth_deg,
         "sunward_aod_mean": sum(aod_values) / len(aod_values) if aod_values else None,
-        "sunward_cloud_boundary_km": boundary_km,
+        "sunward_cloud_boundary_km": advected_boundary_km,
+        "sunward_cloud_boundary_raw_km": boundary_km,
         "sunward_profile_max_km": distances[-1],
         "sunward_boundary_gradient_pct_per_km": gradient,
         "sunward_obstruction_pct": (
@@ -221,7 +253,7 @@ def _observer_column_aod(cross_section) -> float | None:
     return aod[0] if aod else None
 
 
-def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, cloud_cover=None, sunward_cross_section=None) -> Features:
+def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, cloud_cover=None, sunward_cross_section=None, valid_time=None) -> Features:
     """Build a Features instance from a WeatherSnapshot + location + query time.
 
     `snapshot` is duck-typed — it must expose cloud_low_pct, cloud_mid_pct,
@@ -300,8 +332,15 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, 
         layer_contributions = assess_layer_contributions(cloud_layers, lat)
 
     profile = getattr(snapshot, "sunward_profile", None)
+    # FA-T1: advect the sunward boundary to sunset. ``valid_time`` is the time the
+    # weather fields are valid; it defaults to the query ``time`` (the Open-Meteo
+    # snapshot's own valid time), so Δt = sunset − valid is 0 when scoring at sunset.
     spatial = (
-        analyze_sunward_profile(profile, canvas_layer)
+        analyze_sunward_profile(
+            profile, canvas_layer,
+            sunset_time=sunset_time,
+            valid_time=valid_time if valid_time is not None else time,
+        )
         if profile is not None and canvas_layer is not None
         else {}
     )
