@@ -5,6 +5,7 @@ from a GFS cube along the sunward path (#62 plumbing), offline with a synthetic 
 from datetime import datetime, timezone
 
 import numpy as np
+import pytest
 
 from predictor.cross_section import SunwardCrossSection
 from predictor.fetch import FakeSource, WeatherSnapshot
@@ -14,6 +15,7 @@ from predictor.rules import standard_predictor
 from predictor.spatial import build_sunward_path
 from predictor.sunward_section import (
     assemble_sunward_cross_section,
+    score_point_with_cube,
     score_point_with_sunward_section,
     sunward_cross_section_for_point,
 )
@@ -264,6 +266,23 @@ def test_clean_path_aerosol_does_not_veto_sunward_gate_end_to_end():
         aod_fn=lambda la, lo: 0.03,
     )
     assert "sunward_illumination" not in fc.components
+
+
+def test_score_point_with_cube_matches_fetching_variant():
+    # The shared-cube core (#62) must reproduce the fetch-per-point entry exactly,
+    # given the same predictor + cube + snapshot.
+    snapshot = _detail_snapshot()
+    cube = _uniform_cube(_LOW_AND_HIGH)
+    predictor = standard_predictor(FakeSource(snapshot=snapshot))
+    dist = [0.0, 100.0, 200.0, 300.0, 400.0]
+    fetched = score_point_with_sunward_section(
+        predictor, _FakeCubeSource(cube), 30.0, 120.0, _VALID, distances_km=dist,
+    )
+    shared = score_point_with_cube(
+        predictor, cube, snapshot, 30.0, 120.0, _VALID, distances_km=dist,
+    )
+    assert shared.probability == pytest.approx(fetched.probability)
+    assert shared.components == fetched.components
 
 
 def test_more_upstream_aerosol_never_raises_composite_probability():

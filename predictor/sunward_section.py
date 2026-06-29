@@ -159,8 +159,44 @@ def score_point_with_sunward_section(
         domain=domain,
     )
     cube = cube_source.fetch_cube(_path_bbox(path, margin_deg), time)
+    return score_point_with_cube(
+        predictor, cube, snapshot, lat, lon, time,
+        distances_km=distances_km, azimuth_deg=azimuth_deg,
+        elevation_fn=elevation_fn, domain=domain, config=config, aod_fn=aod_fn,
+    )
+
+
+def score_point_with_cube(
+    predictor,
+    cube: AtmosphericCube,
+    snapshot,
+    lat: float,
+    lon: float,
+    time: datetime,
+    *,
+    distances_km: tuple[float, ...] | list[float] = DETAIL_SUNWARD_DISTANCES_KM,
+    azimuth_deg: float | None = None,
+    elevation_fn=None,
+    domain: tuple[float, float, float, float] | None = None,
+    config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
+    aod_fn=None,
+):
+    """Score one point against an ALREADY-FETCHED cube + snapshot.
+
+    The shared-cube core of the detailed point path (#62): diagnoses the observer's
+    canvas and assembles the sunward cross-section from ``cube`` (no fetch), then
+    scores. ``score_point_with_sunward_section`` is this plus a per-point cube fetch;
+    a local grid (``local_field``) reuses ONE cube across every observer instead.
+    """
     observer = normalize(cube.profile_at(lat, lon))
     cloud_layers = diagnose_clouds(observer, config)
+    path = build_sunward_path(
+        lat, lon, time,
+        azimuth_deg=azimuth_deg,
+        distances_km=distances_km,
+        elevation_fn=elevation_fn,
+        domain=domain,
+    )
     cross_section = assemble_sunward_cross_section(path, cube, config=config, aod_fn=aod_fn)
     return predictor.score_snapshot(
         snapshot, lat, lon, time,
