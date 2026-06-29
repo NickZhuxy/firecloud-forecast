@@ -13,6 +13,8 @@ import numpy as np
 from astral import Observer
 from astral.sun import sun
 
+from predictor.solar_event import SolarEvent, spec_for
+
 
 def _axis(values, name: str) -> np.ndarray:
     axis = np.asarray(values, dtype=float)
@@ -37,19 +39,22 @@ def _inclusive_axis(start: float, end: float, step: float) -> np.ndarray:
 
 
 @lru_cache(maxsize=4096)
-def _sunset_timestamp(target_date: date, lat: float, lon: float) -> float:
+def _sunset_timestamp(
+    target_date: date, lat: float, lon: float, solar_event: SolarEvent = SolarEvent.SUNSET
+) -> float:
+    spec = spec_for(solar_event)
     observer = Observer(latitude=lat, longitude=lon)
     try:
-        sunset = sun(observer, date=target_date, tzinfo=timezone.utc)["sunset"]
+        event = sun(observer, date=target_date, tzinfo=timezone.utc)[spec.astral_key]
     except ValueError:
-        # Deterministic polar-edge degradation: 18:00 local solar time.  China's
-        # 17–54 N domain does not take this path, but a failed edge sample should
-        # not invalidate an otherwise usable national field.
+        # Deterministic polar-edge degradation: the event's local solar hour (dusk
+        # 18 / dawn 6).  China's 17–54 N domain does not take this path, but a failed
+        # edge sample should not invalidate an otherwise usable national field.
         midnight = datetime(
             target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc
         )
-        sunset = midnight + timedelta(hours=18.0 - lon / 15.0)
-    return sunset.timestamp()
+        event = midnight + timedelta(hours=spec.fallback_solar_hour - lon / 15.0)
+    return event.timestamp()
 
 
 def sunset_utc_grid(
@@ -58,12 +63,16 @@ def sunset_utc_grid(
     lons,
     *,
     coarse_step_deg: float = 4.0,
+    solar_event: SolarEvent | str = SolarEvent.SUNSET,
 ) -> np.ndarray:
-    """Return a ``(lat, lon)`` UTC sunset field as ``datetime64[s]``.
+    """Return a ``(lat, lon)`` UTC solar-event field as ``datetime64[s]``.
 
     Target axes may be ascending or descending.  Sampling axes always include
-    the exact target bounds, so interpolation never extrapolates.
+    the exact target bounds, so interpolation never extrapolates. ``solar_event``
+    (#60) selects sunset (default) or sunrise; the rest of the pipeline (GFS-hour
+    selection) just tracks whichever event-time grid this returns.
     """
+    event = SolarEvent(solar_event)
     target_lats = _axis(lats, "lats")
     target_lons = _axis(lons, "lons")
     coarse_lats = _inclusive_axis(target_lats.min(), target_lats.max(), coarse_step_deg)
@@ -73,7 +82,7 @@ def sunset_utc_grid(
     for j, lat in enumerate(coarse_lats):
         for i, lon in enumerate(coarse_lons):
             samples[j, i] = _sunset_timestamp(
-                target_date, round(float(lat), 8), round(float(lon), 8)
+                target_date, round(float(lat), 8), round(float(lon), 8), event
             )
 
     # np.interp accepts unsorted target x values while requiring only the sample

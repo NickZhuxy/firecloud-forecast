@@ -47,6 +47,40 @@ def test_sunset_grid_preserves_requested_axis_order():
     assert np.all(result[:, 1] > result[:, 0])
 
 
+# --- #60 PR-2: solar_event on the national time grid ---
+
+def test_sunset_grid_default_matches_explicit_sunset():
+    from predictor.solar_event import SolarEvent
+    d = date(2026, 6, 29)
+    lats = np.array([20.0, 35.0, 50.0]); lons = np.array([100.0, 115.0, 130.0])
+    assert np.array_equal(
+        sunset_utc_grid(d, lats, lons),
+        sunset_utc_grid(d, lats, lons, solar_event=SolarEvent.SUNSET),
+    )
+
+
+def test_sunrise_grid_differs_from_sunset_by_hours():
+    from predictor.solar_event import SolarEvent
+    d = date(2026, 6, 29)
+    lats = np.array([20.0, 35.0, 50.0]); lons = np.array([100.0, 115.0, 130.0])
+    sset = sunset_utc_grid(d, lats, lons, solar_event=SolarEvent.SUNSET).astype("int64")
+    srise = sunset_utc_grid(d, lats, lons, solar_event=SolarEvent.SUNRISE).astype("int64")
+    assert not np.array_equal(sset, srise)
+    assert np.median(np.abs(sset - srise)) > 4 * 3600  # the two events are hours apart
+
+
+def test_sunset_timestamp_sunrise_reads_sunrise_key():
+    from predictor.solar_event import SolarEvent
+    d = date(2026, 6, 29)
+    expected = sun(
+        Observer(latitude=35.0, longitude=115.0), date=d, tzinfo=timezone.utc
+    )["sunrise"].timestamp()
+    assert _sunset_timestamp(d, 35.0, 115.0, SolarEvent.SUNRISE) == expected
+    assert _sunset_timestamp(d, 35.0, 115.0, SolarEvent.SUNRISE) != _sunset_timestamp(
+        d, 35.0, 115.0, SolarEvent.SUNSET
+    )
+
+
 def test_hourly_times_bracket_complete_sunset_range():
     sunsets = np.array(
         [["2026-06-22T09:12:00", "2026-06-22T10:40:00"],

@@ -14,6 +14,7 @@ from datetime import date, datetime, timezone
 import numpy as np
 
 from predictor.grid_score import GridInputs, score_grid
+from predictor.solar_event import SolarEvent
 from predictor.sunset_grid import (
     hourly_valid_times,
     nearest_valid_time_indices,
@@ -108,14 +109,17 @@ def build_national_field(
     target_date: date,
     *,
     domain_mask=None,
+    solar_event=SolarEvent.SUNSET,
 ) -> NationalField:
-    """Fetch covering GFS hours and score every cell at its nearest sunset hour.
+    """Fetch covering GFS hours and score every cell at its nearest event hour.
 
     ``bbox`` is ``(lat_min, lat_max, lon_min, lon_max)``.  The returned axes are
     ascending for rendering.  Missing humidity/visibility cells use the same
     neutral defaults as #19 after timestep selection. ``domain_mask`` may limit
-    the sunset range to cells that survive rendering (for example, inside the
+    the event-time range to cells that survive rendering (for example, inside the
     China border); scoring still returns the complete rectangular grid.
+    ``solar_event`` (#60) picks sunset (default) or sunrise; only the per-cell event
+    time grid changes, so the GFS-hour selection and scoring follow automatically.
     """
     if isinstance(target_date, datetime):
         target_date = target_date.date()
@@ -135,7 +139,7 @@ def build_national_field(
         # It uses the same coarse interpolation as the final GFS axes.
         range_lats = _range_axis(lat_min, lat_max)
         range_lons = _range_axis(lon_min, lon_max)
-        bbox_sunsets = sunset_utc_grid(target_date, range_lats, range_lons)
+        bbox_sunsets = sunset_utc_grid(target_date, range_lats, range_lons, solar_event=solar_event)
         valid_times = hourly_valid_times(
             _active_sunsets(bbox_sunsets, range_lats, range_lons, domain_mask)
         )
@@ -156,7 +160,7 @@ def build_national_field(
             ):
                 raise ValueError("GFS timestep grid coordinates do not match")
 
-        sunsets = sunset_utc_grid(target_date, lats, lons)
+        sunsets = sunset_utc_grid(target_date, lats, lons, solar_event=solar_event)
         active_sunsets = _active_sunsets(sunsets, lats, lons, domain_mask)
         required_times = hourly_valid_times(active_sunsets)
         if not set(required_times).issubset(valid_times):
