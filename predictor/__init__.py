@@ -33,6 +33,9 @@ from predictor.sunward_section import (
     score_point_with_sunward_section, score_point_with_cube,
 )
 from predictor.local_field import LocalField, build_local_field, local_grid
+from predictor.local_product import (
+    generate_local_product, plot_local_product, save_local_product,
+)
 
 __all__ = [
     "Forecast", "Predictor", "Features", "derive", "estimate_cloud_base_m",
@@ -56,4 +59,5 @@ __all__ = [
     "assemble_sunward_cross_section", "sunward_cross_section_for_point",
     "score_point_with_sunward_section", "score_point_with_cube",
     "LocalField", "build_local_field", "local_grid",
+    "generate_local_product", "plot_local_product", "save_local_product",
 ]

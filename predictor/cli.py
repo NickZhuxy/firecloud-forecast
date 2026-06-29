@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from predictor.local_product import generate_local_product
 from predictor.national_product import generate_product
 from predictor.solar_event import SolarEvent
 
@@ -78,6 +79,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lat", type=float, default=None, help="local product latitude")
     parser.add_argument("--lon", type=float, default=None, help="local product longitude")
     parser.add_argument(
+        "--radius", type=float, default=150.0,
+        help="local product radius in km (default: 150)",
+    )
+    parser.add_argument(
+        "--resolution", type=float, default=0.1,
+        help="local product grid resolution in degrees (default: 0.1)",
+    )
+    parser.add_argument(
         "--output", type=Path, default=Path("output"),
         help="output base directory; products land in {output}/{date}/ (default: output)",
     )
@@ -115,10 +124,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"image    : {artifacts.image_path}")
             print(f"metadata : {artifacts.metadata_path}")
         else:
-            print(
-                f"point ({product.lat},{product.lon}) {product.solar_event.value}: "
-                f"local fine product (#62) not yet implemented — skipping"
+            artifacts = generate_local_product(
+                target_date, product.output_dir, product.lat, product.lon,
+                dpi=args.dpi, solar_event=product.solar_event,
+                radius_km=args.radius, resolution_deg=args.resolution,
             )
+            print(f"image    : {artifacts.image_path}")
+            print(f"metadata : {artifacts.metadata_path}")
     return 0
 
 

@@ -144,16 +144,24 @@ def build_local_field(
     )
     cube = cube_source.fetch_cube(bbox, time)
 
+    # Snapshots: one batched Open-Meteo request set (fetch_many, 280 coords/request)
+    # instead of N sequential calls, so a several-hundred-cell grid stays seconds, not
+    # minutes. Falls back to per-cell fetch for sources without batching (e.g. tests).
+    coords = [(float(la), float(lo)) for la in lats for lo in lons]
+    source = predictor.source
+    if hasattr(source, "fetch_many"):
+        snapshots = source.fetch_many(coords, time)
+    else:
+        snapshots = [source.fetch(la, lo, time) for la, lo in coords]
+
     probability = np.empty((lats.size, lons.size), dtype=float)
-    for j, la in enumerate(lats):
-        for i, lo in enumerate(lons):
-            snapshot = predictor.source.fetch(float(la), float(lo), time)
-            forecast = score_point_with_cube(
-                predictor, cube, snapshot, float(la), float(lo), time,
-                distances_km=distances_km, azimuth_deg=azimuth_deg,
-                elevation_fn=elevation_fn, domain=domain, config=config, aod_fn=aod_fn,
-            )
-            probability[j, i] = forecast.probability
+    for k, (la, lo) in enumerate(coords):
+        forecast = score_point_with_cube(
+            predictor, cube, snapshots[k], la, lo, time,
+            distances_km=distances_km, azimuth_deg=azimuth_deg,
+            elevation_fn=elevation_fn, domain=domain, config=config, aod_fn=aod_fn,
+        )
+        probability[k // lons.size, k % lons.size] = forecast.probability
 
     return LocalField(
         lats=lats, lons=lons, probability=probability,

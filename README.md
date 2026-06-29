@@ -34,17 +34,22 @@ brew install eccodes geos proj
 firecloud                              # 今天 · 全国 · 朝霞 + 晚霞
 firecloud --date 2026-06-29
 firecloud --event sunrise              # 只出朝霞
-firecloud --lat 31.2 --lon 121.5       # + 局部精细产品（#62，暂未实现，规划但跳过）
+firecloud --lat 31.2 --lon 121.5       # + 局部精细产品（坐标周边跑完整单点物理）
+firecloud --lat 31.2 --lon 121.5 --radius 120 --resolution 0.2
 ```
 
-输出按日期建文件夹，文件名带事件（朝霞/晚霞同日不再互相覆盖）：
+输出按日期建文件夹，文件名带事件（朝霞/晚霞同日不再互相覆盖）；给坐标再加局部图：
 
 ```text
 output/2026-06-29/national-sunrise.png
-output/2026-06-29/national-sunrise.json
 output/2026-06-29/national-sunset.png
-output/2026-06-29/national-sunset.json
+output/2026-06-29/point-31.2_121.5-sunrise.png    # 给 --lat/--lon 时
+output/2026-06-29/point-31.2_121.5-sunset.png
 ```
+
+局部图在坐标周边小网格上逐格跑**完整单点物理**（FA-G5 截面光追 + 云诊断），共享一次 GFS cube、
+快照按 Open-Meteo 批量取——国家级省掉的真保真，而非密插值。`--radius`（km）/`--resolution`（度）
+控制范围与精度（默认 150km / 0.1°，全国域内自动控量）。
 
 PNG 是唯一标准版式，包含模型初始化时间、逐格事件有效时段、行政边界、经纬度与
 “暖色更优”色标；JSON 保存相同的数据来源、时间、算法和性能元数据（含 `solar_event`、
