@@ -84,6 +84,26 @@ def test_latitudes_returned_ascending():
     assert np.all(np.diff(field.lats) > 0)
 
 
+# --- #60 PR-2: national field solar_event ---
+
+def test_national_field_default_matches_explicit_sunset():
+    from predictor.solar_event import SolarEvent
+    a = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE)
+    b = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE, solar_event=SolarEvent.SUNSET)
+    assert np.array_equal(a.probability, b.probability)
+    assert a.valid_times == b.valid_times
+
+
+def test_national_field_sunrise_flips_valid_times_and_stays_valid():
+    from predictor.solar_event import SolarEvent
+    sset = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE, solar_event=SolarEvent.SUNSET)
+    srise = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE, solar_event=SolarEvent.SUNRISE)
+    # The sunrise run brackets a different (morning) GFS window than the sunset run.
+    assert set(srise.valid_times) != set(sset.valid_times)
+    assert srise.probability.shape == (3, 3)
+    assert np.all((srise.probability >= 0.0) & (srise.probability <= 1.0))
+
+
 def test_probability_in_range():
     field = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE)
     assert np.all((field.probability >= 0.0) & (field.probability <= 1.0))
