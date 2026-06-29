@@ -16,6 +16,7 @@ dist/
 research/data/cache/
 research/data/raw/
 products/
+output/
 .uv-cache/
 .coverage
 .coverage.*
