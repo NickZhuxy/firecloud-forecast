@@ -141,6 +141,32 @@ def test_shared_cube_bbox_covers_every_cell_sunward_path():
                 assert lon_min <= s.lon <= lon_max
 
 
+def test_build_local_field_batches_snapshots_when_source_supports_it():
+    # A source exposing fetch_many is batched in one call set, not N sequential fetches.
+    class _BatchSource:
+        def __init__(self, snap):
+            self.snap = snap
+            self.batch_calls = 0
+            self.single_calls = 0
+
+        def fetch_many(self, coords, time):
+            self.batch_calls += 1
+            return [self.snap for _ in coords]
+
+        def fetch(self, lat, lon, time):
+            self.single_calls += 1
+            return self.snap
+
+    src = _BatchSource(_snapshot())
+    predictor = standard_predictor(src)
+    build_local_field(
+        predictor, _FakeCubeSource(_cube()), 30.0, 120.0, _VALID,
+        radius_km=40.0, resolution_deg=0.2, distances_km=[0.0, 100.0, 200.0],
+    )
+    assert src.batch_calls == 1
+    assert src.single_calls == 0
+
+
 def test_local_field_cell_equals_standalone_single_point():
     # #62 acceptance: a grid cell's score is identical to the standalone detailed
     # single-point score for that coordinate (same predictor/cube/snapshot).

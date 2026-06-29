@@ -77,20 +77,24 @@ def test_main_requires_lat_and_lon_together():
         main(["--date", "2026-06-29", "--lat", "31.2"])  # missing --lon
 
 
-def test_main_with_coords_skips_unimplemented_point_but_still_does_national(
-    monkeypatch, tmp_path, capsys
-):
-    calls = []
+def test_main_with_coords_generates_both_national_and_local(monkeypatch, tmp_path):
+    national, local = [], []
 
     def fake_generate(target_date, output_dir, *, dpi, source, solar_event):
-        calls.append(solar_event)
+        national.append(solar_event)
         return _fake_artifact(tmp_path, f"national-{solar_event.value}")
 
+    def fake_local(target_date, output_dir, lat, lon, *, dpi, solar_event, radius_km, resolution_deg):
+        local.append((lat, lon, solar_event, radius_km, resolution_deg))
+        return _fake_artifact(tmp_path, f"point-{lat}_{lon}-{solar_event.value}")
+
     monkeypatch.setattr(cli_mod, "generate_product", fake_generate)
+    monkeypatch.setattr(cli_mod, "generate_local_product", fake_local)
     rc = main([
         "--date", "2026-06-29", "--event", "sunset",
         "--lat", "31.2", "--lon", "121.5", "--output", str(tmp_path),
+        "--radius", "120", "--resolution", "0.2",
     ])
     assert rc == 0
-    assert calls == [SolarEvent.SUNSET]                 # national ran
-    assert "point" in capsys.readouterr().out.lower()   # point noted as deferred
+    assert national == [SolarEvent.SUNSET]                          # national ran
+    assert local == [(31.2, 121.5, SolarEvent.SUNSET, 120.0, 0.2)]  # local ran with flags
