@@ -288,6 +288,41 @@ def test_snapshot_from_payload_no_sunsets_sunset_time_none():
     assert snap.sunset_time is None
 
 
+# --- #60: sunrise-bound source reads the sunrise daily field ---
+
+def test_params_daily_field_follows_solar_event():
+    from predictor.solar_event import SolarEvent
+    q = datetime(2026, 5, 20, tzinfo=timezone.utc)
+    assert OpenMeteoSource._params([(30.0, 120.0)], q, window_days=1)["daily"] == "sunset"
+    assert OpenMeteoSource._params(
+        [(30.0, 120.0)], q, window_days=1, solar_event=SolarEvent.SUNRISE
+    )["daily"] == "sunrise"
+
+
+def test_snapshot_from_payload_sunrise_event_uses_sunrise_time():
+    from predictor.solar_event import SolarEvent
+    payload = _open_meteo_payload()
+    payload["daily"]["sunrise"] = ["2026-05-20T09:30", "2026-05-21T09:29"]
+    query_utc = datetime(2026, 5, 20, 9, 0, tzinfo=timezone.utc)
+    snap = OpenMeteoSource._snapshot_from_payload(
+        payload, query_utc, solar_event=SolarEvent.SUNRISE
+    )
+    # The event-time slot now holds the SUNRISE instant, not the sunset one.
+    assert snap.sunset_time is not None
+    assert snap.sunset_time.hour == 9 and snap.sunset_time.day == 20
+
+
+def test_sunrise_bound_source_requests_sunrise_and_sets_event_time():
+    from predictor.solar_event import SolarEvent
+    payload = _open_meteo_payload()
+    payload["daily"]["sunrise"] = ["2026-05-20T09:30", "2026-05-21T09:29"]
+    session = _FakeSession(payload)
+    src = OpenMeteoSource(session=session, solar_event=SolarEvent.SUNRISE)
+    snap = src.fetch(30.0, 120.0, datetime(2026, 5, 20, 9, 0, tzinfo=timezone.utc))
+    assert session.calls[0]["params"]["daily"] == "sunrise"
+    assert snap.sunset_time.hour == 9 and snap.sunset_time.day == 20
+
+
 def test_snapshot_from_payload_off_hour_query_picks_closest():
     # Query at 22:45 — closer to 23:00 (15 min) than to 22:00 (45 min)
     payload = _open_meteo_payload()

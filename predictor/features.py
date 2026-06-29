@@ -8,6 +8,7 @@ from astral.sun import sun
 
 from predictor.spatial import SunwardProfile
 from predictor.geometry import advect_boundary_km, equivalent_cloud_base_from_aod_m
+from predictor.solar_event import SolarEvent, spec_for
 from predictor.illumination import (
     assess_layer_contributions,
     canvas_layer_from_diagnosis,
@@ -235,15 +236,22 @@ def analyze_sunward_profile(
     }
 
 
-def compute_sunset(lat: float, lon: float, dt: datetime) -> datetime:
-    """Sunset for the location on the date of ``dt`` (timezone-aware, matching dt.tzinfo).
+def compute_event_time(
+    lat: float, lon: float, dt: datetime, solar_event: SolarEvent | str = SolarEvent.SUNSET
+) -> datetime:
+    """Solar-event time (sunrise/sunset) for the location on ``dt``'s date.
 
-    Used only as a fallback when the weather snapshot does not carry a
-    source-reported sunset. Open-Meteo always supplies one, so the national grid
-    and point lookups normally skip this astral computation entirely.
+    Timezone-aware, matching ``dt.tzinfo``. Used only as a fallback when the
+    weather snapshot does not carry a source-reported event time. The event chooses
+    the astral key (#60); everything downstream (azimuth, GFS step) follows the time.
     """
     observer = Observer(latitude=lat, longitude=lon)
-    return sun(observer, date=dt.date(), tzinfo=dt.tzinfo)["sunset"]
+    return sun(observer, date=dt.date(), tzinfo=dt.tzinfo)[spec_for(solar_event).astral_key]
+
+
+def compute_sunset(lat: float, lon: float, dt: datetime) -> datetime:
+    """Backwards-compatible sunset wrapper over :func:`compute_event_time`."""
+    return compute_event_time(lat, lon, dt, SolarEvent.SUNSET)
 
 
 def _observer_column_aod(cross_section) -> float | None:

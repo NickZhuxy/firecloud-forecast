@@ -13,6 +13,7 @@ from typing import Protocol
 import numpy as np
 import xarray as xr
 
+from predictor.solar_event import SolarEvent, spec_for
 from predictor.spatial import (
     DEFAULT_SUNWARD_DISTANCES_KM,
     SunwardProfile,
@@ -92,20 +93,24 @@ class OpenMeteoSource:
         ",wind_speed_400hPa,wind_direction_400hPa"
     )
 
-    def __init__(self, session=None, timeout: float = 15.0):
+    def __init__(self, session=None, timeout: float = 15.0, solar_event: SolarEvent | str = SolarEvent.SUNSET):
         self._session = session
         self._timeout = timeout
+        # #60: bind this source to a solar event (sunset/sunrise). It chooses the
+        # Open-Meteo daily field and the event time; the scoring azimuth/GFS step
+        # follow from the event time supplied to the scorer. Defaults to sunset.
+        self._solar_event = SolarEvent(solar_event)
 
     def fetch(self, lat: float, lon: float, time: datetime) -> WeatherSnapshot:
         query_utc = self._as_utc(time)
 
-        # Request a ±1 day window: near sunset the UTC date rolls over relative
-        # to the local evening (e.g. 20:24 EDT = 00:24Z next day), so a single
-        # UTC date would return the wrong evening's sunset. We pick the sunset
-        # and hour nearest the query time across the window.
-        params = self._params([(lat, lon)], query_utc, window_days=1)
+        # Request a ±1 day window: near the event the UTC date rolls over relative
+        # to the local evening/morning (e.g. 20:24 EDT = 00:24Z next day), so a
+        # single UTC date would return the wrong event. We pick the event and hour
+        # nearest the query time across the window.
+        params = self._params([(lat, lon)], query_utc, window_days=1, solar_event=self._solar_event)
         data = self._get_json(self.ENDPOINT, params)
-        return self._snapshot_from_payload(data, query_utc)
+        return self._snapshot_from_payload(data, query_utc, solar_event=self._solar_event)
 
     def fetch_for_sunset(
         self,
@@ -122,9 +127,9 @@ class OpenMeteoSource:
         the rough 18:00 hint instead of the real fire-cloud window.
         """
         query_utc = self._as_utc(evening_hint)
-        params = self._params([(lat, lon)], query_utc, window_days=1)
+        params = self._params([(lat, lon)], query_utc, window_days=1, solar_event=self._solar_event)
         data = self._get_json(self.ENDPOINT, params)
-        return self._snapshot_for_sunset(data, query_utc, score_offset)
+        return self._snapshot_for_sunset(data, query_utc, score_offset, solar_event=self._solar_event)
 
     # Max coordinates per request: the multi-coordinate API is a GET, so too
     # many coords overflow the URL length limit (HTTP 414). ~289 worked, ~484
@@ -198,6 +203,7 @@ class OpenMeteoSource:
                     window_days=0,
                     hourly=self.DETAIL_HOURLY,
                     extra={"wind_speed_unit": "ms"},
+                    solar_event=self._solar_event,
                 ),
             )
 
@@ -224,7 +230,7 @@ class OpenMeteoSource:
         if len(weather_results) != len(coords):
             raise ValueError("Open-Meteo returned an incomplete sunward profile")
         snapshots = [
-            self._snapshot_from_payload(item, target_utc, weather_time_utc=target_utc)
+            self._snapshot_from_payload(item, target_utc, weather_time_utc=target_utc, solar_event=self._solar_event)
             for item in weather_results
         ]
 
@@ -271,14 +277,17 @@ class OpenMeteoSource:
             chunk = coords[i:i + self.MAX_COORDS_PER_REQUEST]
             payload = self._get_json(
                 self.ENDPOINT,
-                self._params(chunk, query_utc, window_days=window_days),
+                self._params(chunk, query_utc, window_days=window_days, solar_event=self._solar_event),
             )
             results = payload if isinstance(payload, list) else [payload]
             if sunset_offset is None:
-                out.extend(self._snapshot_from_payload(r, query_utc) for r in results)
+                out.extend(
+                    self._snapshot_from_payload(r, query_utc, solar_event=self._solar_event)
+                    for r in results
+                )
             else:
                 out.extend(
-                    self._snapshot_for_sunset(r, query_utc, sunset_offset)
+                    self._snapshot_for_sunset(r, query_utc, sunset_offset, solar_event=self._solar_event)
                     for r in results
                 )
         return out
@@ -298,12 +307,13 @@ class OpenMeteoSource:
         window_days: int,
         hourly: str | None = None,
         extra: dict | None = None,
+        solar_event: SolarEvent | str = SolarEvent.SUNSET,
     ) -> dict:
         params = {
             "latitude": ",".join(f"{lat:.4f}" for lat, _ in coords),
             "longitude": ",".join(f"{lon:.4f}" for _, lon in coords),
             "hourly": hourly or cls.HOURLY,
-            "daily": "sunset",
+            "daily": spec_for(solar_event).daily_field,
             "timezone": "UTC",
             "start_date": (query_utc - timedelta(days=window_days)).strftime("%Y-%m-%d"),
             "end_date": (query_utc + timedelta(days=window_days)).strftime("%Y-%m-%d"),
@@ -386,23 +396,29 @@ class OpenMeteoSource:
         data: dict,
         query_utc: datetime,
         score_offset: timedelta,
+        *,
+        solar_event: SolarEvent | str = SolarEvent.SUNSET,
     ) -> WeatherSnapshot:
-        sunset = cls._nearest_sunset(data, query_utc)
-        weather_time = (sunset or query_utc) - score_offset
-        return cls._snapshot_from_payload(data, query_utc, weather_time_utc=weather_time)
+        event = cls._nearest_event(data, query_utc, solar_event=solar_event)
+        weather_time = (event or query_utc) - score_offset
+        return cls._snapshot_from_payload(
+            data, query_utc, weather_time_utc=weather_time, solar_event=solar_event
+        )
 
     @staticmethod
-    def _nearest_sunset(data: dict, query_utc: datetime) -> datetime | None:
+    def _nearest_event(
+        data: dict, query_utc: datetime, *, solar_event: SolarEvent | str = SolarEvent.SUNSET
+    ) -> datetime | None:
         from datetime import datetime as _dt
 
         daily = data.get("daily") or {}
-        sunsets = [s for s in (daily.get("sunset") or []) if s is not None]
-        if not sunsets:
+        events = [s for s in (daily.get(spec_for(solar_event).daily_field) or []) if s is not None]
+        if not events:
             return None
-        sunset_times = [
-            _dt.fromisoformat(s).replace(tzinfo=timezone.utc) for s in sunsets
+        event_times = [
+            _dt.fromisoformat(s).replace(tzinfo=timezone.utc) for s in events
         ]
-        return min(sunset_times, key=lambda s: abs((s - query_utc).total_seconds()))
+        return min(event_times, key=lambda s: abs((s - query_utc).total_seconds()))
 
     @classmethod
     def _snapshot_from_payload(
@@ -411,6 +427,7 @@ class OpenMeteoSource:
         query_utc: datetime,
         *,
         weather_time_utc: datetime | None = None,
+        solar_event: SolarEvent | str = SolarEvent.SUNSET,
     ) -> WeatherSnapshot:
         """Pure transform: pick the hour nearest the query time, assemble snapshot."""
         from datetime import datetime as _dt
@@ -434,7 +451,8 @@ class OpenMeteoSource:
                 return None
             return float(seq[idx])
 
-        sunset_time = cls._nearest_sunset(data, query_utc)
+        # The event time lands in the (event-generic) ``sunset_time`` slot.
+        sunset_time = cls._nearest_event(data, query_utc, solar_event=solar_event)
 
         return WeatherSnapshot(
             cloud_low_pct=at("cloud_cover_low") or 0.0,
