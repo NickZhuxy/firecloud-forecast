@@ -32,6 +32,29 @@ def test_compute_sunset_for_boston_late_may():
     assert sunset.tzinfo is not None
 
 
+def test_compute_event_time_sunrise_before_sunset():
+    from predictor.features import compute_event_time
+    from predictor.solar_event import SolarEvent
+
+    # Near-zero longitude (Greenwich) so the UTC calendar date holds both events in
+    # local order: sunrise (~03:43Z) precedes sunset (~20:22Z) on 2026-06-29.
+    dt = datetime(2026, 6, 29, 12, 0, tzinfo=timezone.utc)
+    sunrise = compute_event_time(51.48, 0.0, dt, SolarEvent.SUNRISE)
+    sunset = compute_event_time(51.48, 0.0, dt, SolarEvent.SUNSET)
+    assert sunrise < sunset
+    assert sunrise.tzinfo is not None
+
+
+def test_compute_sunset_equals_compute_event_time_sunset():
+    from predictor.features import compute_event_time
+    from predictor.solar_event import SolarEvent
+
+    dt = datetime(2026, 6, 29, 9, 0, tzinfo=timezone.utc)
+    assert compute_sunset(31.23, 121.47, dt) == compute_event_time(
+        31.23, 121.47, dt, SolarEvent.SUNSET
+    )
+
+
 def test_derive_skips_astral_when_snapshot_supplies_sunset(monkeypatch):
     """A source-reported sunset must short-circuit the astral fallback."""
     def _boom(*args, **kwargs):  # pragma: no cover - must never run here
