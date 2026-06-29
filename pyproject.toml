@@ -15,6 +15,9 @@ dependencies = [
     "requests>=2.31",
 ]
 
+[project.scripts]
+firecloud = "predictor.cli:main"
+
 [project.optional-dependencies]
 satellite = [
     "satpy>=0.49",

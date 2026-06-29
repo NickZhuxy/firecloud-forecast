@@ -115,17 +115,21 @@ def test_save_product_writes_png_and_metadata(tmp_path):
         dpi=80,
     )
 
-    assert artifacts.image_path.name == "firecloud-cn-20260624.png"
-    assert artifacts.metadata_path.name == "firecloud-cn-20260624.json"
+    assert artifacts.image_path.name == "national-sunset.png"
+    assert artifacts.metadata_path.name == "national-sunset.json"
     assert artifacts.image_path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
     image = mpimg.imread(artifacts.image_path)
     assert image.shape[0] >= 600 and image.shape[1] >= 800
+
+
     assert image.shape[-1] == 4
     assert np.allclose(image[..., 3], 1.0)  # complete opaque product, not overlay
 
     metadata = json.loads(artifacts.metadata_path.read_text())
-    assert metadata["schema_version"] == "v2"
+    assert metadata["schema_version"] == "v3"
     assert metadata["product"] == "china_firecloud_potential"
+    assert metadata["solar_event"] == "sunset"
+    assert "event_range_utc" in metadata and "sunset_range_utc" not in metadata
     assert metadata["target_date"] == "2026-06-24"
     assert metadata["generated_utc"] == "2026-06-24T05:30:00+00:00"
     assert metadata["image"] == artifacts.image_path.name
@@ -145,6 +149,37 @@ def test_save_product_writes_png_and_metadata(tmp_path):
     }
 
 
+# --- #60 PR-3 / #63: event-aware label, metadata and filename ---
+
+def test_metadata_records_solar_event():
+    from predictor.solar_event import SolarEvent
+    assert product_mod._metadata(_field(), _DATE, "x.png", _GENERATED)["solar_event"] == "sunset"
+    assert product_mod._metadata(
+        _field(), _DATE, "x.png", _GENERATED, solar_event=SolarEvent.SUNRISE
+    )["solar_event"] == "sunrise"
+
+
+def test_save_product_filename_carries_event(tmp_path):
+    from predictor.solar_event import SolarEvent
+    sset = save_product(_field(), _DATE, tmp_path, _context(), generated_at=_GENERATED, dpi=80)
+    assert sset.image_path.name == "national-sunset.png"
+    srise = save_product(
+        _field(), _DATE, tmp_path, _context(),
+        generated_at=_GENERATED, dpi=80, solar_event=SolarEvent.SUNRISE,
+    )
+    assert srise.image_path.name == "national-sunrise.png"
+    assert srise.metadata_path.name == "national-sunrise.json"
+
+
+def test_plot_caption_reflects_event():
+    from predictor.solar_event import SolarEvent
+    fig = plot_sunsetwx_product(
+        _field(), _DATE, _context(), generated_at=_GENERATED, solar_event=SolarEvent.SUNRISE
+    )
+    assert any("Sunrise" in t.get_text() for t in fig.texts)
+    assert not any("Sunset Valid" in t.get_text() for t in fig.texts)
+
+
 def test_metadata_all_nan_probability_serializes_as_null():
     import dataclasses
 
@@ -159,10 +194,11 @@ def test_metadata_all_nan_probability_serializes_as_null():
 
 
 def test_cli_parses_local_generation_request(monkeypatch, tmp_path, capsys):
+    from predictor.solar_event import SolarEvent
     calls = []
 
-    def fake_generate(target_date, output_dir, *, dpi):
-        calls.append((target_date, output_dir, dpi))
+    def fake_generate(target_date, output_dir, *, dpi, solar_event):
+        calls.append((target_date, output_dir, dpi, solar_event))
         return product_mod.ProductArtifacts(
             image_path=tmp_path / "forecast.png",
             metadata_path=tmp_path / "forecast.json",
@@ -177,7 +213,8 @@ def test_cli_parses_local_generation_request(monkeypatch, tmp_path, capsys):
     ])
 
     assert result == 0
-    assert calls == [(_DATE, tmp_path, 120)]
+    # Date lives in the containing folder; default event is sunset.
+    assert calls == [(_DATE, tmp_path / "2026-06-24", 120, SolarEvent.SUNSET)]
     output = capsys.readouterr().out
     assert "forecast.png" in output and "forecast.json" in output
 
@@ -198,7 +235,7 @@ def test_generate_product_reuses_national_field_with_converted_bbox_and_mask(
         metadata_path=tmp_path / "forecast.json",
     )
 
-    def fake_build(received_source, bbox, target_date, *, domain_mask):
+    def fake_build(received_source, bbox, target_date, *, domain_mask, solar_event):
         calls["build"] = (received_source, bbox, target_date)
         mask = domain_mask(
             np.array([17.0, 35.0, 54.0]),
@@ -211,7 +248,7 @@ def test_generate_product_reuses_national_field_with_converted_bbox_and_mask(
         ]
         return built_field
 
-    def fake_save(field, target_date, output_dir, received_context, *, dpi):
+    def fake_save(field, target_date, output_dir, received_context, *, dpi, solar_event):
         calls["save"] = (field, target_date, output_dir, received_context, dpi)
         return expected
 

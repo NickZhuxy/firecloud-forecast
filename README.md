@@ -28,24 +28,36 @@ GRIB/GFS 开发在 macOS 上还需要：
 brew install eccodes geos proj
 ```
 
-## 生成本地全国预测图
+## 生成预测图（统一 `firecloud` CLI）
+
+```bash
+firecloud                              # 今天 · 全国 · 朝霞 + 晚霞
+firecloud --date 2026-06-29
+firecloud --event sunrise              # 只出朝霞
+firecloud --lat 31.2 --lon 121.5       # + 局部精细产品（#62，暂未实现，规划但跳过）
+```
+
+输出按日期建文件夹，文件名带事件（朝霞/晚霞同日不再互相覆盖）：
+
+```text
+output/2026-06-29/national-sunrise.png
+output/2026-06-29/national-sunrise.json
+output/2026-06-29/national-sunset.png
+output/2026-06-29/national-sunset.json
+```
+
+PNG 是唯一标准版式，包含模型初始化时间、逐格事件有效时段、行政边界、经纬度与
+“暖色更优”色标；JSON 保存相同的数据来源、时间、算法和性能元数据（含 `solar_event`、
+`event_range_utc`）。首次运行会下载 GFS GRIB 子集与 Cartopy Natural Earth 地图资料。
+`output/` 是本地产物目录，不进入 Git。
+
+底层单事件入口仍在（同样按日期建子文件夹）：
 
 ```bash
 PYTHONPATH=. uv run python -m predictor.national_product \
-  --date 2026-06-24 \
-  --output-dir products
+  --date 2026-06-29 --event sunset --output-dir products
+# → products/2026-06-29/national-sunset.png + .json
 ```
-
-输出：
-
-```text
-products/firecloud-cn-20260624.png
-products/firecloud-cn-20260624.json
-```
-
-PNG 是唯一标准版式，包含模型初始化时间、逐格日落有效时段、行政边界、经纬度与
-“暖色更优”色标；JSON 保存相同的数据来源、时间、算法和性能元数据。首次运行会下载
-GFS GRIB 子集与 Cartopy Natural Earth 地图资料。`products/` 是本地产物目录，不进入 Git。
 
 ## 其他本地诊断
 

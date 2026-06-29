@@ -27,8 +27,9 @@ from matplotlib.ticker import FuncFormatter
 
 from predictor.gfs import GFSSource
 from predictor.national_field import NationalField, build_national_field
+from predictor.solar_event import SolarEvent, spec_for
 
-PRODUCT_SCHEMA_VERSION = "v2"
+PRODUCT_SCHEMA_VERSION = "v3"
 CN_BBOX = (17.0, 73.0, 54.0, 136.0)  # south, west, north, east
 DISPLAY_PROBABILITY_THRESHOLD = 0.50
 DISPLAY_EDGE_FADE_WIDTH = 0.06
@@ -280,6 +281,7 @@ def plot_sunsetwx_product(
     *,
     generated_at: datetime | None = None,
     figure: Figure | None = None,
+    solar_event: SolarEvent | str = SolarEvent.SUNSET,
 ) -> Figure:
     """Build one complete, opaque SunsetWx-style scientific forecast figure."""
     generated = _utc(generated_at or datetime.now(timezone.utc))
@@ -342,10 +344,11 @@ def plot_sunsetwx_product(
     colorbar.ax.tick_params(labelsize=8)
     colorbar.set_label("Firecloud probability", fontsize=9)
 
-    # The caption reflects the true per-cell sunset window, not the (wider)
+    # The caption reflects the true per-cell event window, not the (wider)
     # snapped GFS hourly bracket in field.valid_times.
-    sunset_start, sunset_end = field.sunset_range_utc
-    valid_label = f"{sunset_start:%H:%M}–{sunset_end:%H:%M} UTC"
+    event_label = spec_for(solar_event).label_en
+    event_start, event_end = field.sunset_range_utc
+    valid_label = f"{event_start:%H:%M}–{event_end:%H:%M} UTC"
     fig.text(
         0.045,
         0.91,
@@ -368,7 +371,7 @@ def plot_sunsetwx_product(
         0.045,
         0.865,
         f"Initialized: {_initialized_label(field.source_label)}  →  "
-        f"Per-cell Sunset Valid: {target_date:%d %b %Y} | {valid_label}",
+        f"Per-cell {event_label} Valid: {target_date:%d %b %Y} | {valid_label}",
         ha="left",
         va="center",
         fontsize=10,
@@ -392,6 +395,8 @@ def _metadata(
     target_date: date,
     image_name: str,
     generated_at: datetime,
+    *,
+    solar_event: SolarEvent | str = SolarEvent.SUNSET,
 ) -> dict:
     probability = np.asarray(field.probability, dtype=float)
     finite = probability[np.isfinite(probability)]
@@ -402,13 +407,15 @@ def _metadata(
     return {
         "schema_version": PRODUCT_SCHEMA_VERSION,
         "product": "china_firecloud_potential",
+        "solar_event": SolarEvent(solar_event).value,
         "target_date": target_date.isoformat(),
         "generated_utc": _utc(generated_at).isoformat(),
         "image": image_name,
         "model": "GFS 0.25 degree",
         "source_label": field.source_label,
         "valid_times_utc": [value.isoformat() for value in field.valid_times],
-        "sunset_range_utc": [value.isoformat() for value in field.sunset_range_utc],
+        # Event-generic key (#60): holds the sunrise OR sunset window per solar_event.
+        "event_range_utc": [value.isoformat() for value in field.sunset_range_utc],
         "n_points": field.n_points,
         "probability_range": {"min": prob_min, "max": prob_max},
         "performance": {
@@ -440,14 +447,20 @@ def save_product(
     *,
     generated_at: datetime | None = None,
     dpi: int = 160,
+    solar_event: SolarEvent | str = SolarEvent.SUNSET,
 ) -> ProductArtifacts:
-    """Atomically write the canonical PNG and its JSON sidecar."""
+    """Atomically write the canonical PNG and its JSON sidecar.
+
+    The stem is ``national-{event}`` (#63): the date is the containing folder the
+    caller supplies (``output/{date}/``), so a sunrise and sunset run on the same
+    date no longer collide.
+    """
     if dpi <= 0:
         raise ValueError("dpi must be positive")
     generated = _utc(generated_at or datetime.now(timezone.utc))
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    stem = f"firecloud-cn-{target_date:%Y%m%d}"
+    stem = f"national-{SolarEvent(solar_event).value}"
     image_path = directory / f"{stem}.png"
     metadata_path = directory / f"{stem}.json"
 
@@ -456,13 +469,14 @@ def save_product(
         target_date,
         context,
         generated_at=generated,
+        solar_event=solar_event,
     )
     image_tmp = directory / f".{stem}.png.tmp"
     figure.savefig(image_tmp, format="png", dpi=dpi, facecolor="white")
     image_tmp.replace(image_path)
     figure.clear()
 
-    metadata = _metadata(field, target_date, image_path.name, generated)
+    metadata = _metadata(field, target_date, image_path.name, generated, solar_event=solar_event)
     metadata_tmp = directory / f".{stem}.json.tmp"
     metadata_tmp.write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2) + "\n",
@@ -523,8 +537,9 @@ def generate_product(
     *,
     dpi: int = 160,
     source=None,
+    solar_event: SolarEvent | str = SolarEvent.SUNSET,
 ) -> ProductArtifacts:
-    """Fetch, score, render and save one local China sunset product."""
+    """Fetch, score, render and save one national China firecloud product (#60)."""
     context = load_map_context()
     south, west, north, east = CN_BBOX
     field = build_national_field(
@@ -532,8 +547,9 @@ def generate_product(
         (south, north, west, east),
         target_date,
         domain_mask=lambda lats, lons: geometry_mask(context.country, lats, lons),
+        solar_event=solar_event,
     )
-    return save_product(field, target_date, output_dir, context, dpi=dpi)
+    return save_product(field, target_date, output_dir, context, dpi=dpi, solar_event=solar_event)
 
 
 def _parse_date(value: str) -> date:
@@ -559,7 +575,11 @@ def main(argv: list[str] | None = None) -> int:
         "--output-dir",
         type=Path,
         default=Path("products"),
-        help="artifact directory (default: products)",
+        help="base artifact directory; the product lands in {output-dir}/{date}/ (default: products)",
+    )
+    parser.add_argument(
+        "--event", choices=["sunrise", "sunset"], default="sunset",
+        help="solar event to forecast (default: sunset)",
     )
     parser.add_argument("--dpi", type=_positive_int, default=160)
     args = parser.parse_args(argv)
@@ -568,7 +588,12 @@ def main(argv: list[str] | None = None) -> int:
     # fetch reads as working, not hung.
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    artifacts = generate_product(args.date, args.output_dir, dpi=args.dpi)
+    # Date lives in the containing folder (the stem is national-{event}), so runs
+    # for different dates no longer overwrite each other.
+    date_dir = args.output_dir / args.date.isoformat()
+    artifacts = generate_product(
+        args.date, date_dir, dpi=args.dpi, solar_event=args.event
+    )
     print(f"image    : {artifacts.image_path}")
     print(f"metadata : {artifacts.metadata_path}")
     return 0
