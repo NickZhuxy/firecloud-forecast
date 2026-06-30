@@ -15,6 +15,7 @@ coordinate — the whole point of "local fidelity, not interpolation".
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,6 +30,7 @@ from predictor.sunward_section import (
 )
 
 _KM_PER_DEG_LAT = 111.0
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -138,11 +140,21 @@ def build_local_field(
         center_lat, center_lon,
         radius_km=radius_km, resolution_deg=resolution_deg, max_points=max_points,
     )
+    n_points = int(lats.size * lons.size)
+    logger.info(
+        "Local product grid: %d cells (%d x %d), radius %.0f km, resolution %.3f deg",
+        n_points, lats.size, lons.size, radius_km, resolution_deg,
+    )
     bbox = _shared_cube_bbox(
         lats, lons, time, distances_km=distances_km, azimuth_deg=azimuth_deg,
         elevation_fn=elevation_fn, domain=domain, margin_deg=margin_deg,
     )
+    logger.info(
+        "Local product GFS cube: fetching bbox %.2f..%.2f N, %.2f..%.2f E",
+        bbox[0], bbox[1], bbox[2], bbox[3],
+    )
     cube = cube_source.fetch_cube(bbox, time)
+    logger.info("Local product GFS cube: loaded %s", getattr(cube, "source_label", "unknown"))
 
     # Snapshots: one batched Open-Meteo request set (fetch_many, 280 coords/request)
     # instead of N sequential calls, so a several-hundred-cell grid stays seconds, not
@@ -150,11 +162,15 @@ def build_local_field(
     coords = [(float(la), float(lo)) for la in lats for lo in lons]
     source = predictor.source
     if hasattr(source, "fetch_many"):
+        logger.info("Local product weather: fetching %d batched snapshots", len(coords))
         snapshots = source.fetch_many(coords, time)
     else:
+        logger.info("Local product weather: fetching %d snapshots sequentially", len(coords))
         snapshots = [source.fetch(la, lo, time) for la, lo in coords]
+    logger.info("Local product weather: loaded %d snapshots", len(snapshots))
 
     probability = np.empty((lats.size, lons.size), dtype=float)
+    logger.info("Local product scoring: scoring %d cells", n_points)
     for k, (la, lo) in enumerate(coords):
         forecast = score_point_with_cube(
             predictor, cube, snapshots[k], la, lo, time,
@@ -162,6 +178,14 @@ def build_local_field(
             elevation_fn=elevation_fn, domain=domain, config=config, aod_fn=aod_fn,
         )
         probability[k // lons.size, k % lons.size] = forecast.probability
+    finite = probability[np.isfinite(probability)]
+    if finite.size:
+        logger.info(
+            "Local product scoring: scored %d cells (probability %.3f..%.3f)",
+            n_points, float(finite.min()), float(finite.max()),
+        )
+    else:
+        logger.info("Local product scoring: scored %d cells (all probabilities non-finite)", n_points)
 
     return LocalField(
         lats=lats, lons=lons, probability=probability,
