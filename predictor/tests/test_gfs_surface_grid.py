@@ -294,7 +294,7 @@ def test_download_surface_records_inventory_byte_ranges(monkeypatch, tmp_path):
             return _surface_ds()
 
     src = GFSSource(cache_dir=tmp_path)
-    monkeypatch.setattr(src, "_herbie", lambda *_args: FakeHerbie())
+    monkeypatch.setattr(src, "_herbie", lambda *_args, **_kwargs: FakeHerbie())
 
     ds = src._download_surface(_T0, 6)
     grid = src._surface_grid_from_dataset(

@@ -141,6 +141,7 @@ GFS_VAR_MAP: dict[str, str] = {
     "u": "u_wind_m_s",
     "v": "v_wind_m_s",
     "w": "vertical_velocity_pa_s",
+    "clmr": "cloud_water_kg_kg",
     "clwmr": "cloud_water_kg_kg",
     "icmr": "cloud_ice_kg_kg",
 }
@@ -168,6 +169,12 @@ def _is_transient_network_error(exc: Exception) -> bool:
     through to the caller's cycle fallback immediately).
     """
     return any(marker in str(exc).lower() for marker in _TRANSIENT_NETWORK_MARKERS)
+
+
+def _is_empty_xarray_selection_error(exc: ValueError) -> bool:
+    """cfgrib can surface absent sparse levels as an empty lazy index."""
+    message = str(exc).lower()
+    return "zero-size array" in message and "reduction operation" in message
 
 
 class GFSSource:
@@ -341,7 +348,9 @@ class GFSSource:
         cached = self._ds_cache.get(key)
         if cached is not None:
             return cached
-        ds = self._download_dataset(run_dt, fxx)
+        ds = self._retry_transient(
+            lambda: self._download_dataset(run_dt, fxx), fxx, "pressure cube download"
+        )
         self._ds_cache[key] = ds
         return ds
 
@@ -370,7 +379,7 @@ class GFSSource:
                 if attempt == self.SURFACE_DOWNLOAD_ATTEMPTS or not _is_transient_network_error(exc):
                     raise
                 logger.warning(
-                    "GFS surface %s f%02d: transient error (attempt %d/%d): %s — retrying",
+                    "GFS %s f%02d: transient error (attempt %d/%d): %s — retrying",
                     what, fxx, attempt, self.SURFACE_DOWNLOAD_ATTEMPTS, exc,
                 )
                 time.sleep(self.SURFACE_RETRY_BACKOFF_S * attempt)
@@ -383,7 +392,9 @@ class GFSSource:
             return cached
         # Parse (eccodes/cfgrib). If the file was prefetched this is a local read;
         # otherwise _download_surface also fetches it. Retried for the latter case.
-        ds = self._retry_transient(lambda: self._download_surface(run_dt, fxx), fxx, "parse")
+        ds = self._retry_transient(
+            lambda: self._download_surface(run_dt, fxx), fxx, "surface parse"
+        )
         self._surface_cache[key] = ds
         return ds
 
@@ -412,7 +423,9 @@ class GFSSource:
                 futures = [
                     pool.submit(
                         self._retry_transient,
-                        lambda f=f: self._prefetch_surface(run_dt, f), f, "download",
+                        lambda f=f: self._prefetch_surface(run_dt, f),
+                        f,
+                        "surface download",
                     )
                     for f in pending
                 ]
@@ -423,30 +436,34 @@ class GFSSource:
 
     def _prefetch_surface(self, run_dt: datetime, fxx: int) -> None:
         """Download one surface hour's GRIB subset to disk — network only, no parse."""
-        self._herbie(run_dt, fxx).download(self._SURFACE_SEARCH)
+        self._herbie(run_dt, fxx, cache_namespace="surface").download(
+            self._SURFACE_SEARCH
+        )
 
-    def _herbie(self, run_dt: datetime, fxx: int):
+    def _herbie(self, run_dt: datetime, fxx: int, *, cache_namespace: str):
         """Construct a Herbie handle for a GFS 0.25° cycle (network on .xarray)."""
         from herbie import Herbie
 
+        save_dir = self.cache_dir / cache_namespace
+        save_dir.mkdir(parents=True, exist_ok=True)
         return Herbie(
             run_dt.strftime("%Y-%m-%d %H:%M"),
             model="gfs",
             product="pgrb2.0p25",
             fxx=fxx,
-            save_dir=self.cache_dir,
+            save_dir=save_dir,
         )
 
     def _download_dataset(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         """Download + parse the GFS pressure-level subset via Herbie (network)."""
-        H = self._herbie(run_dt, fxx)
+        H = self._herbie(run_dt, fxx, cache_namespace="pressure")
         # Subset to our variables on pressure (mb) levels. cfgrib may split into
         # several datasets by step/type; merge into one isobaric dataset.
         # join="outer" is explicit (not the deprecated default): GFS variables
         # like CLWMR/ICMR are reported on fewer levels than TMP, so the union of
         # levels must be kept (missing levels NaN-filled), and a future xarray
         # default of join="exact" would otherwise raise on the mismatch.
-        search = r":(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLWMR|ICMR):\d+ mb:"
+        search = r":(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLMR|CLWMR|ICMR):\d+ mb:"
         parsed = H.xarray(search)
         if isinstance(parsed, list):
             return xr.merge(
@@ -456,7 +473,7 @@ class GFSSource:
 
     def _download_cover(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         """Download the GFS three-tier cloud covers (LCDC/MCDC/HCDC) via Herbie."""
-        H = self._herbie(run_dt, fxx)
+        H = self._herbie(run_dt, fxx, cache_namespace="cover")
         # Each étage cover sits on its own cloud-layer level type, so Herbie
         # returns one dataset per cover; merge them on the shared lat/lon grid.
         parsed = H.xarray(r":(?:LCDC|MCDC|HCDC):")
@@ -466,7 +483,7 @@ class GFSSource:
 
     def _download_surface(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         """Download (if needed) + parse GFS surface fields (cover, 2 m RH, visibility)."""
-        H = self._herbie(run_dt, fxx)
+        H = self._herbie(run_dt, fxx, cache_namespace="surface")
         search = self._SURFACE_SEARCH
         download_bytes = _subset_payload_bytes(H, search)
         parsed = H.xarray(search)
@@ -608,10 +625,14 @@ class GFSSource:
         present_levels = sorted(
             (lv for lv in levels if lv in set(grid_levels)), reverse=True
         )
-        sub = ds.sel(isobaricInhPa=present_levels)
+        if not present_levels:
+            raise GFSUnavailable(
+                f"GFS pressure dataset has none of the requested levels {levels}; "
+                f"got {grid_levels}"
+            )
 
-        lats = np.asarray(sub["latitude"].values, dtype=float)
-        grid_lons = np.asarray(sub["longitude"].values, dtype=float)
+        lats = np.asarray(ds["latitude"].values, dtype=float)
+        grid_lons = np.asarray(ds["longitude"].values, dtype=float)
         uses_0_360 = float(np.nanmax(grid_lons)) > 180.0
 
         def _norm(x: float) -> float:
@@ -626,23 +647,78 @@ class GFSSource:
 
         lat_idx = np.where(lat_mask)[0]
         lon_idx = np.where(lon_mask)[0]
-        sub = sub.isel(latitude=lat_idx, longitude=lon_idx)
+        if lat_idx.size == 0 or lon_idx.size == 0:
+            raise GFSUnavailable(f"GFS pressure crop is empty for bbox {bbox}")
+
+        sub = ds.isel(latitude=lat_idx, longitude=lon_idx)
 
         out_lats = np.asarray(sub["latitude"].values, dtype=float)
         out_lons = np.asarray(sub["longitude"].values, dtype=float)
         nz, ny, nx = len(present_levels), out_lats.size, out_lons.size
 
-        short_by_field = {v: k for k, v in GFS_VAR_MAP.items()}
+        shorts_by_field: dict[str, list[str]] = {}
+        for short, field in GFS_VAR_MAP.items():
+            shorts_by_field.setdefault(field, []).append(short)
         arrays: dict[str, np.ndarray] = {}
         missing: list[str] = []
         for field_name in PROFILE_VARS:
-            short = short_by_field[field_name]
-            if short in sub.data_vars:
-                arr = (
-                    sub[short]
-                    .transpose("isobaricInhPa", "latitude", "longitude")
-                    .values.astype(float)
-                )
+            short = next(
+                (candidate for candidate in shorts_by_field[field_name] if candidate in sub.data_vars),
+                None,
+            )
+            if short is not None:
+                da = sub[short]
+                required_dims = {"isobaricInhPa", "latitude", "longitude"}
+                if not required_dims.issubset(da.dims):
+                    arr = np.full((nz, ny, nx), np.nan)
+                    missing.append(field_name)
+                    arrays[field_name] = arr
+                    continue
+
+                extra_dims = [dim for dim in da.dims if dim not in required_dims]
+                if extra_dims:
+                    da = da.isel({dim: 0 for dim in extra_dims})
+
+                try:
+                    arr = (
+                        da.sel(isobaricInhPa=present_levels)
+                        .transpose("isobaricInhPa", "latitude", "longitude")
+                        .values.astype(float)
+                    )
+                except ValueError as exc:
+                    if not _is_empty_xarray_selection_error(exc):
+                        raise
+                    arr = np.full((nz, ny, nx), np.nan)
+                    for zi, level in enumerate(present_levels):
+                        try:
+                            values = (
+                                da.sel(isobaricInhPa=level)
+                                .transpose("latitude", "longitude")
+                                .values.astype(float)
+                            )
+                        except KeyError:
+                            continue
+                        except ValueError as level_exc:
+                            if not _is_empty_xarray_selection_error(level_exc):
+                                raise
+                            continue
+                        if values.shape != (ny, nx):
+                            values = np.asarray(values, dtype=float).squeeze()
+                        if values.shape != (ny, nx):
+                            raise GFSUnavailable(
+                                f"GFS field {short!r} has unexpected shape "
+                                f"{values.shape}; expected {(ny, nx)}"
+                            )
+                        arr[zi] = values
+                if arr.shape != (nz, ny, nx):
+                    arr = np.asarray(arr, dtype=float).squeeze()
+                if arr.shape != (nz, ny, nx):
+                    raise GFSUnavailable(
+                        f"GFS field {short!r} has unexpected shape {arr.shape}; "
+                        f"expected {(nz, ny, nx)}"
+                    )
+                if not np.isfinite(arr).any():
+                    missing.append(field_name)
             else:
                 arr = np.full((nz, ny, nx), np.nan)
                 missing.append(field_name)

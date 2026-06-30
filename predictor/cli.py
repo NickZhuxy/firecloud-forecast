@@ -7,11 +7,11 @@ national firecloud potential for **both** events (朝霞 + 晚霞) into a per-da
     firecloud                              # today · national · sunrise + sunset
     firecloud --date 2026-06-29
     firecloud --event sunrise              # only the morning glow
-    firecloud --lat 31.2 --lon 121.5       # + local fine product (#62, pending)
+    firecloud --lat 31.2 --lon 121.5       # + local fine product
 
 Default ``--event both`` runs the national overview twice (one GFS read per event;
-that doubled fetch is intended). The local fine product for ``--lat/--lon`` (#62) is
-not implemented yet; it is planned and reported but skipped.
+that doubled fetch is intended). With ``--lat/--lon`` (or ``--lat/--long``), it also
+generates the local fine product for each selected event.
 """
 from __future__ import annotations
 
@@ -77,7 +77,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="which solar event(s) to forecast (default: both)",
     )
     parser.add_argument("--lat", type=float, default=None, help="local product latitude")
-    parser.add_argument("--lon", type=float, default=None, help="local product longitude")
+    parser.add_argument(
+        "--lon", "--long", dest="lon", type=float, default=None,
+        help="local product longitude",
+    )
     parser.add_argument(
         "--radius", type=float, default=150.0,
         help="local product radius in km (default: 150)",
