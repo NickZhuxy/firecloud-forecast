@@ -81,7 +81,9 @@ def _synthesize_snapshot(surface_fields: dict, j: int, i: int, event_time: datet
     )
 
 
-def _candidate_groups(candidate_mask, selected_time, lats, lons, tile_deg):
+def _candidate_groups(
+    candidate_mask, selected_time, lats, lons, tile_deg
+) -> dict[tuple[int, int, int], list[tuple[int, int]]]:
     groups: dict[tuple[int, int, int], list[tuple[int, int]]] = {}
     ny, nx = candidate_mask.shape
     for j in range(ny):
@@ -97,7 +99,12 @@ def _candidate_groups(candidate_mask, selected_time, lats, lons, tile_deg):
     return groups
 
 
-def _group_bbox(cells, lats, lons, event_times, azimuth_deg, distances_km, margin_deg):
+def _group_bbox(
+    cells, lats, lons, event_times, azimuth_deg, distances_km, margin_deg
+) -> tuple[float, float, float, float]:
+    # ``cells`` is always non-empty: it comes from a ``_candidate_groups`` value,
+    # each built via ``setdefault(key, []).append(...)``. An empty list would yield
+    # a degenerate inverted bbox, so callers must not bypass ``_candidate_groups``.
     lat_min = lon_min = math.inf
     lat_max = lon_max = -math.inf
     for j, i in cells:
