@@ -29,6 +29,7 @@ _GATE_WEIGHTS = {
     "low_cloud_obstruction": STANDARD_WEIGHTS["low_cloud_obstruction"],
     "solar_angle": STANDARD_WEIGHTS["solar_angle"],
     "clean_air": STANDARD_WEIGHTS["clean_air"],
+    "sunward_illumination": STANDARD_WEIGHTS["sunward_illumination"],
 }
 _MODIFIER_WEIGHTS = {
     "humidity": STANDARD_WEIGHTS["humidity"],
@@ -52,6 +53,10 @@ class GridInputs:
     humidity_pct: np.ndarray
     visibility_m: np.ndarray | None = None
     aerosol_optical_depth: np.ndarray | None = None
+    cloud_base_m: np.ndarray | None = None
+    sunward_cloud_boundary_km: np.ndarray | None = None
+    sunward_profile_max_km: np.ndarray | None = None
+    sunward_aod_mean: np.ndarray | None = None
 
 
 def _trapezoid(x, low0, low1, high1, high0):
@@ -79,6 +84,59 @@ def _clean_air(visibility_m, aod):
     return np.clip((vis_km - 5.0) / 15.0, 0.0, 1.0)
 
 
+def _equivalent_base_from_aod(cloud_base_m, aod):
+    base = np.asarray(cloud_base_m, dtype=float)
+    if aod is None:
+        return base
+    a = np.asarray(aod, dtype=float)
+    scale_height_km = 2.0
+    beta_x = 0.02
+    beta_0 = a / scale_height_km
+    h_x_m = np.where(
+        np.isfinite(a) & (a > 0) & (beta_0 > beta_x),
+        scale_height_km * 1000.0 * np.log(beta_0 / beta_x),
+        0.0,
+    )
+    return np.maximum(0.0, base - h_x_m)
+
+
+def _max_penetration_km(cloud_base_m):
+    base = np.asarray(cloud_base_m, dtype=float)
+    return np.where(
+        np.isfinite(base) & (base > 0),
+        2.0 * np.sqrt(2.0 * 6371.0 * (base / 1000.0)),
+        0.0,
+    )
+
+
+def _sunward_illumination(cloud_base_m, boundary_km, profile_max_km, aod):
+    base = np.asarray(cloud_base_m, dtype=float)
+    boundary = np.asarray(boundary_km, dtype=float)
+    profile_max = np.asarray(profile_max_km, dtype=float)
+    effective_base = _equivalent_base_from_aod(base, aod)
+    reach = _max_penetration_km(effective_base)
+
+    score = np.zeros_like(base)
+    known_base = np.isfinite(base) & (base > 0) & np.isfinite(profile_max)
+    impossible = known_base & (reach <= 0)
+    score[impossible] = 0.0
+
+    insufficient_path = known_base & ~np.isfinite(boundary) & (profile_max < reach) & (reach > 0)
+    score[insufficient_path] = 1.0
+
+    no_boundary = known_base & ~np.isfinite(boundary) & (profile_max >= reach) & (reach > 0)
+    score[no_boundary] = 0.0
+
+    has_boundary = known_base & np.isfinite(boundary) & (reach > 0)
+    ratio = np.zeros_like(base)
+    ratio[has_boundary] = boundary[has_boundary] / reach[has_boundary]
+    score[has_boundary & (ratio <= 0.70)] = 1.0
+    score[has_boundary & (ratio >= 1.0)] = 0.0
+    ramp = has_boundary & (ratio > 0.70) & (ratio < 1.0)
+    score[ramp] = (1.0 - ratio[ramp]) / 0.30
+    return np.clip(score, 0.0, 1.0)
+
+
 def score_grid(inputs: GridInputs) -> np.ndarray:
     """Return the gate × modifier probability field for the whole grid."""
     low = np.asarray(inputs.cloud_low_pct, dtype=float)
@@ -100,6 +158,17 @@ def score_grid(inputs: GridInputs) -> np.ndarray:
         "solar_angle": g_solar,
         "clean_air": g_clean,
     }
+    if (
+        inputs.cloud_base_m is not None
+        and inputs.sunward_cloud_boundary_km is not None
+        and inputs.sunward_profile_max_km is not None
+    ):
+        gates["sunward_illumination"] = _sunward_illumination(
+            inputs.cloud_base_m,
+            inputs.sunward_cloud_boundary_km,
+            inputs.sunward_profile_max_km,
+            inputs.sunward_aod_mean,
+        )
 
     # Modifiers.
     total = mid + high
@@ -113,7 +182,7 @@ def score_grid(inputs: GridInputs) -> np.ndarray:
     }
 
     # Gate layer: weighted geometric mean (a 0 gate forces the product to 0).
-    w_gate = sum(_GATE_WEIGHTS.values())
+    w_gate = sum(_GATE_WEIGHTS[name] for name in gates)
     gate = np.ones_like(low)
     for name, score in gates.items():
         gate = gate * np.power(score, _GATE_WEIGHTS[name] / w_gate)

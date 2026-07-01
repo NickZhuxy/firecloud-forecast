@@ -159,6 +159,22 @@ def test_metadata_records_solar_event():
     )["solar_event"] == "sunrise"
 
 
+def test_metadata_records_national_physics_when_present():
+    import dataclasses
+
+    field = dataclasses.replace(
+        _field(),
+        physics={
+            "screen": {"enabled": True, "method": "surface_1d_sunward"},
+            "refinement": {"enabled": False, "status": "disabled"},
+        },
+    )
+    metadata = product_mod._metadata(field, _DATE, "x.png", _GENERATED)
+
+    assert metadata["physics"]["screen"]["method"] == "surface_1d_sunward"
+    assert metadata["physics"]["refinement"]["status"] == "disabled"
+
+
 def test_save_product_filename_carries_event(tmp_path):
     from predictor.solar_event import SolarEvent
     sset = save_product(_field(), _DATE, tmp_path, _context(), generated_at=_GENERATED, dpi=80)

@@ -10,11 +10,13 @@ from predictor.fetch import FakeSource, WeatherSnapshot
 from predictor.gfs import SurfaceGrid
 from predictor.grid_score import GridInputs, score_grid
 from predictor.national_field import NationalField, build_national_field
+from predictor.national_physics import NationalPhysicsConfig
 from predictor.rules import standard_predictor
 
 _DATE = date(2026, 6, 22)
 _T = datetime(2026, 6, 22, 11, tzinfo=timezone.utc)
 _BBOX = (20.0, 40.0, 100.0, 120.0)  # lat_min, lat_max, lon_min, lon_max
+_LEGACY_PHYSICS = NationalPhysicsConfig(enabled=False)
 
 
 class _FakeGFS:
@@ -76,6 +78,8 @@ def test_build_returns_field_with_multitime_metrics():
     assert [call[1] for call in gfs.calls] == list(field.valid_times)
     assert field.decoded_input_bytes > 0
     assert field.additional_decoded_input_bytes > 0
+    assert field.physics["screen"]["enabled"] is True
+    assert field.physics["screen"]["method"] == "surface_1d_sunward"
 
 
 def test_latitudes_returned_ascending():
@@ -112,7 +116,8 @@ def test_probability_in_range():
 def test_missing_humidity_visibility_fall_back_not_nan():
     nan = np.full((3, 3), np.nan)
     field = build_national_field(
-        _FakeGFS(_grid(humidity=nan, visibility=nan)), _BBOX, _DATE
+        _FakeGFS(_grid(humidity=nan, visibility=nan)), _BBOX, _DATE,
+        physics_config=_LEGACY_PHYSICS,
     )
     assert np.all(np.isfinite(field.probability))
     assert np.all(field.probability > 0.0)
@@ -144,7 +149,7 @@ def test_each_cell_selects_one_nearest_timestep_for_all_fields(monkeypatch):
     monkeypatch.setattr(national_field_mod, "sunset_utc_grid", _controlled_sunsets)
     gfs = _FakeGFS(_time_varying_grid)
 
-    field = build_national_field(gfs, _BBOX, _DATE)
+    field = build_national_field(gfs, _BBOX, _DATE, physics_config=_LEGACY_PHYSICS)
 
     assert [t.hour for t in field.valid_times] == [10, 11, 12]
     # Output rows are ascending latitude, so controlled sunsets are interpreted
@@ -162,7 +167,9 @@ def test_each_cell_selects_one_nearest_timestep_for_all_fields(monkeypatch):
 
 def test_multitime_grid_matches_equivalent_scalar_points(monkeypatch):
     monkeypatch.setattr(national_field_mod, "sunset_utc_grid", _controlled_sunsets)
-    field = build_national_field(_FakeGFS(_time_varying_grid), _BBOX, _DATE)
+    field = build_national_field(
+        _FakeGFS(_time_varying_grid), _BBOX, _DATE, physics_config=_LEGACY_PHYSICS
+    )
     sunset_times = _controlled_sunsets()
     chosen_k = np.array([[0, 1], [1, 2]])
     predictor = standard_predictor(FakeSource(WeatherSnapshot(0, 0, 0, 0, "x", _T)))

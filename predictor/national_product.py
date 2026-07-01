@@ -404,7 +404,7 @@ def _metadata(
     # as a bare `NaN` token (invalid JSON). Fall back to null instead.
     prob_min = float(finite.min()) if finite.size else None
     prob_max = float(finite.max()) if finite.size else None
-    return {
+    metadata = {
         "schema_version": PRODUCT_SCHEMA_VERSION,
         "product": "china_firecloud_potential",
         "solar_event": SolarEvent(solar_event).value,
@@ -437,6 +437,9 @@ def _metadata(
             "upsample_factor": DISPLAY_UPSAMPLE_FACTOR,
         },
     }
+    if field.physics is not None:
+        metadata["physics"] = field.physics
+    return metadata
 
 
 def save_product(

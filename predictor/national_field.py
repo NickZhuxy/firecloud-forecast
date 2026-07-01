@@ -14,6 +14,7 @@ from datetime import date, datetime, timezone
 import numpy as np
 
 from predictor.grid_score import GridInputs, score_grid
+from predictor.national_physics import NationalPhysicsConfig, build_sunward_screen
 from predictor.solar_event import SolarEvent
 from predictor.sunset_grid import (
     hourly_valid_times,
@@ -39,6 +40,7 @@ class NationalField:
     additional_download_bytes: int | None
     runtime_s: float
     peak_mem_mb: float
+    physics: dict | None = None
 
 
 def _finite(arr: np.ndarray, default: float) -> np.ndarray:
@@ -110,6 +112,7 @@ def build_national_field(
     *,
     domain_mask=None,
     solar_event=SolarEvent.SUNSET,
+    physics_config: NationalPhysicsConfig | None = None,
 ) -> NationalField:
     """Fetch covering GFS hours and score every cell at its nearest event hour.
 
@@ -171,12 +174,55 @@ def build_national_field(
             stacked = np.stack([fields[name] for _la, _lo, fields in ordered])
             return np.take_along_axis(stacked, selected_time[None, ...], axis=0)[0]
 
+        selected_fields = {
+            "cloud_low_pct": select("cloud_low_pct"),
+            "cloud_mid_pct": select("cloud_mid_pct"),
+            "cloud_high_pct": select("cloud_high_pct"),
+            "humidity_pct": _finite(select("humidity_pct"), 50.0),
+            "visibility_m": _finite(select("visibility_m"), 25000.0),
+        }
+        physics = None
+        grid_inputs_kwargs = {}
+        config = physics_config or NationalPhysicsConfig()
+        if config.enabled:
+            screen = build_sunward_screen(
+                lats,
+                lons,
+                selected_fields["cloud_low_pct"],
+                selected_fields["cloud_mid_pct"],
+                selected_fields["cloud_high_pct"],
+                sunsets,
+                distances_km=config.screen_distances_km,
+            )
+            grid_inputs_kwargs.update(
+                cloud_base_m=screen.cloud_base_m,
+                sunward_cloud_boundary_km=screen.sunward_cloud_boundary_km,
+                sunward_profile_max_km=screen.sunward_profile_max_km,
+                sunward_aod_mean=screen.sunward_aod_mean,
+            )
+            physics = {
+                "screen": {
+                    "enabled": True,
+                    "method": "surface_1d_sunward",
+                    "distances_km": list(screen.distances_km),
+                    "sampled_points": screen.sampled_points,
+                },
+                "refinement": {
+                    "enabled": bool(config.refine),
+                    "method": "selected_2d_ray_trace_50km",
+                    "threshold": config.refine_threshold,
+                    "distances_km": list(config.refine_distances_km),
+                    "status": "configured_not_run" if config.refine else "disabled",
+                },
+            }
+
         inputs = GridInputs(
-            cloud_low_pct=select("cloud_low_pct"),
-            cloud_mid_pct=select("cloud_mid_pct"),
-            cloud_high_pct=select("cloud_high_pct"),
-            humidity_pct=_finite(select("humidity_pct"), 50.0),
-            visibility_m=_finite(select("visibility_m"), 25000.0),
+            cloud_low_pct=selected_fields["cloud_low_pct"],
+            cloud_mid_pct=selected_fields["cloud_mid_pct"],
+            cloud_high_pct=selected_fields["cloud_high_pct"],
+            humidity_pct=selected_fields["humidity_pct"],
+            visibility_m=selected_fields["visibility_m"],
+            **grid_inputs_kwargs,
         )
         probability = score_grid(inputs)
 
@@ -220,6 +266,7 @@ def build_national_field(
             additional_download_bytes=additional_download_bytes,
             runtime_s=runtime_s,
             peak_mem_mb=peak_mem_mb,
+            physics=physics,
         )
     finally:
         if trace:
