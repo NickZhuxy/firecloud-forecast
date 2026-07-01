@@ -21,6 +21,7 @@ from predictor.clouds import diagnose_clouds
 from predictor.fetch import WeatherSnapshot
 from predictor.features import derive
 from predictor.grid_score import GridInputs, score_grid
+from predictor.national_refine import refine_field
 from predictor.normalize import normalize
 from predictor.profiles import AtmosphericCube
 from predictor.rules import standard_predictor
@@ -291,6 +292,55 @@ def _diagnosed_1d_scores(grid: GridSpec, cube: AtmosphericCube) -> tuple[np.ndar
     return out, time.perf_counter() - t0
 
 
+def _stage_b_refine_scores(
+    grid: GridSpec, cube: AtmosphericCube, screen: np.ndarray, threshold: float = 0.50
+) -> tuple[np.ndarray, float, float]:
+    surface = {
+        key: np.empty(grid.shape, dtype=float)
+        for key in ("cloud_low_pct", "cloud_mid_pct", "cloud_high_pct", "humidity_pct", "visibility_m", "aod")
+    }
+    for j, i, lat, lon in _for_each_cell(grid):
+        surface["cloud_low_pct"][j, i] = _low_cloud_pct(lat, lon)
+        surface["cloud_mid_pct"][j, i] = _mid_cloud_pct(lat, lon)
+        surface["cloud_high_pct"][j, i] = _high_cloud_pct(lat, lon)
+        surface["humidity_pct"][j, i] = _humidity_pct(lat, lon)
+        surface["visibility_m"][j, i] = _visibility_m(lat, lon)
+        surface["aod"][j, i] = _aod(lat, lon)
+
+    event_times = np.full(grid.shape, np.datetime64(int(VALID_TIME.timestamp()), "s"))
+    selected_time = np.zeros(grid.shape, dtype=int)
+
+    class _FixedCubeSource:
+        def __init__(self, cube):
+            self.cube = cube
+
+        def fetch_cube(self, bbox, time):
+            return self.cube
+
+    distances = tuple(float(d) for d in range(0, 801, 50))
+    t0 = time.perf_counter()
+    result = refine_field(
+        _FixedCubeSource(cube),
+        grid.lats,
+        grid.lons,
+        screen,
+        event_times,
+        selected_time,
+        (VALID_TIME,),
+        surface,
+        threshold=threshold,
+        distances_km=distances,
+        azimuth_deg=AZIMUTH_DEG,
+        aod_fn=_aod_fn,
+        tile_deg=1000.0,
+        max_cube_cells=20000,
+    )
+    seconds = time.perf_counter() - t0
+    refine_fraction = result.cells_refined / grid.size
+    cost = 0.18 + refine_fraction * (len(distances) / len(TRUTH_DISTANCES_KM))
+    return result.refined_probability, seconds, cost
+
+
 def _nearest_anchor_reuse(truth: np.ndarray, stride: int) -> tuple[np.ndarray, float]:
     t0 = time.perf_counter()
     ny, nx = truth.shape
@@ -431,6 +481,9 @@ def run() -> dict:
                 0.18 + selected_fraction,
             )
         )
+
+    refine_pred, refine_s, refine_cost = _stage_b_refine_scores(grid, cube, diagnosed)
+    candidates.append(_metrics("stage_b_refine", refine_pred, truth, refine_s, refine_cost))
 
     return {
         "benchmark": "nationalization_spike_58",
