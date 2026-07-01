@@ -491,6 +491,11 @@ class GFSSource:
             parsed = xr.merge(
                 parsed, compat="override", combine_attrs="override", join="outer"
             )
+        if not any(short in parsed.data_vars for short in self._COVER_SHORTNAMES):
+            cover = self._download_cover(run_dt, fxx)
+            parsed = xr.merge(
+                [parsed, cover], compat="override", combine_attrs="override", join="outer"
+            )
         if download_bytes is not None:
             parsed.attrs[_DOWNLOAD_BYTES_ATTR] = download_bytes
         return parsed

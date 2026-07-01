@@ -203,7 +203,7 @@ def test_download_paths_use_distinct_herbie_cache_namespaces(monkeypatch, tmp_pa
     src._download_surface(run_dt, 6)
     src._prefetch_surface(run_dt, 6)
 
-    assert calls == ["pressure", "cover", "surface", "surface"]
+    assert calls == ["pressure", "cover", "surface", "cover", "surface"]
 
 
 def test_fetch_raises_gfs_unavailable_after_retries(monkeypatch):

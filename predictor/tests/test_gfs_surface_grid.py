@@ -304,3 +304,24 @@ def test_download_surface_records_inventory_byte_ranges(monkeypatch, tmp_path):
 
     # Adjacent messages 1–2 are one 200-byte range; message 4 adds 100 bytes.
     assert grid.download_bytes == 300
+
+
+def test_download_surface_repairs_parse_that_lacks_cover(monkeypatch, tmp_path):
+    class FakeHerbie:
+        def inventory(self, search):
+            return pd.DataFrame({
+                "grib_message": [1],
+                "start_byte": [100],
+                "end_byte": [199],
+            })
+
+        def xarray(self, search):
+            return _surface_ds(drop=("lcc", "mcc", "hcc"))
+
+    src = GFSSource(cache_dir=tmp_path)
+    monkeypatch.setattr(src, "_herbie", lambda *_args, **_kwargs: FakeHerbie())
+    monkeypatch.setattr(src, "_download_cover", lambda run_dt, fxx: _surface_ds(drop=("r2", "vis")))
+
+    ds = src._download_surface(_T0, 6)
+
+    assert {"lcc", "mcc", "hcc", "r2", "vis"}.issubset(ds.data_vars)
