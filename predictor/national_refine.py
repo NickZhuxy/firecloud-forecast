@@ -18,8 +18,11 @@ from datetime import datetime, timezone
 
 import numpy as np
 
+from predictor.clouds import CloudDiagnosisConfig, DEFAULT_CLOUD_CONFIG
 from predictor.fetch import WeatherSnapshot
+from predictor.rules import standard_predictor
 from predictor.spatial import GFS_GRID_RES_DEG, build_sunward_path
+from predictor.sunward_section import score_point_with_cube
 
 REFINE_SUNWARD_DISTANCES_KM: tuple[float, ...] = tuple(float(d) for d in range(0, 801, 50))
 
@@ -118,3 +121,79 @@ def _bbox_cell_count(bbox, res_deg: float = GFS_GRID_RES_DEG) -> int:
     ny = int(math.ceil((lat_max - lat_min) / res_deg)) + 1
     nx = int(math.ceil((lon_max - lon_min) / res_deg)) + 1
     return ny * nx
+
+
+def refine_field(
+    cube_source,
+    lats,
+    lons,
+    screen_probability,
+    event_times,
+    selected_time,
+    valid_times,
+    surface_fields,
+    *,
+    threshold: float = 0.50,
+    tile_deg: float = 5.0,
+    distances_km=REFINE_SUNWARD_DISTANCES_KM,
+    margin_deg: float = 0.5,
+    azimuth_deg: float | None = None,
+    config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
+    aod_fn=None,
+    max_cube_cells: int = 6000,
+) -> RefineResult:
+    """Refine screen candidates (screen >= threshold) with the shared-cube 2-D ray trace.
+
+    Candidates are grouped by (valid-hour index, tile); each group fetches ONE cube
+    covering its members' sunward paths and scores every member against it via
+    score_point_with_cube. Non-candidate cells keep their screen probability.
+    """
+    screen = np.asarray(screen_probability, dtype=float)
+    refined = screen.copy()
+    refined_mask = np.zeros(screen.shape, dtype=bool)
+    candidate_mask = np.isfinite(screen) & (screen >= threshold)
+
+    predictor = standard_predictor(_PlaceholderSource())
+    groups = _candidate_groups(candidate_mask, selected_time, lats, lons, tile_deg)
+
+    cubes_fetched = 0
+    cells_refined = 0
+    for (hour_idx, _tj, _ti), cells in groups.items():
+        bbox = _group_bbox(cells, lats, lons, event_times, azimuth_deg, distances_km, margin_deg)
+        if _bbox_cell_count(bbox) > max_cube_cells:
+            raise ValueError(
+                f"refine cube bbox {bbox} exceeds max_cube_cells={max_cube_cells}; "
+                f"reduce tile_deg or tighten the candidate threshold"
+            )
+        cube = cube_source.fetch_cube(bbox, valid_times[hour_idx])
+        cubes_fetched += 1
+        for j, i in cells:
+            event_time = _event_datetime(event_times[j, i])
+            snapshot = _synthesize_snapshot(surface_fields, j, i, event_time)
+            forecast = score_point_with_cube(
+                predictor,
+                cube,
+                snapshot,
+                float(lats[j]),
+                float(lons[i]),
+                event_time,
+                distances_km=distances_km,
+                azimuth_deg=azimuth_deg,
+                config=config,
+                aod_fn=aod_fn,
+            )
+            refined[j, i] = forecast.probability
+            refined_mask[j, i] = True
+            cells_refined += 1
+
+    spatial_tiles = {(tj, ti) for (_h, tj, ti) in groups}
+    return RefineResult(
+        refined_probability=refined,
+        refined_mask=refined_mask,
+        cells_refined=cells_refined,
+        cubes_fetched=cubes_fetched,
+        tiles=len(spatial_tiles),
+        tile_deg=tile_deg,
+        distances_km=tuple(float(d) for d in distances_km),
+        threshold=threshold,
+    )
