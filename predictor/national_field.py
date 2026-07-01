@@ -15,6 +15,7 @@ import numpy as np
 
 from predictor.grid_score import GridInputs, score_grid
 from predictor.national_physics import NationalPhysicsConfig, build_sunward_screen
+from predictor.national_refine import refine_field
 from predictor.solar_event import SolarEvent
 from predictor.sunset_grid import (
     hourly_valid_times,
@@ -113,6 +114,7 @@ def build_national_field(
     domain_mask=None,
     solar_event=SolarEvent.SUNSET,
     physics_config: NationalPhysicsConfig | None = None,
+    cube_source=None,
 ) -> NationalField:
     """Fetch covering GFS hours and score every cell at its nearest event hour.
 
@@ -225,6 +227,28 @@ def build_national_field(
             **grid_inputs_kwargs,
         )
         probability = score_grid(inputs)
+
+        if config.enabled and config.refine and cube_source is not None:
+            result = refine_field(
+                cube_source,
+                lats,
+                lons,
+                probability,
+                sunsets,
+                selected_time,
+                valid_times,
+                selected_fields,
+                threshold=config.refine_threshold,
+                distances_km=config.refine_distances_km,
+            )
+            probability = result.refined_probability
+            physics["refinement"].update(
+                status="run",
+                cells_refined=result.cells_refined,
+                cubes_fetched=result.cubes_fetched,
+                tiles=result.tiles,
+                tile_deg=result.tile_deg,
+            )
 
         decoded_sizes = [grid.decoded_bytes for grid in grids]
         decoded_input_bytes = sum(decoded_sizes)

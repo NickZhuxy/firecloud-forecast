@@ -387,3 +387,64 @@ def test_domain_mask_excludes_clipped_bbox_corner_times(monkeypatch):
         datetime(2026, 6, 22, 11, 10, tzinfo=timezone.utc),
         datetime(2026, 6, 22, 11, 10, tzinfo=timezone.utc),
     )
+
+
+# ---------- #59 Task 4: wire refine_field into build_national_field ----------
+
+def _refine_cube():
+    from predictor.profiles import AtmosphericCube
+
+    levels = np.array([925.0, 850.0, 700.0, 500.0, 400.0, 300.0])
+    gph = np.array([750.0, 1500.0, 3000.0, 5500.0, 7200.0, 9000.0])
+    temp = np.array([283.0, 278.0, 270.0, 255.0, 245.0, 233.0])
+    q = np.array([3e-3, 2e-3, 1e-3, 3e-4, 1e-4, 5e-5])
+    mid = np.array([0.0, 0.0, 5e-4, 5e-4, 0.0, 0.0])
+    lats = np.arange(18.0, 42.01, 1.0)
+    lons = np.arange(96.0, 122.01, 1.0)
+    nz, ny, nx = levels.size, lats.size, lons.size
+
+    def g(col):
+        return np.broadcast_to(np.asarray(col, float)[:, None, None], (nz, ny, nx)).copy()
+
+    return AtmosphericCube(
+        lats=lats, lons=lons, levels_hpa=levels,
+        temperature_k=g(temp), relative_humidity_pct=g(np.full(nz, 30.0)),
+        specific_humidity_kg_kg=g(q), geopotential_height_m=g(gph),
+        u_wind_m_s=g(np.zeros(nz)), v_wind_m_s=g(np.zeros(nz)),
+        vertical_velocity_pa_s=g(np.zeros(nz)),
+        cloud_water_kg_kg=g(mid), cloud_ice_kg_kg=g(np.zeros(nz)),
+        run_time=_T, valid_time=_T, source_label="gfs-cube@test", retrieved_at=_T, missing=[],
+    )
+
+
+class _FakeCubeSource:
+    def __init__(self, cube):
+        self._cube = cube
+        self.calls = 0
+
+    def fetch_cube(self, bbox, time):
+        self.calls += 1
+        return self._cube
+
+
+def test_refine_runs_with_cube_source_and_updates_metadata():
+    gfs = _FakeGFS(_grid(low=5.0, mid=55.0, high=40.0))
+    src = _FakeCubeSource(_refine_cube())
+    cfg = NationalPhysicsConfig(enabled=True, refine=True, refine_threshold=0.0)
+    field = build_national_field(gfs, _BBOX, _DATE, physics_config=cfg, cube_source=src)
+
+    ref = field.physics["refinement"]
+    assert ref["status"] == "run"
+    assert ref["enabled"] is True
+    assert ref["cells_refined"] >= 1
+    assert ref["cubes_fetched"] == src.calls >= 1
+    assert "tiles" in ref and "tile_deg" in ref
+
+
+def test_refine_no_op_without_cube_source_is_zero_regression():
+    cfg = NationalPhysicsConfig(enabled=True, refine=True)   # refine requested, no cube_source
+    field = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE, physics_config=cfg)
+    assert field.physics["refinement"]["status"] == "configured_not_run"
+
+    baseline = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE)   # screen-only default
+    np.testing.assert_array_equal(field.probability, baseline.probability)
