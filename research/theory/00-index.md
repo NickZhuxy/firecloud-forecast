@@ -5,6 +5,8 @@
 > 🎯 **权威目标模型**：`research/人工火烧云预报速成（长三角适用）.pdf`（外部作者手册）含完整的火烧云几何模型、消光/颜色物理与操作化预报流程，**权威性高于本目录的 claude-draft 笔记**——是项目逆向逼近的目标。
 >
 > 📋 **[single-point-fidelity-audit.md](single-point-fidelity-audit.md)** — Spike #56 单点物理保真度审计：对照上述手册逐环节列出"当前简化 vs 真实物理"的差距，给出有优先级的拟真 backlog（几何/云/气溶胶/散射四类），供 Epic #54 的 #57 立项。**优先级待 Nick 复核定稿。**
+>
+> 🧭 **[intelligent-nationalization-spike-58.md](intelligent-nationalization-spike-58.md)** — Spike #58 智能全国化方案研究：用离线 benchmark 比较 overview、1-D 物理筛选、粗 2-D 光追、锚点复用、分层算力预算，推荐 #59 采用"1-D physics screen + 50 km 2-D refinement + satellite nowcast"路线。**不改生产全国代码。**
 
 ## 按因子推导（#57 拟真增强）
 
