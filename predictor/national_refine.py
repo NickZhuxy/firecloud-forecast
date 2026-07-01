@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 import numpy as np
 
 from predictor.fetch import WeatherSnapshot
+from predictor.spatial import GFS_GRID_RES_DEG, build_sunward_path
 
 REFINE_SUNWARD_DISTANCES_KM: tuple[float, ...] = tuple(float(d) for d in range(0, 801, 50))
 
@@ -75,3 +76,45 @@ def _synthesize_snapshot(surface_fields: dict, j: int, i: int, event_time: datet
         visibility_m=_optional(surface_fields, "visibility_m", j, i),
         aerosol_optical_depth=_optional(surface_fields, "aod", j, i),
     )
+
+
+def _candidate_groups(candidate_mask, selected_time, lats, lons, tile_deg):
+    groups: dict[tuple[int, int, int], list[tuple[int, int]]] = {}
+    ny, nx = candidate_mask.shape
+    for j in range(ny):
+        for i in range(nx):
+            if not candidate_mask[j, i]:
+                continue
+            key = (
+                int(selected_time[j, i]),
+                math.floor(float(lats[j]) / tile_deg),
+                math.floor(float(lons[i]) / tile_deg),
+            )
+            groups.setdefault(key, []).append((j, i))
+    return groups
+
+
+def _group_bbox(cells, lats, lons, event_times, azimuth_deg, distances_km, margin_deg):
+    lat_min = lon_min = math.inf
+    lat_max = lon_max = -math.inf
+    for j, i in cells:
+        path = build_sunward_path(
+            float(lats[j]),
+            float(lons[i]),
+            _event_datetime(event_times[j, i]),
+            azimuth_deg=azimuth_deg,
+            distances_km=distances_km,
+        )
+        for s in path.samples:
+            lat_min = min(lat_min, s.lat)
+            lat_max = max(lat_max, s.lat)
+            lon_min = min(lon_min, s.lon)
+            lon_max = max(lon_max, s.lon)
+    return (lat_min - margin_deg, lat_max + margin_deg, lon_min - margin_deg, lon_max + margin_deg)
+
+
+def _bbox_cell_count(bbox, res_deg: float = GFS_GRID_RES_DEG) -> int:
+    lat_min, lat_max, lon_min, lon_max = bbox
+    ny = int(math.ceil((lat_max - lat_min) / res_deg)) + 1
+    nx = int(math.ceil((lon_max - lon_min) / res_deg)) + 1
+    return ny * nx
