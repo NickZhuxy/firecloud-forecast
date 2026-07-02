@@ -27,6 +27,7 @@ from matplotlib.ticker import FuncFormatter
 
 from predictor.gfs import GFSSource
 from predictor.national_field import NationalField, build_national_field
+from predictor.national_physics import NationalPhysicsConfig
 from predictor.solar_event import SolarEvent, spec_for
 
 PRODUCT_SCHEMA_VERSION = "v3"
@@ -575,16 +576,28 @@ def generate_product(
     dpi: int = 160,
     source=None,
     solar_event: SolarEvent | str = SolarEvent.SUNSET,
+    refine: bool = True,
 ) -> ProductArtifacts:
-    """Fetch, score, render and save one national China firecloud product (#60)."""
+    """Fetch, score, render and save one national China firecloud product (#60).
+
+    Stage B refinement runs by default (#59): the ONE shared source doubles as
+    ``cube_source`` so every same-cycle tile reuses a single decoded pressure
+    dataset (download ≈ 210 MB × distinct cycles, tile-independent). A source
+    without ``fetch_cube`` (test fakes) degrades to the screen-only
+    zero-regression path.
+    """
     context = load_map_context()
     south, west, north, east = CN_BBOX
+    src = source or GFSSource()
+    cube_source = src if (refine and hasattr(src, "fetch_cube")) else None
     field = build_national_field(
-        source or GFSSource(),
+        src,
         (south, north, west, east),
         target_date,
         domain_mask=lambda lats, lons: geometry_mask(context.country, lats, lons),
         solar_event=solar_event,
+        physics_config=NationalPhysicsConfig(enabled=True, refine=refine),
+        cube_source=cube_source,
     )
     return save_product(field, target_date, output_dir, context, dpi=dpi, solar_event=solar_event)
 
