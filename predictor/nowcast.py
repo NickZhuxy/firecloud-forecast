@@ -146,7 +146,70 @@ def apply_nowcast(
     )
 
 
+def _wrap_invalid_mask(shape, displacement_deg, lats, lons) -> np.ndarray:
+    """Cells whose advected source wrapped around ``np.roll``'s boundary.
+
+    ``nowcast_correction`` advects with a periodic roll; at the field edges the
+    "upstream" data comes from the opposite side of the grid — wrong data, so
+    those strips keep the model value and stay out of ``corrected_mask``.
+    """
+    du, dv = displacement_deg
+    dlon = float(lons[1] - lons[0])
+    dlat = float(lats[1] - lats[0])
+    dcol = int(round(du / dlon))
+    drow = int(round(dv / dlat))
+    invalid = np.zeros(shape, dtype=bool)
+    if dcol > 0:
+        invalid[:, :dcol] = True
+    elif dcol < 0:
+        invalid[:, dcol:] = True
+    if drow > 0:
+        invalid[:drow, :] = True
+    elif drow < 0:
+        invalid[drow:, :] = True
+    return invalid
+
+
 def _apply_banded_correction(
     prob, lats, lons, event_times, eligible, motion, now, config, lead_hr_range
 ) -> NowcastStageResult:
-    raise NotImplementedError("Task 2")  # pragma: no cover - replaced next task
+    """One bounded correction per event hour, written back to that band only.
+
+    Eligible cells within one product span at most ~3 hourly bands (window is
+    2 h); each band advects with its own lead so east-China cells minutes from
+    sunset are nudged less than west-China cells two hours out.
+    """
+    from predictor.cloud_motion import nowcast_correction
+
+    events_s = np.asarray(event_times).astype("datetime64[s]").astype("int64")
+    band_hours = (events_s + 1800) // 3600      # nearest hour, epoch-hours
+    now_s = int(_as_utc(now).timestamp())
+
+    corrected = prob.copy()
+    corrected_mask = np.zeros(prob.shape, dtype=bool)
+    for band in np.unique(band_hours[eligible]):
+        band_mask = eligible & (band_hours == band)
+        lead_hr = max(0.0, (int(band) * 3600 - now_s) / 3600.0)
+        corr = nowcast_correction(prob, lats, lons, motion, lead_hr, config.motion)
+        if corr.source != "satellite":
+            continue
+        write = band_mask & ~_wrap_invalid_mask(
+            prob.shape, corr.displacement_deg, lats, lons
+        )
+        corrected[write] = corr.corrected_field[write]
+        corrected_mask |= write
+
+    if not corrected_mask.any():
+        return _passthrough(
+            prob, "correction degenerate (edge guard removed every cell)",
+            motion=motion, lead_hr_range=lead_hr_range,
+        )
+    return NowcastStageResult(
+        corrected_probability=corrected,
+        corrected_mask=corrected_mask,
+        motion=motion,
+        applied=True,
+        source="satellite",
+        reason=f"bounded {motion.regime} correction (conf {motion.confidence:.1f})",
+        lead_hr_range=lead_hr_range,
+    )

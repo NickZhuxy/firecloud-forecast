@@ -82,3 +82,90 @@ def test_regime_none_passes_through():
     assert res.applied is False
     assert len(sat.calls) == 2                    # 确实取了 2 帧
     np.testing.assert_array_equal(res.corrected_probability, _prob())
+
+
+# ---- Task 2: banded correction, ascending lats, edge guard ----
+
+
+def _shifted_frames():
+    lats = np.arange(28.0, 31.0, 0.25)
+    lons = np.arange(116.0, 119.0, 0.25)
+    ny, nx = lats.size, lons.size
+    warm, cold = 290.0, 250.0
+    bt0 = np.full((ny, nx), warm); bt0[:, 4:7] = cold
+    bt1 = np.full((ny, nx), warm); bt1[:, 5:8] = cold
+    t0 = _NOW - timedelta(minutes=10)
+
+    def mk(bt, t):
+        return BrightnessTempField(
+            lats=lats, lons=lons, brightness_temp_k=bt,
+            observation_time=t, band="B13", source_label="t", retrieved_at=_NOW,
+        )
+
+    return lats, lons, mk(bt0, t0), mk(bt1, _NOW)
+
+
+def _grid_times(shape, offset_hr):
+    t = np.datetime64(int((_NOW + timedelta(hours=offset_hr)).timestamp()), "s")
+    return np.full(shape, t)
+
+
+def test_correction_nudges_toward_advected_position():
+    lats, lons, f0, f1 = _shifted_frames()
+    prob = np.zeros((lats.size, lons.size)); prob[:, 5] = 1.0
+    times = _grid_times(prob.shape, 1.0)
+    sat = _RecordingSat(frames=[f0, f1])
+    res = apply_nowcast(prob, lats, lons, times, sat, now=_NOW)
+
+    assert res.applied is True and res.source == "satellite"
+    assert res.motion.regime == "advective"
+    # 东移 1.5°/hr × 1h(受 2° 上限内)→ dcol=+6;混合权 = confidence。
+    advected = np.roll(prob, 6, axis=1)
+    expected = prob + res.motion.confidence * (advected - prob)
+    inner = np.s_[:, 6:]                          # 西侧 6 列是回卷条带,另测
+    np.testing.assert_allclose(res.corrected_probability[inner], expected[inner])
+    assert res.corrected_mask[:, 6:].any()
+    assert res.lead_hr_range == (1.0, 1.0)
+
+
+def test_wrapped_edge_strip_reverts_to_model():
+    lats, lons, f0, f1 = _shifted_frames()
+    prob = np.full((lats.size, lons.size), 0.7)
+    times = _grid_times(prob.shape, 1.0)
+    res = apply_nowcast(prob, lats, lons, times, _RecordingSat(frames=[f0, f1]), now=_NOW)
+    # 东移 dcol=+6 → 西侧 6 列是回卷数据:还原为模式值且不进 mask。
+    np.testing.assert_array_equal(res.corrected_probability[:, :6], prob[:, :6])
+    assert not res.corrected_mask[:, :6].any()
+
+
+def test_only_eligible_band_cells_change():
+    lats, lons, f0, f1 = _shifted_frames()
+    prob = np.full((lats.size, lons.size), 0.7)
+    times = _grid_times(prob.shape, 5.0)          # 默认全部窗口外
+    near = np.datetime64(int((_NOW + timedelta(hours=1)).timestamp()), "s")
+    times[:, :6] = near                            # 只有西半有资格
+    res = apply_nowcast(prob, lats, lons, times, _RecordingSat(frames=[f0, f1]), now=_NOW)
+    assert not res.corrected_mask[:, 6:].any()     # 窗口外的格子不动
+    np.testing.assert_array_equal(res.corrected_probability[:, 6:], prob[:, 6:])
+
+
+def test_ascending_latitude_direction_is_correct():
+    # 北移帧(dv>0);升序 lats 下订正必须把场向北(行号增大)搬。
+    lats = np.arange(28.0, 31.0, 0.25)
+    lons = np.arange(116.0, 119.0, 0.25)
+    ny, nx = lats.size, lons.size
+    bt0 = np.full((ny, nx), 290.0); bt0[4:7, :] = 250.0
+    bt1 = np.full((ny, nx), 290.0); bt1[5:8, :] = 250.0
+    t0 = _NOW - timedelta(minutes=10)
+    f0 = BrightnessTempField(lats=lats, lons=lons, brightness_temp_k=bt0,
+                             observation_time=t0, band="B13", source_label="t",
+                             retrieved_at=_NOW)
+    f1 = BrightnessTempField(lats=lats, lons=lons, brightness_temp_k=bt1,
+                             observation_time=_NOW, band="B13", source_label="t",
+                             retrieved_at=_NOW)
+    prob = np.zeros((ny, nx)); prob[5, :] = 1.0
+    times = _grid_times(prob.shape, 1.0)
+    res = apply_nowcast(prob, lats, lons, times, _RecordingSat(frames=[f0, f1]), now=_NOW)
+    assert res.applied
+    j = 5 + 6                                     # 北移 6 行
+    assert res.corrected_probability[j, :].mean() > prob[j, :].mean()
