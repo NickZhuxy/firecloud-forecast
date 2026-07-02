@@ -65,7 +65,7 @@ def _fake_artifact(tmp_path, name):
 def test_main_generates_one_national_product_per_event(monkeypatch, tmp_path):
     calls = []
 
-    def fake_generate(target_date, output_dir, *, dpi, source, solar_event):
+    def fake_generate(target_date, output_dir, *, dpi, source, solar_event, refine):
         calls.append((target_date, Path(output_dir), solar_event))
         return _fake_artifact(tmp_path, f"national-{solar_event.value}")
 
@@ -86,7 +86,7 @@ def test_main_requires_lat_and_lon_together():
 def test_main_with_coords_generates_both_national_and_local(monkeypatch, tmp_path):
     national, local = [], []
 
-    def fake_generate(target_date, output_dir, *, dpi, source, solar_event):
+    def fake_generate(target_date, output_dir, *, dpi, source, solar_event, refine):
         national.append(solar_event)
         return _fake_artifact(tmp_path, f"national-{solar_event.value}")
 
@@ -104,3 +104,18 @@ def test_main_with_coords_generates_both_national_and_local(monkeypatch, tmp_pat
     assert rc == 0
     assert national == [SolarEvent.SUNSET]                          # national ran
     assert local == [(31.2, 121.5, SolarEvent.SUNSET, 120.0, 0.2)]  # local ran with flags
+
+
+def test_no_refine_flag_propagates(monkeypatch, tmp_path):
+    seen = []
+
+    def fake_generate(target_date, output_dir, *, dpi, source, solar_event, refine):
+        seen.append(refine)
+        return _fake_artifact(tmp_path, f"national-{solar_event.value}")
+
+    monkeypatch.setattr(cli_mod, "generate_product", fake_generate)
+    main(["--date", "2026-06-29", "--event", "sunset", "--output", str(tmp_path)])
+    main(["--date", "2026-06-29", "--event", "sunset", "--output", str(tmp_path),
+          "--no-refine"])
+
+    assert seen == [True, False]

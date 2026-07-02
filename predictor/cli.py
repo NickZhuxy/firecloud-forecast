@@ -94,6 +94,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="output base directory; products land in {output}/{date}/ (default: output)",
     )
     parser.add_argument("--dpi", type=int, default=160)
+    parser.add_argument(
+        "--no-refine", action="store_true",
+        help="skip Stage B ray-trace refinement for the national product "
+             "(first refined run downloads ~210 MB of pressure data per sunset "
+             "hour; later runs hit the disk cache)",
+    )
     return parser
 
 
@@ -122,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         if product.scope == "national":
             artifacts = generate_product(
                 target_date, product.output_dir, dpi=args.dpi, source=None,
-                solar_event=product.solar_event,
+                solar_event=product.solar_event, refine=not args.no_refine,
             )
             print(f"image    : {artifacts.image_path}")
             print(f"metadata : {artifacts.metadata_path}")
