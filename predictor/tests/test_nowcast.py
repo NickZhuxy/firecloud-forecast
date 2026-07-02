@@ -92,8 +92,9 @@ def _shifted_frames():
     lons = np.arange(116.0, 119.0, 0.25)
     ny, nx = lats.size, lons.size
     warm, cold = 290.0, 250.0
-    bt0 = np.full((ny, nx), warm); bt0[:, 4:7] = cold
-    bt1 = np.full((ny, nx), warm); bt1[:, 5:8] = cold
+    # 双向有界的云块——竖直通条会让互相关在垂直方向简并(任意 dy 等价)。
+    bt0 = np.full((ny, nx), warm); bt0[4:9, 4:7] = cold
+    bt1 = np.full((ny, nx), warm); bt1[4:9, 5:8] = cold
     t0 = _NOW - timedelta(minutes=10)
 
     def mk(bt, t):
@@ -154,8 +155,8 @@ def test_ascending_latitude_direction_is_correct():
     lats = np.arange(28.0, 31.0, 0.25)
     lons = np.arange(116.0, 119.0, 0.25)
     ny, nx = lats.size, lons.size
-    bt0 = np.full((ny, nx), 290.0); bt0[4:7, :] = 250.0
-    bt1 = np.full((ny, nx), 290.0); bt1[5:8, :] = 250.0
+    bt0 = np.full((ny, nx), 290.0); bt0[4:7, 4:9] = 250.0
+    bt1 = np.full((ny, nx), 290.0); bt1[5:8, 4:9] = 250.0
     t0 = _NOW - timedelta(minutes=10)
     f0 = BrightnessTempField(lats=lats, lons=lons, brightness_temp_k=bt0,
                              observation_time=t0, band="B13", source_label="t",
