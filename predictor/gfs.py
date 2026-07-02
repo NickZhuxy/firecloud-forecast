@@ -206,6 +206,33 @@ def _is_empty_xarray_selection_error(exc: ValueError) -> bool:
     return "zero-size array" in message and "reduction operation" in message
 
 
+_GRIB_CHATTER_SILENCED = False
+
+
+def _silence_grib_chatter() -> None:
+    """Suppress the two recurring third-party warnings of every GRIB fetch.
+
+    Targeted by message so anything unexpected still surfaces:
+    - herbie warns "Will not remove GRIB file…" whenever it parses an
+      already-cached subset — which is our normal path, not a problem;
+    - cfgrib's internal ``xr.merge`` triggers xarray's compat-default
+      FutureWarning once per opened dataset (our own merges pass ``compat``
+      explicitly and never warn).
+    Herbie's prints ("✅ Found…", per-message download rows) are silenced
+    separately via ``Herbie(verbose=False)`` in ``_herbie``.
+    """
+    import warnings
+
+    warnings.filterwarnings(
+        "ignore", message=r"Will not remove GRIB file"
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"In a future version of xarray the default value for compat",
+        category=FutureWarning,
+    )
+
+
 class GFSSource:
     """Fetch GFS 0.25° pressure-level profiles and region cubes."""
 
@@ -237,6 +264,12 @@ class GFSSource:
         self.cache_dir = Path(cache_dir or self.DEFAULT_CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.levels = tuple(levels) if levels else self.DEFAULT_LEVELS_HPA
+        # Install once per process, before any download threads exist
+        # (warnings filters are global, mutating them from workers races).
+        global _GRIB_CHATTER_SILENCED
+        if not _GRIB_CHATTER_SILENCED:
+            _silence_grib_chatter()
+            _GRIB_CHATTER_SILENCED = True
         # Per-instance in-memory caches keyed by (run_dt, fxx), mirroring
         # HRRRSource: avoids re-parsing for repeated same-cycle queries.
         self._ds_cache: dict[tuple[datetime, int], xr.Dataset] = {}
@@ -475,13 +508,21 @@ class GFSSource:
         from herbie import Herbie
 
         save_dir = self.cache_dir / cache_namespace
-        save_dir.mkdir(parents=True, exist_ok=True)
+        # Pre-create the dated subdir herbie writes into: its download() emits
+        # an ungated "Created directory" print when the dir is missing.
+        (save_dir / "gfs" / f"{run_dt:%Y%m%d}").mkdir(parents=True, exist_ok=True)
         return Herbie(
             run_dt.strftime("%Y-%m-%d %H:%M"),
             model="gfs",
             product="pgrb2.0p25",
             fxx=fxx,
             save_dir=save_dir,
+            # Silence herbie's per-fetch chatter ("✅ Found …", subset download
+            # rows, "Note: Returning a list of …") — a national run makes
+            # dozens of fetches and each would print several lines into the
+            # product output. Meaningful state still reaches the user via our
+            # own logger (retries, truncation heals, batch progress).
+            verbose=False,
         )
 
     def _download_dataset(self, run_dt: datetime, fxx: int) -> xr.Dataset:

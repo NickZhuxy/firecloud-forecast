@@ -419,3 +419,66 @@ def test_truncated_cover_subset_is_deleted_and_redownloaded(monkeypatch, tmp_pat
     assert path.stat().st_size == _SubsetHerbie.EXPECTED_BYTES
     assert fake.download_calls == 2   # skip-existing, then real re-download
     assert fake.xarray_calls == 1     # parsed only after verification passed
+
+
+# ---- download chatter suppression (CLI noise) ----
+#
+# A firecloud CLI run used to spray herbie's verbose prints ("✅ Found …",
+# per-message subset download rows, "Note: Returning a list of …") plus two
+# recurring third-party warnings (herbie's "Will not remove GRIB file…",
+# cfgrib's xr.merge FutureWarning) over the product output. The Herbie handle
+# must be constructed quiet, and GFSSource must install *targeted* warning
+# filters — everything else keeps warning normally.
+
+
+def test_herbie_handle_is_quiet_and_predates_date_dir(monkeypatch, tmp_path):
+    captured = {}
+
+    class StubHerbie:
+        def __init__(self, date, **kwargs):
+            captured.update(kwargs, date=date)
+
+    import herbie
+
+    monkeypatch.setattr(herbie, "Herbie", StubHerbie)
+    src = GFSSource(cache_dir=tmp_path)
+    src._herbie(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6,
+                cache_namespace="pressure")
+
+    assert captured["verbose"] is False
+    # The dated subdir herbie would otherwise create (with an ungated
+    # "Created directory" print) must already exist.
+    assert (tmp_path / "pressure" / "gfs" / "20260623").is_dir()
+
+
+def test_grib_chatter_filters_are_targeted():
+    import warnings
+
+    from predictor import gfs as gfs_module
+
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        gfs_module._silence_grib_chatter()
+        warnings.warn("Will not remove GRIB file because it previously existed.")
+        warnings.warn(
+            "In a future version of xarray the default value for compat will "
+            "change from compat='no_conflicts' to compat='override'.",
+            FutureWarning,
+        )
+        warnings.warn("unrelated warning stays visible")
+
+    assert [str(w.message) for w in rec] == ["unrelated warning stays visible"]
+
+
+def test_gfssource_init_installs_chatter_filters(tmp_path):
+    import warnings
+
+    from predictor import gfs as gfs_module
+
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        gfs_module._GRIB_CHATTER_SILENCED = False   # fresh process state
+        GFSSource(cache_dir=tmp_path)
+        warnings.warn("Will not remove GRIB file because it previously existed.")
+
+    assert rec == []
