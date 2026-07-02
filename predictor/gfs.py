@@ -157,6 +157,9 @@ class GFSUnavailable(RuntimeError):
 _TRANSIENT_NETWORK_MARKERS = (
     "timed out", "timeout", "connection", "reset by peer",
     "temporarily unavailable", "throttl", " 500", " 502", " 503", " 504",
+    # A truncated subset download (verified against the idx byte count) is a
+    # dropped transfer: the cycle exists, so re-downloading is the right move.
+    "truncated",
 )
 
 
@@ -457,13 +460,33 @@ class GFSSource:
     def _download_dataset(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         """Download + parse the GFS pressure-level subset via Herbie (network)."""
         H = self._herbie(run_dt, fxx, cache_namespace="pressure")
-        # Subset to our variables on pressure (mb) levels. cfgrib may split into
-        # several datasets by step/type; merge into one isobaric dataset.
-        # join="outer" is explicit (not the deprecated default): GFS variables
-        # like CLWMR/ICMR are reported on fewer levels than TMP, so the union of
-        # levels must be kept (missing levels NaN-filled), and a future xarray
-        # default of join="exact" would otherwise raise on the mismatch.
         search = r":(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLMR|CLWMR|ICMR):\d+ mb:"
+        # Download to disk first (a no-op when the subset is already cached),
+        # then verify the byte count against the idx inventory BEFORE parsing.
+        # Herbie fetches one HTTP range per message group and a dropped
+        # connection leaves the partial file on disk; because both download()
+        # and xarray() treat any existing file as cached, every later attempt
+        # would silently parse that stub (whole level blocks missing) forever.
+        # A mismatched file is deleted and raised with a *transient* marker so
+        # _retry_transient re-downloads it cleanly.
+        H.download(search)
+        expected = _subset_payload_bytes(H, search)
+        if expected is not None:
+            local = H.get_localFilePath(search)
+            actual = local.stat().st_size if local.exists() else None
+            if actual != expected:
+                if local.exists():
+                    local.unlink()
+                raise GFSUnavailable(
+                    f"GFS pressure subset f{fxx:02d} truncated "
+                    f"({actual}/{expected} bytes) — deleted for re-download"
+                )
+        # cfgrib may split into several datasets by step/type; merge into one
+        # isobaric dataset. join="outer" is explicit (not the deprecated
+        # default): GFS variables like CLWMR/ICMR are reported on fewer levels
+        # than TMP, so the union of levels must be kept (missing levels
+        # NaN-filled), and a future xarray default of join="exact" would
+        # otherwise raise on the mismatch.
         parsed = H.xarray(search)
         if isinstance(parsed, list):
             return xr.merge(

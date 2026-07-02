@@ -215,3 +215,112 @@ def test_fetch_raises_gfs_unavailable_after_retries(monkeypatch):
     monkeypatch.setattr(src, "_download_dataset", always_fail)
     with pytest.raises(GFSUnavailable):
         src.fetch_profile(30.0, 120.0, datetime(2026, 6, 23, 6, tzinfo=timezone.utc))
+
+
+# ---- pressure-subset completeness verification (#59 live validation bug) ----
+#
+# Herbie downloads a regex subset as one HTTP range request per message group
+# and, on a dropped connection, leaves the partial file on disk; every later
+# call (in-process retry or a whole new run) sees the file exists and silently
+# parses the stub — missing entire level blocks. _download_dataset must verify
+# the byte count against the idx inventory and delete-and-retry on mismatch.
+
+
+class _SubsetHerbie:
+    """Fake Herbie: inventory-priced subset download onto a real tmp file."""
+
+    EXPECTED_BYTES = 300  # groups: msgs [1,2] → 0..199, msg [4] → 300..399
+
+    def __init__(self, path, payload_sizes, has_inventory=True):
+        self.path = path
+        self.payload_sizes = list(payload_sizes)  # bytes written per download call
+        self.has_inventory = has_inventory
+        self.download_calls = 0
+        self.xarray_calls = 0
+
+    def inventory(self, search):
+        if not self.has_inventory:
+            raise AttributeError("no idx available")
+        import pandas as pd
+
+        return pd.DataFrame(
+            {
+                "grib_message": [1, 2, 4],
+                "start_byte": [0.0, 100.0, 300.0],
+                "end_byte": [99.0, 199.0, 399.0],
+            }
+        )
+
+    def download(self, search):
+        self.download_calls += 1
+        if self.path.exists():          # mimic herbie: existing subset → skip
+            return self.path
+        size = self.payload_sizes.pop(0)
+        self.path.write_bytes(b"\0" * size)
+        return self.path
+
+    def get_localFilePath(self, search):
+        return self.path
+
+    def xarray(self, search):
+        self.xarray_calls += 1
+        return _synthetic_gfs_ds()
+
+
+def _patched_source(monkeypatch, tmp_path, fake):
+    src = GFSSource(cache_dir=tmp_path)
+    src.SURFACE_RETRY_BACKOFF_S = 0.0
+    monkeypatch.setattr(
+        src, "_herbie", lambda run_dt, fxx, *, cache_namespace: fake
+    )
+    return src
+
+
+def test_truncated_cached_subset_is_deleted_and_redownloaded(monkeypatch, tmp_path):
+    """A stale partial file from an earlier crash must not poison the cache."""
+    path = tmp_path / "subset_dead__gfs.f006"
+    path.write_bytes(b"\0" * 37)                      # poisoned leftover
+    fake = _SubsetHerbie(path, payload_sizes=[300])   # re-download is complete
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    ds = src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+
+    assert "t" in ds.data_vars
+    assert path.stat().st_size == _SubsetHerbie.EXPECTED_BYTES
+    assert fake.download_calls == 2   # skip-existing, then real re-download
+    assert fake.xarray_calls == 1     # parsed only after verification passed
+
+
+def test_persistently_truncated_subset_fails_loud_and_leaves_no_stub(
+    monkeypatch, tmp_path
+):
+    """Every attempt truncates → loud GFSUnavailable, no poisoned file left."""
+    path = tmp_path / "subset_dead__gfs.f006"
+    fake = _SubsetHerbie(path, payload_sizes=[37, 37, 37])
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    with pytest.raises(GFSUnavailable, match="truncated"):
+        src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+
+    assert not path.exists()          # never left behind to poison later runs
+    assert fake.download_calls == src.SURFACE_DOWNLOAD_ATTEMPTS
+    assert fake.xarray_calls == 0     # a truncated file is never parsed
+
+
+def test_truncation_error_is_classified_transient():
+    from predictor.gfs import _is_transient_network_error
+
+    exc = GFSUnavailable("GFS pressure subset f06 truncated (37/300 bytes)")
+    assert _is_transient_network_error(exc)
+
+
+def test_subset_without_inventory_skips_verification(monkeypatch, tmp_path):
+    """No idx (e.g. a stub source) → parse as before, no crash."""
+    path = tmp_path / "subset_dead__gfs.f006"
+    fake = _SubsetHerbie(path, payload_sizes=[37], has_inventory=False)
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    ds = src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+
+    assert "t" in ds.data_vars
+    assert fake.xarray_calls == 1
