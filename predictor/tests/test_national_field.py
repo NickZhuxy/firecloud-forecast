@@ -448,3 +448,19 @@ def test_refine_no_op_without_cube_source_is_zero_regression():
 
     baseline = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE)   # screen-only default
     np.testing.assert_array_equal(field.probability, baseline.probability)
+
+
+def test_refine_exposes_refined_mask():
+    gfs = _FakeGFS(_grid(low=5.0, mid=55.0, high=40.0))
+    src = _FakeCubeSource(_refine_cube())
+    cfg = NationalPhysicsConfig(enabled=True, refine=True, refine_threshold=0.0)
+    field = build_national_field(gfs, _BBOX, _DATE, physics_config=cfg, cube_source=src)
+
+    assert field.refined_mask is not None
+    assert field.refined_mask.shape == field.probability.shape
+    assert int(field.refined_mask.sum()) == field.physics["refinement"]["cells_refined"]
+
+
+def test_refined_mask_is_none_without_refine():
+    field = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE)
+    assert field.refined_mask is None

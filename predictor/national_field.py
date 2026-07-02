@@ -42,6 +42,9 @@ class NationalField:
     runtime_s: float
     peak_mem_mb: float
     physics: dict | None = None
+    # (ny,nx) bool — cells whose probability came from the Stage B ray trace;
+    # None until refinement actually runs (metadata/render distinguish levels).
+    refined_mask: np.ndarray | None = None
 
 
 def _finite(arr: np.ndarray, default: float) -> np.ndarray:
@@ -184,6 +187,7 @@ def build_national_field(
             "visibility_m": _finite(select("visibility_m"), 25000.0),
         }
         physics = None
+        refined_mask = None
         grid_inputs_kwargs = {}
         config = physics_config or NationalPhysicsConfig()
         if config.enabled:
@@ -242,6 +246,7 @@ def build_national_field(
                 distances_km=config.refine_distances_km,
             )
             probability = result.refined_probability
+            refined_mask = result.refined_mask
             physics["refinement"].update(
                 status="run",
                 cells_refined=result.cells_refined,
@@ -291,6 +296,7 @@ def build_national_field(
             runtime_s=runtime_s,
             peak_mem_mb=peak_mem_mb,
             physics=physics,
+            refined_mask=refined_mask,
         )
     finally:
         if trace:
