@@ -478,3 +478,26 @@ def test_refine_metadata_reports_cap_skips():
     assert ref["cells_refined"] == 3
     assert ref["cells_skipped"] >= 1
     assert int(field.refined_mask.sum()) == 3
+
+
+def test_refine_metadata_reports_cube_download_bytes():
+    gfs = _FakeGFS(_grid(low=5.0, mid=55.0, high=40.0))
+
+    class _AccountingCubeSource(_FakeCubeSource):
+        def __init__(self, cube):
+            super().__init__(cube)
+            self.network_bytes = {"pressure": 0}
+
+        def fetch_cube(self, bbox, time):
+            self.network_bytes["pressure"] += 1000
+            return super().fetch_cube(bbox, time)
+
+    src = _AccountingCubeSource(_refine_cube())
+    cfg = NationalPhysicsConfig(enabled=True, refine=True, refine_threshold=0.0)
+    field = build_national_field(gfs, _BBOX, _DATE, physics_config=cfg, cube_source=src)
+    ref = field.physics["refinement"]
+    assert ref["cube_download_bytes"] == src.calls * 1000
+
+    plain = _FakeCubeSource(_refine_cube())   # no network_bytes attribute
+    field = build_national_field(gfs, _BBOX, _DATE, physics_config=cfg, cube_source=plain)
+    assert field.physics["refinement"]["cube_download_bytes"] is None
