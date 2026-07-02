@@ -400,6 +400,24 @@ class GFSSource:
         self._ds_cache[key] = ds
         return ds
 
+    def release_cube(self, valid_time: datetime) -> int:
+        """Drop decoded pressure datasets for one valid hour from memory.
+
+        A decoded global dataset is ~300 MB resident; the national refine walks
+        several sunset hours and would otherwise keep every one alive until the
+        product finishes. Matching by ``run + fxx == valid`` also catches
+        entries loaded through the cycle fallback. The on-disk GRIB cache is
+        untouched — a later fetch re-parses without re-downloading.
+        """
+        valid_utc = _as_utc(valid_time)
+        keys = [
+            key for key in self._ds_cache
+            if key[0] + timedelta(hours=key[1]) == valid_utc
+        ]
+        for key in keys:
+            del self._ds_cache[key]
+        return len(keys)
+
     def _load_cover(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         key = (run_dt, fxx)
         cached = self._cover_cache.get(key)

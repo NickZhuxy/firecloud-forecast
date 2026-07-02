@@ -562,3 +562,18 @@ def test_network_bytes_counts_downloads_not_cache_hits(monkeypatch, tmp_path):
     src._ds_cache.clear()   # force a re-parse; the complete file is on disk
     src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
     assert src.network_bytes["pressure"] == _SubsetHerbie.EXPECTED_BYTES
+
+
+def test_release_cube_pops_matching_datasets(monkeypatch, tmp_path):
+    src = GFSSource(cache_dir=tmp_path)
+    run = datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
+    older = datetime(2026, 6, 22, 18, tzinfo=timezone.utc)
+    ds = _synthetic_gfs_ds()
+    src._ds_cache[(run, 6)] = ds        # valid 06Z via 00Z+f06
+    src._ds_cache[(older, 12)] = ds     # same valid hour via fallback cycle
+    src._ds_cache[(run, 9)] = ds        # a different valid hour — must survive
+
+    released = src.release_cube(datetime(2026, 6, 23, 6, tzinfo=timezone.utc))
+
+    assert released == 2
+    assert list(src._ds_cache) == [(run, 9)]

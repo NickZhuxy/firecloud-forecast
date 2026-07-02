@@ -190,7 +190,16 @@ def refine_field(
 
     cubes_fetched = 0
     cells_refined = 0
-    for (hour_idx, _tj, _ti), cells in groups.items():
+    # Hour-major order: all of one valid hour's tile groups run back-to-back so
+    # the hour's decoded dataset (~300 MB resident) can be released before the
+    # next hour loads — peak memory stays ~one dataset instead of one per hour.
+    # (Also makes the processing order fully deterministic.)
+    release = getattr(cube_source, "release_cube", None)
+    previous_hour: int | None = None
+    for (hour_idx, _tj, _ti), cells in sorted(groups.items(), key=lambda kv: kv[0]):
+        if release is not None and previous_hour is not None and hour_idx != previous_hour:
+            release(valid_times[previous_hour])
+        previous_hour = hour_idx
         bbox = _group_bbox(cells, lats, lons, event_times, azimuth_deg, distances_km, margin_deg)
         if _bbox_cell_count(bbox) > max_cube_cells:
             raise ValueError(
@@ -217,6 +226,9 @@ def refine_field(
             refined[j, i] = forecast.probability
             refined_mask[j, i] = True
             cells_refined += 1
+
+    if release is not None and previous_hour is not None:
+        release(valid_times[previous_hour])
 
     spatial_tiles = {(tj, ti) for (_h, tj, ti) in groups}
     return RefineResult(
