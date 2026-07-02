@@ -28,6 +28,11 @@ class NationalPhysicsConfig:
     refine: bool = False
     refine_threshold: float = 0.50
     refine_distances_km: tuple[float, ...] = tuple(float(d) for d in range(0, 801, 50))
+    # Cost cap for the national product: at most this many candidates run the
+    # full ray trace per field (highest screen probability first; the rest keep
+    # their screen value and are counted in metadata). Live validation (#59 §7)
+    # saw 1419 candidates nationally at threshold 0.50 — 4000 is ~3× headroom.
+    max_refine_cells: int | None = 4000
 
 
 @dataclass

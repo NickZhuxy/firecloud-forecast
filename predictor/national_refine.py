@@ -12,11 +12,14 @@ fetched — no per-cell network round-trip.
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from predictor.clouds import CloudDiagnosisConfig, DEFAULT_CLOUD_CONFIG
 from predictor.fetch import WeatherSnapshot
@@ -37,6 +40,9 @@ class RefineResult:
     tile_deg: float
     distances_km: tuple[float, ...]
     threshold: float
+    # Candidates dropped by the max_cells cost cap (they keep their screen
+    # probability). Non-zero only when the cap actually bit; always logged.
+    cells_skipped: int = 0
 
 
 class _PlaceholderSource:
@@ -148,6 +154,7 @@ def refine_field(
     config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
     aod_fn=None,
     max_cube_cells: int = 6000,
+    max_cells: int | None = None,
 ) -> RefineResult:
     """Refine screen candidates (screen >= threshold) with the shared-cube 2-D ray trace.
 
@@ -159,6 +166,24 @@ def refine_field(
     refined = screen.copy()
     refined_mask = np.zeros(screen.shape, dtype=bool)
     candidate_mask = np.isfinite(screen) & (screen >= threshold)
+
+    cells_skipped = 0
+    if max_cells is not None:
+        n_candidates = int(candidate_mask.sum())
+        if n_candidates > max_cells:
+            # Keep the highest-screen candidates (stable order → deterministic
+            # under ties); the rest keep their screen probability. Never
+            # silent: the cap is logged and reported via cells_skipped.
+            flat = np.flatnonzero(candidate_mask)
+            order = np.argsort(screen.ravel()[flat], kind="stable")[::-1]
+            candidate_mask = candidate_mask.copy()
+            candidate_mask.ravel()[flat[order[max_cells:]]] = False
+            cells_skipped = n_candidates - max_cells
+            logger.warning(
+                "national refine capped: refining %d of %d candidates "
+                "(max_cells=%d, %d keep their screen probability)",
+                max_cells, n_candidates, max_cells, cells_skipped,
+            )
 
     predictor = standard_predictor(_PlaceholderSource())
     groups = _candidate_groups(candidate_mask, selected_time, lats, lons, tile_deg)
@@ -203,4 +228,5 @@ def refine_field(
         tile_deg=tile_deg,
         distances_km=tuple(float(d) for d in distances_km),
         threshold=threshold,
+        cells_skipped=cells_skipped,
     )

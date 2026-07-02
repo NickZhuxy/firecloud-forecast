@@ -225,3 +225,37 @@ def test_refine_westward_low_cloud_lowers_probability():
         threshold=0.5, distances_km=dist,
     ).refined_probability[0, 0]
     assert obstructed < clear
+
+
+def test_max_cells_caps_refinement_keeping_top_candidates(caplog):
+    import logging
+
+    lats, lons, ev, sel = _grids()
+    screen = np.array([[0.9, 0.8], [0.7, 0.6]])   # 4 candidates, known order
+    src = _FakeCubeSource(_cube())
+    with caplog.at_level(logging.WARNING, logger="predictor.national_refine"):
+        res = refine_field(
+            src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
+            threshold=0.5, distances_km=(0.0, 100.0, 200.0), max_cells=2,
+        )
+
+    assert res.cells_refined == 2
+    assert res.cells_skipped == 2
+    # Top screen probabilities kept: (0,0)=0.9 and (0,1)=0.8.
+    assert res.refined_mask.tolist() == [[True, True], [False, False]]
+    # Skipped candidates keep their screen value untouched.
+    assert res.refined_probability[1, 0] == 0.7
+    assert res.refined_probability[1, 1] == 0.6
+    assert any("capped" in r.message for r in caplog.records)
+
+
+def test_max_cells_none_refines_everything():
+    lats, lons, ev, sel = _grids()
+    screen = np.array([[0.9, 0.8], [0.7, 0.6]])
+    src = _FakeCubeSource(_cube())
+    res = refine_field(
+        src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
+        threshold=0.5, distances_km=(0.0, 100.0, 200.0),
+    )
+    assert res.cells_refined == 4
+    assert res.cells_skipped == 0
