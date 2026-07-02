@@ -17,6 +17,7 @@ from datetime import datetime
 
 from predictor.clouds import CloudDiagnosisConfig, DEFAULT_CLOUD_CONFIG, diagnose_clouds
 from predictor.cross_section import SunwardCrossSection, build_cross_section
+from predictor.geometry import convective_duration_min
 from predictor.normalize import normalize
 from predictor.profiles import AtmosphericCube
 from predictor.spatial import (
@@ -24,6 +25,19 @@ from predictor.spatial import (
     SunwardPath,
     build_sunward_path,
 )
+from predictor.stability import (
+    DEFAULT_STABILITY_CONFIG,
+    StabilityConfig,
+    StabilityDiagnosis,
+    diagnose_stability,
+)
+
+# FA-C4 (#86), manual §4.1.2: a congestus-grade convective situation is an
+# independent cloud regime the numerical model cannot forecast effectively.
+# The honest treatment is to LABEL it, estimate its own §1.2.3 duration, and
+# shrink the probability toward the uninformative 0.5 rather than pretend the
+# stratiform reasoning still carries full weight.
+CONVECTIVE_REGIME_DAMPING = 0.5
 
 
 def assemble_sunward_cross_section(
@@ -180,6 +194,7 @@ def score_point_with_cube(
     domain: tuple[float, float, float, float] | None = None,
     config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
     aod_fn=None,
+    stability_config: StabilityConfig = DEFAULT_STABILITY_CONFIG,
 ):
     """Score one point against an ALREADY-FETCHED cube + snapshot.
 
@@ -190,6 +205,7 @@ def score_point_with_cube(
     """
     observer = normalize(cube.profile_at(lat, lon))
     cloud_layers = diagnose_clouds(observer, config)
+    stability = diagnose_stability(observer, stability_config)
     path = build_sunward_path(
         lat, lon, time,
         azimuth_deg=azimuth_deg,
@@ -198,7 +214,40 @@ def score_point_with_cube(
         domain=domain,
     )
     cross_section = assemble_sunward_cross_section(path, cube, config=config, aod_fn=aod_fn)
-    return predictor.score_snapshot(
+    forecast = predictor.score_snapshot(
         snapshot, lat, lon, time,
         cloud_layers=cloud_layers, sunward_cross_section=cross_section,
     )
+    return _with_convective_regime(forecast, stability, lat)
+
+
+def _with_convective_regime(forecast, stability: StabilityDiagnosis, lat: float):
+    """Attach the FA-C4 diagnosis; damp congestus cases per manual §4.1.2.
+
+    Every forecast carries the regime label (explainability); only a clear
+    congestus (past the marginal band) switches to the §1.2.3 vertical-line
+    duration AND shrinks the probability toward 0.5 — the manual treats that
+    regime as unsupported by model-based forecasting, so confidence in either
+    direction must drop. Marginal cases are labeled but not damped.
+    """
+    geometry = dict(forecast.geometry or {})
+    geometry.update(
+        cloud_regime=stability.regime,
+        lcl_m=stability.lcl_m,
+        unstable_depth_m=stability.unstable_depth_m,
+        regime_marginal=stability.marginal,
+    )
+    if stability.regime == "cumulus_congestus":
+        geometry["convective_duration_min"] = convective_duration_min(
+            stability.unstable_top_m or 0.0, lat
+        )
+        if not stability.marginal:
+            forecast.probability = (
+                0.5 + (forecast.probability - 0.5) * CONVECTIVE_REGIME_DAMPING
+            )
+            forecast.components["convective_regime_damping"] = CONVECTIVE_REGIME_DAMPING
+            forecast.explanation += (
+                ";浓积云对流云况(手册§4.1.2:模式支持度低,建议临近实况)"
+            )
+    forecast.geometry = geometry
+    return forecast
