@@ -113,3 +113,101 @@ def test_save_local_product_sunrise_filename(tmp_path):
         _field(), _DATE, tmp_path, solar_event=SolarEvent.SUNRISE, generated_at=_GEN, dpi=70,
     )
     assert art.image_path.name == "point-30_120-sunrise.png"
+
+
+# ---- Stage C: satellite nowcast wiring (#84) ----
+
+
+def _nowcast_result(prob, applied=True):
+    from predictor.cloud_motion import MotionVector
+    from predictor.nowcast import NowcastStageResult
+
+    mask = np.zeros_like(prob, dtype=bool)
+    corrected = prob.copy()
+    if applied:
+        mask[0, 0] = True
+        corrected[0, 0] = 0.99
+    return NowcastStageResult(
+        corrected_probability=corrected,
+        corrected_mask=mask,
+        motion=MotionVector(1.5, 0.0, 1.5, "advective", 0.8, "steady", 2),
+        applied=applied,
+        source="satellite" if applied else "model",
+        reason="bounded advective correction" if applied else "no cells in window",
+        lead_hr_range=(0.2, 0.2),
+    )
+
+
+def test_generate_local_product_applies_nowcast(monkeypatch, tmp_path):
+    import predictor.local_product as mod
+
+    built = _field()
+    monkeypatch.setattr(mod, "build_local_field", lambda *a, **k: built)
+    monkeypatch.setattr(mod, "load_map_context", lambda: None)
+    saved = {}
+
+    def fake_save(field, *a, **k):
+        saved["field"] = field
+        return mod.ProductArtifacts(image_path=tmp_path / "x.png",
+                                    metadata_path=tmp_path / "x.json")
+
+    monkeypatch.setattr(mod, "save_local_product", fake_save)
+    monkeypatch.setattr(
+        mod, "apply_nowcast",
+        lambda prob, lats, lons, times, src, *, now, config=None: _nowcast_result(prob),
+    )
+
+    mod.generate_local_product(
+        date(2026, 6, 29), tmp_path, 30.0, 120.0,
+        source=object(), cube_source=object(), predictor=object(),
+        satellite=True, satellite_source=object(),
+    )
+
+    field = saved["field"]
+    assert field.nowcast is not None and field.nowcast["applied"] is True
+    assert field.probability[0, 0] == 0.99
+
+
+def test_generate_local_product_satellite_off_skips(monkeypatch, tmp_path):
+    import predictor.local_product as mod
+
+    built = _field()
+    monkeypatch.setattr(mod, "build_local_field", lambda *a, **k: built)
+    monkeypatch.setattr(mod, "load_map_context", lambda: None)
+    monkeypatch.setattr(
+        mod, "save_local_product",
+        lambda field, *a, **k: mod.ProductArtifacts(
+            image_path=tmp_path / "x.png", metadata_path=tmp_path / "x.json"),
+    )
+
+    def boom(*a, **k):
+        raise AssertionError("apply_nowcast must not be called")
+
+    monkeypatch.setattr(mod, "apply_nowcast", boom)
+    mod.generate_local_product(
+        date(2026, 6, 29), tmp_path, 30.0, 120.0,
+        source=object(), cube_source=object(), predictor=object(),
+        satellite=False,
+    )
+
+
+def test_local_metadata_and_caption_carry_nowcast():
+    from dataclasses import replace
+
+    import predictor.local_product as mod
+
+    block = {
+        "applied": True, "source": "satellite", "reason": "bounded",
+        "regime": "advective", "confidence": 0.8,
+        "motion_deg_per_hr": [1.5, 0.0], "cells_corrected": 3,
+        "mean_abs_delta": 0.02, "lead_hr_range": [0.2, 0.2],
+        "physics_probability_range": {"min": 0.0, "max": 1.0},
+    }
+    field = replace(_field(), nowcast=block)
+
+    meta = mod._metadata(field, date(2026, 6, 29), "x.png", _VALID, "sunset")
+    assert meta["nowcast"] == block
+
+    fig = mod.plot_local_product(field, date(2026, 6, 29), solar_event="sunset",
+                                 generated_at=_VALID, context=None)
+    assert any("satellite-nudged" in t.get_text() for t in fig.texts)

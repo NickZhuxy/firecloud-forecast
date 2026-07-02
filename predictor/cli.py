@@ -100,6 +100,12 @@ def build_parser() -> argparse.ArgumentParser:
              "(first refined run downloads ~210 MB of pressure data per sunset "
              "hour; later runs hit the disk cache)",
     )
+    parser.add_argument(
+        "--no-satellite", action="store_true",
+        help="skip Stage C satellite nowcast (it only fetches two Himawari "
+             "frames when generating within ~2 h of the event; missing data "
+             "or dependencies are skipped safely either way)",
+    )
     return parser
 
 
@@ -129,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
             artifacts = generate_product(
                 target_date, product.output_dir, dpi=args.dpi, source=None,
                 solar_event=product.solar_event, refine=not args.no_refine,
+                satellite=not args.no_satellite,
             )
             print(f"image    : {artifacts.image_path}")
             print(f"metadata : {artifacts.metadata_path}")
@@ -137,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
                 target_date, product.output_dir, product.lat, product.lon,
                 dpi=args.dpi, solar_event=product.solar_event,
                 radius_km=args.radius, resolution_deg=args.resolution,
+                satellite=not args.no_satellite,
             )
             print(f"image    : {artifacts.image_path}")
             print(f"metadata : {artifacts.metadata_path}")

@@ -276,7 +276,9 @@ def test_generate_product_reuses_national_field_with_converted_bbox_and_mask(
     monkeypatch.setattr(product_mod, "build_national_field", fake_build)
     monkeypatch.setattr(product_mod, "save_product", fake_save)
 
-    result = product_mod.generate_product(_DATE, tmp_path, dpi=120, source=source)
+    result = product_mod.generate_product(
+        _DATE, tmp_path, dpi=120, source=source, satellite=False
+    )
 
     assert result == expected
     assert calls["build"] == (source, (17.0, 54.0, 73.0, 136.0), _DATE)
@@ -708,3 +710,87 @@ def test_generate_product_plain_source_degrades_to_no_refine(monkeypatch, tmp_pa
     product_mod.generate_product(_DATE, tmp_path, source=object())
     assert calls["cube_source"] is None            # zero-regression path
     assert calls["physics_config"].refine is True
+
+
+# ---- Stage C: satellite nowcast wiring (#84) ----
+
+
+def _nowcast_result(prob, applied=True):
+    from predictor.cloud_motion import MotionVector
+    from predictor.nowcast import NowcastStageResult
+
+    mask = np.zeros_like(prob, dtype=bool)
+    corrected = prob.copy()
+    if applied:
+        mask[0, 0] = True
+        corrected[0, 0] = 0.99
+    return NowcastStageResult(
+        corrected_probability=corrected,
+        corrected_mask=mask,
+        motion=MotionVector(1.5, 0.0, 1.5, "advective", 0.8, "steady", 2),
+        applied=applied,
+        source="satellite" if applied else "model",
+        reason="bounded advective correction" if applied else "no cells in window",
+        lead_hr_range=(0.5, 1.5),
+    )
+
+
+def test_generate_product_applies_nowcast_and_attaches_block(monkeypatch, tmp_path):
+    calls = {}
+    _capture_build(monkeypatch, calls)
+    saved = {}
+
+    def fake_save(field, *a, **k):
+        saved["field"] = field
+        return product_mod.ProductArtifacts(image_path=MplPath, metadata_path=MplPath)
+
+    monkeypatch.setattr(product_mod, "save_product", fake_save)
+    monkeypatch.setattr(
+        product_mod, "apply_nowcast",
+        lambda prob, lats, lons, times, src, *, now, config=None: _nowcast_result(prob),
+    )
+
+    product_mod.generate_product(_DATE, tmp_path, source=object(), satellite=True)
+
+    field = saved["field"]
+    assert field.nowcast is not None and field.nowcast["applied"] is True
+    assert field.nowcast["cells_corrected"] == 1
+    assert field.nowcast["regime"] == "advective"
+    assert field.probability[0, 0] == 0.99          # 上图替换生效
+
+
+def test_generate_product_satellite_off_never_calls_nowcast(monkeypatch, tmp_path):
+    calls = {}
+    _capture_build(monkeypatch, calls)
+
+    def boom(*a, **k):
+        raise AssertionError("apply_nowcast must not be called")
+
+    monkeypatch.setattr(product_mod, "apply_nowcast", boom)
+    result = product_mod.generate_product(_DATE, tmp_path, source=object(), satellite=False)
+    assert result is not None
+
+
+def test_metadata_and_caption_carry_nowcast(monkeypatch):
+    from dataclasses import replace
+
+    field = _field()
+    block = {
+        "applied": True, "source": "satellite", "reason": "bounded",
+        "regime": "advective", "confidence": 0.8,
+        "motion_deg_per_hr": [1.5, 0.0], "cells_corrected": 7,
+        "mean_abs_delta": 0.04, "lead_hr_range": [0.5, 1.5],
+        "physics_probability_range": {"min": 0.0, "max": 1.0},
+    }
+    field = replace(field, nowcast=block)
+
+    meta = product_mod._metadata(field, _DATE, "x.png", _GENERATED)
+    assert meta["nowcast"] == block
+
+    fig = plot_sunsetwx_product(field, _DATE, _context(), generated_at=_GENERATED)
+    assert any("satellite-nudged" in t.get_text() for t in fig.texts)
+
+
+def test_metadata_has_no_nowcast_block_when_absent():
+    meta = product_mod._metadata(_field(), _DATE, "x.png", _GENERATED)
+    assert "nowcast" not in meta
