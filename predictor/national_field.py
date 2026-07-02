@@ -45,6 +45,10 @@ class NationalField:
     # (ny,nx) bool — cells whose probability came from the Stage B ray trace;
     # None until refinement actually runs (metadata/render distinguish levels).
     refined_mask: np.ndarray | None = None
+    # Stage C satellite-nowcast stats block (#84); None when the stage was
+    # skipped entirely (satellite=False). Carries applied/reason even when the
+    # correction did not fire, so a product is always explainable.
+    nowcast: dict | None = None
 
 
 def _finite(arr: np.ndarray, default: float) -> np.ndarray:

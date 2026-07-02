@@ -28,7 +28,9 @@ from matplotlib.ticker import FuncFormatter
 from predictor.gfs import GFSSource
 from predictor.national_field import NationalField, build_national_field
 from predictor.national_physics import NationalPhysicsConfig
+from predictor.nowcast import apply_nowcast
 from predictor.solar_event import SolarEvent, spec_for
+from predictor.sunset_grid import sunset_utc_grid
 
 PRODUCT_SCHEMA_VERSION = "v3"
 CN_BBOX = (17.0, 73.0, 54.0, 136.0)  # south, west, north, east
@@ -396,10 +398,16 @@ def plot_sunsetwx_product(
         if field.refined_mask is not None and field.refined_mask.any()
         else ""
     )
+    nowcast_note = ""
+    if field.nowcast and field.nowcast.get("applied") and field.nowcast.get("cells_corrected"):
+        nowcast_note = (
+            f" · {field.nowcast['cells_corrected']:,} cells satellite-nudged "
+            f"({field.nowcast['regime']}, conf {field.nowcast['confidence']:.1f})"
+        )
     fig.text(
         0.045,
         0.07,
-        f"{field.n_points:,} grid cells · gate × modifier algorithm{refined_note} · "
+        f"{field.n_points:,} grid cells · gate × modifier algorithm{refined_note}{nowcast_note} · "
         f"generated {generated.isoformat()}",
         ha="left",
         va="center",
@@ -474,6 +482,8 @@ def _metadata(
     }
     if field.physics is not None:
         metadata["physics"] = field.physics
+    if field.nowcast is not None:
+        metadata["nowcast"] = field.nowcast
     return metadata
 
 
@@ -577,6 +587,9 @@ def generate_product(
     source=None,
     solar_event: SolarEvent | str = SolarEvent.SUNSET,
     refine: bool = True,
+    satellite: bool = True,
+    satellite_source=None,
+    now: datetime | None = None,
 ) -> ProductArtifacts:
     """Fetch, score, render and save one national China firecloud product (#60).
 
@@ -585,6 +598,11 @@ def generate_product(
     dataset (download ≈ 210 MB × distinct cycles, tile-independent). A source
     without ``fetch_cube`` (test fakes) degrades to the screen-only
     zero-regression path.
+
+    Stage C (#84): when generated within ~2 h of the event, two Himawari B13
+    frames nudge the field toward the observed cloud motion (bounded,
+    confidence-weighted). Any satellite-side failure keeps the field as-is;
+    ``satellite=False`` skips the stage entirely.
     """
     context = load_map_context()
     south, west, north, east = CN_BBOX
@@ -599,7 +617,58 @@ def generate_product(
         physics_config=NationalPhysicsConfig(enabled=True, refine=refine),
         cube_source=cube_source,
     )
+    if satellite:
+        field = _with_nowcast(field, target_date, solar_event, satellite_source, now)
     return save_product(field, target_date, output_dir, context, dpi=dpi, solar_event=solar_event)
+
+
+def _with_nowcast(
+    field: NationalField, target_date: date, solar_event, satellite_source, now: datetime | None
+) -> NationalField:
+    """Run Stage C on a built field and attach the stats block (#84)."""
+    from dataclasses import replace
+
+    if satellite_source is None:
+        from predictor.satellite import Himawari9Source
+
+        satellite_source = Himawari9Source()
+    event_times = sunset_utc_grid(
+        target_date, field.lats, field.lons, solar_event=solar_event
+    )
+    result = apply_nowcast(
+        field.probability, field.lats, field.lons, event_times,
+        satellite_source, now=now or datetime.now(timezone.utc),
+    )
+    finite = field.probability[np.isfinite(field.probability)]
+    block = {
+        "applied": result.applied,
+        "source": result.source,
+        "reason": result.reason,
+        "regime": result.motion.regime if result.motion else None,
+        "confidence": result.motion.confidence if result.motion else None,
+        "motion_deg_per_hr": (
+            [result.motion.du_deg_per_hr, result.motion.dv_deg_per_hr]
+            if result.motion else None
+        ),
+        "cells_corrected": int(result.corrected_mask.sum()),
+        "mean_abs_delta": (
+            float(np.abs(
+                result.corrected_probability[result.corrected_mask]
+                - field.probability[result.corrected_mask]
+            ).mean())
+            if result.corrected_mask.any() else 0.0
+        ),
+        "lead_hr_range": (
+            list(result.lead_hr_range) if result.lead_hr_range else None
+        ),
+        "physics_probability_range": {
+            "min": float(finite.min()) if finite.size else None,
+            "max": float(finite.max()) if finite.size else None,
+        },
+    }
+    if result.applied:
+        return replace(field, probability=result.corrected_probability, nowcast=block)
+    return replace(field, nowcast=block)
 
 
 def _parse_date(value: str) -> date:
