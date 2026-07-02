@@ -74,7 +74,7 @@ def test_regime_none_passes_through():
     )
     warm2 = BrightnessTempField(
         lats=_LATS, lons=_LONS, brightness_temp_k=np.full((2, 2), 290.0),
-        observation_time=_NOW - timedelta(minutes=10), band="B13",
+        observation_time=_NOW - timedelta(minutes=30), band="B13",
         source_label="t", retrieved_at=_NOW,
     )
     sat = _RecordingSat(frames=[warm2, frame])   # 全暖 → 无云掩膜 → regime none
@@ -95,7 +95,7 @@ def _shifted_frames():
     # 双向有界的云块——竖直通条会让互相关在垂直方向简并(任意 dy 等价)。
     bt0 = np.full((ny, nx), warm); bt0[4:9, 4:7] = cold
     bt1 = np.full((ny, nx), warm); bt1[4:9, 5:8] = cold
-    t0 = _NOW - timedelta(minutes=10)
+    t0 = _NOW - timedelta(minutes=30)
 
     def mk(bt, t):
         return BrightnessTempField(
@@ -120,12 +120,12 @@ def test_correction_nudges_toward_advected_position():
 
     assert res.applied is True and res.source == "satellite"
     assert res.motion.regime == "advective"
-    # 东移 1.5°/hr × 1h(受 2° 上限内)→ dcol=+6;混合权 = confidence。
-    advected = np.roll(prob, 6, axis=1)
+    # 东移 1 px/30min = 0.5°/hr × 1h → dcol=+2;混合权 = confidence。
+    advected = np.roll(prob, 2, axis=1)
     expected = prob + res.motion.confidence * (advected - prob)
-    inner = np.s_[:, 6:]                          # 西侧 6 列是回卷条带,另测
+    inner = np.s_[:, 2:]                          # 西侧 2 列是回卷条带,另测
     np.testing.assert_allclose(res.corrected_probability[inner], expected[inner])
-    assert res.corrected_mask[:, 6:].any()
+    assert res.corrected_mask[:, 2:].any()
     assert res.lead_hr_range == (1.0, 1.0)
 
 
@@ -134,9 +134,9 @@ def test_wrapped_edge_strip_reverts_to_model():
     prob = np.full((lats.size, lons.size), 0.7)
     times = _grid_times(prob.shape, 1.0)
     res = apply_nowcast(prob, lats, lons, times, _RecordingSat(frames=[f0, f1]), now=_NOW)
-    # 东移 dcol=+6 → 西侧 6 列是回卷数据:还原为模式值且不进 mask。
-    np.testing.assert_array_equal(res.corrected_probability[:, :6], prob[:, :6])
-    assert not res.corrected_mask[:, :6].any()
+    # 东移 dcol=+2 → 西侧 2 列是回卷数据:还原为模式值且不进 mask。
+    np.testing.assert_array_equal(res.corrected_probability[:, :2], prob[:, :2])
+    assert not res.corrected_mask[:, :2].any()
 
 
 def test_only_eligible_band_cells_change():
@@ -157,7 +157,7 @@ def test_ascending_latitude_direction_is_correct():
     ny, nx = lats.size, lons.size
     bt0 = np.full((ny, nx), 290.0); bt0[4:7, 4:9] = 250.0
     bt1 = np.full((ny, nx), 290.0); bt1[5:8, 4:9] = 250.0
-    t0 = _NOW - timedelta(minutes=10)
+    t0 = _NOW - timedelta(minutes=30)
     f0 = BrightnessTempField(lats=lats, lons=lons, brightness_temp_k=bt0,
                              observation_time=t0, band="B13", source_label="t",
                              retrieved_at=_NOW)
@@ -168,7 +168,7 @@ def test_ascending_latitude_direction_is_correct():
     times = _grid_times(prob.shape, 1.0)
     res = apply_nowcast(prob, lats, lons, times, _RecordingSat(frames=[f0, f1]), now=_NOW)
     assert res.applied
-    j = 5 + 6                                     # 北移 6 行
+    j = 5 + 2                                     # 北移 0.5°/hr × 1h = 2 行
     assert res.corrected_probability[j, :].mean() > prob[j, :].mean()
 
 
@@ -195,3 +195,35 @@ def test_fetch_walks_back_past_unpublished_slots():
     # nearest_slot(now)=10:10Z 404s → walked back to the (09:50,10:00) pair.
     assert res.applied is True
     assert any(t > _NOW for t in sat.calls)        # tried the newest first
+
+
+def test_motion_pair_spans_pair_gap_not_cadence():
+    """Motion pairs 30 min apart (velocity floor 0.5°/hr), walk-back by 10-min slots."""
+    lats, lons, f0, f1 = _shifted_frames()          # f0 at now-30min, f1 at now
+    sat = _RecordingSat(frames=[f1, f0])            # later fetched first
+    prob = np.full((lats.size, lons.size), 0.7)
+    res = apply_nowcast(prob, lats, lons, _grid_times(prob.shape, 1.0), sat, now=_NOW)
+    assert res.applied
+    gaps = [abs((sat.calls[0] - sat.calls[1]).total_seconds()) / 60.0]
+    assert gaps == [30.0]
+
+
+def test_zero_pixel_motion_is_honest_noop():
+    """Sub-pixel cloud motion quantizes to 0 px — must NOT claim corrected cells."""
+    lats = np.arange(28.0, 31.0, 0.25)
+    lons = np.arange(116.0, 119.0, 0.25)
+    ny, nx = lats.size, lons.size
+    bt = np.full((ny, nx), 290.0); bt[4:9, 4:7] = 250.0   # identical frames
+    f0 = BrightnessTempField(lats=lats, lons=lons, brightness_temp_k=bt,
+                             observation_time=_NOW - timedelta(minutes=30),
+                             band="B13", source_label="t", retrieved_at=_NOW)
+    f1 = BrightnessTempField(lats=lats, lons=lons, brightness_temp_k=bt.copy(),
+                             observation_time=_NOW, band="B13", source_label="t",
+                             retrieved_at=_NOW)
+    prob = np.full((ny, nx), 0.7)
+    res = apply_nowcast(prob, lats, lons, _grid_times(prob.shape, 1.0),
+                        _RecordingSat(frames=[f1, f0]), now=_NOW)
+    assert res.applied is False
+    assert res.corrected_mask.sum() == 0
+    assert "below grid resolution" in res.reason
+    np.testing.assert_array_equal(res.corrected_probability, prob)

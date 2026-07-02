@@ -36,7 +36,11 @@ class NowcastStageConfig:
     # Mirrors CloudMotionConfig.max_lead_hr: cells whose event is further out
     # than this are not eligible — nowcasting nudges, it does not forecast.
     max_lead_hr: float = 2.0
-    frame_gap_min: int = 10           # Himawari full-disk cadence
+    # Motion-pair spacing. At 0.25° pixels the velocity floor is one pixel per
+    # pair gap: 10 min ⇒ 1.5°/hr (~165 km/h — real clouds quantize to zero,
+    # observed live); 30 min ⇒ 0.5°/hr, inside CloudMotionConfig's [5, 40].
+    pair_gap_min: int = 30
+    slot_cadence_min: int = 10        # Himawari full-disk cadence (walk-back step)
     motion: CloudMotionConfig = field(default_factory=lambda: DEFAULT_CLOUD_MOTION_CONFIG)
 
 
@@ -99,8 +103,8 @@ def _fetch_frames(satellite_source, lats, lons, now: datetime, config: NowcastSt
     newest = nearest_slot(_as_utc(now))
     last_exc: Exception | None = None
     for shift in range(3):
-        later = newest - timedelta(minutes=config.frame_gap_min * shift)
-        earlier = later - timedelta(minutes=config.frame_gap_min)
+        later = newest - timedelta(minutes=config.slot_cadence_min * shift)
+        earlier = later - timedelta(minutes=config.pair_gap_min)
         try:
             later_frame = satellite_source.fetch_brightness_temp(later, bbox=bbox)
             earlier_frame = satellite_source.fetch_brightness_temp(earlier, bbox=bbox)
@@ -190,18 +194,21 @@ def apply_nowcast(
     )
 
 
-def _wrap_invalid_mask(shape, displacement_deg, lats, lons) -> np.ndarray:
+def _pixel_shift(displacement_deg, lats, lons) -> tuple[int, int]:
+    """(drow, dcol) the roll inside ``nowcast_correction`` used on this grid."""
+    du, dv = displacement_deg
+    dlon = float(lons[1] - lons[0])
+    dlat = float(lats[1] - lats[0])
+    return int(round(dv / dlat)), int(round(du / dlon))
+
+
+def _wrap_invalid_mask(shape, drow: int, dcol: int) -> np.ndarray:
     """Cells whose advected source wrapped around ``np.roll``'s boundary.
 
     ``nowcast_correction`` advects with a periodic roll; at the field edges the
     "upstream" data comes from the opposite side of the grid — wrong data, so
     those strips keep the model value and stay out of ``corrected_mask``.
     """
-    du, dv = displacement_deg
-    dlon = float(lons[1] - lons[0])
-    dlat = float(lats[1] - lats[0])
-    dcol = int(round(du / dlon))
-    drow = int(round(dv / dlat))
     invalid = np.zeros(shape, dtype=bool)
     if dcol > 0:
         invalid[:, :dcol] = True
@@ -231,23 +238,30 @@ def _apply_banded_correction(
 
     corrected = prob.copy()
     corrected_mask = np.zeros(prob.shape, dtype=bool)
+    sub_pixel_only = True
     for band in np.unique(band_hours[eligible]):
         band_mask = eligible & (band_hours == band)
         lead_hr = max(0.0, (int(band) * 3600 - now_s) / 3600.0)
         corr = nowcast_correction(prob, lats, lons, motion, lead_hr, config.motion)
         if corr.source != "satellite":
             continue
-        write = band_mask & ~_wrap_invalid_mask(
-            prob.shape, corr.displacement_deg, lats, lons
-        )
+        drow, dcol = _pixel_shift(corr.displacement_deg, lats, lons)
+        if drow == 0 and dcol == 0:
+            # Displacement below this grid's resolution: the "correction" is
+            # the identity — claiming corrected cells would be dishonest.
+            continue
+        sub_pixel_only = False
+        write = band_mask & ~_wrap_invalid_mask(prob.shape, drow, dcol)
         corrected[write] = corr.corrected_field[write]
         corrected_mask |= write
 
     if not corrected_mask.any():
-        return _passthrough(
-            prob, "correction degenerate (edge guard removed every cell)",
-            motion=motion, lead_hr_range=lead_hr_range,
+        reason = (
+            "cloud motion below grid resolution (0 px over pair gap)"
+            if sub_pixel_only
+            else "correction degenerate (edge guard removed every cell)"
         )
+        return _passthrough(prob, reason, motion=motion, lead_hr_range=lead_hr_range)
     return NowcastStageResult(
         corrected_probability=corrected,
         corrected_mask=corrected_mask,
