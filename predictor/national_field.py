@@ -244,12 +244,14 @@ def build_national_field(
                 selected_fields,
                 threshold=config.refine_threshold,
                 distances_km=config.refine_distances_km,
+                max_cells=config.max_refine_cells,
             )
             probability = result.refined_probability
             refined_mask = result.refined_mask
             physics["refinement"].update(
                 status="run",
                 cells_refined=result.cells_refined,
+                cells_skipped=result.cells_skipped,
                 cubes_fetched=result.cubes_fetched,
                 tiles=result.tiles,
                 tile_deg=result.tile_deg,

@@ -464,3 +464,17 @@ def test_refine_exposes_refined_mask():
 def test_refined_mask_is_none_without_refine():
     field = build_national_field(_FakeGFS(_grid()), _BBOX, _DATE)
     assert field.refined_mask is None
+
+
+def test_refine_metadata_reports_cap_skips():
+    gfs = _FakeGFS(_grid(low=5.0, mid=55.0, high=40.0))
+    src = _FakeCubeSource(_refine_cube())
+    cfg = NationalPhysicsConfig(
+        enabled=True, refine=True, refine_threshold=0.0, max_refine_cells=3
+    )
+    field = build_national_field(gfs, _BBOX, _DATE, physics_config=cfg, cube_source=src)
+
+    ref = field.physics["refinement"]
+    assert ref["cells_refined"] == 3
+    assert ref["cells_skipped"] >= 1
+    assert int(field.refined_mask.sum()) == 3
