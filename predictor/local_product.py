@@ -21,6 +21,7 @@ from matplotlib.patches import PathPatch
 from matplotlib.ticker import FuncFormatter
 
 from predictor.local_field import build_local_field
+from predictor.nowcast import apply_nowcast, stage_block
 from predictor.national_product import (
     DISPLAY_PROBABILITY_THRESHOLD,
     DISPLAY_SMOOTH_PASSES,
@@ -160,10 +161,17 @@ def plot_local_product(
         0.92, 0.95, f"Generated {generated:%Y-%m-%d %H:%MZ}",
         ha="right", va="center", fontsize=9, color="#404040",
     )
+    nowcast = getattr(field, "nowcast", None)
+    nowcast_note = ""
+    if nowcast and nowcast.get("applied") and nowcast.get("cells_corrected"):
+        nowcast_note = (
+            f" · {nowcast['cells_corrected']:,} cells satellite-nudged "
+            f"({nowcast['regime']}, conf {nowcast['confidence']:.1f})"
+        )
     fig.text(
         0.08, 0.915,
         f"{spec.label_en} · {clat:g}, {clon:g} · r={field.radius_km:g} km · {target_date:%d %b %Y}"
-        f"   |   Initialized: {_initialized_label(field.source_label)}",
+        f"   |   Initialized: {_initialized_label(field.source_label)}{nowcast_note}",
         ha="left", va="center", fontsize=10, color="#202020",
     )
     return fig
@@ -177,7 +185,7 @@ def _stem(center: tuple[float, float], solar_event: SolarEvent | str) -> str:
 def _metadata(field, target_date: date, image_name: str, generated_at: datetime, solar_event) -> dict:
     prob = np.asarray(field.probability, dtype=float)
     finite = prob[np.isfinite(prob)]
-    return {
+    metadata = {
         "schema_version": PRODUCT_SCHEMA_VERSION,
         "product": "china_firecloud_local",
         "solar_event": SolarEvent(solar_event).value,
@@ -199,6 +207,10 @@ def _metadata(field, target_date: date, image_name: str, generated_at: datetime,
             "basemap": "local Natural Earth context",
         },
     }
+    nowcast = getattr(field, "nowcast", None)
+    if nowcast is not None:
+        metadata["nowcast"] = nowcast
+    return metadata
 
 
 def save_local_product(
@@ -250,11 +262,17 @@ def generate_local_product(
     solar_event: SolarEvent | str = SolarEvent.SUNSET,
     radius_km: float = 150.0,
     resolution_deg: float = 0.1,
+    satellite: bool = True,
+    satellite_source=None,
+    now: datetime | None = None,
 ) -> ProductArtifacts:
     """Fetch, run the full single-point physics over the local grid, render and save.
 
     The network half (one GFS cube + per-cell Open-Meteo snapshots). The event time
-    is the center's sunrise/sunset on ``target_date`` (the small region shares it)."""
+    is the center's sunrise/sunset on ``target_date`` (the small region shares it).
+    Stage C (#84): within ~2 h of the event, two Himawari B13 frames nudge the
+    field toward the observed cloud motion; failures keep the field as-is and
+    ``satellite=False`` skips the stage entirely."""
     from predictor.fetch import OpenMeteoSource
     from predictor.features import compute_event_time
     from predictor.gfs import GFSSource
@@ -272,7 +290,31 @@ def generate_local_product(
         pred, cubes, lat, lon, event_time,
         radius_km=radius_km, resolution_deg=resolution_deg,
     )
+    if satellite:
+        field = _with_nowcast(field, event_time, satellite_source, now)
     return save_local_product(
         field, target_date, output_dir, solar_event=solar_event, dpi=dpi,
         generated_at=None, context=context,
     )
+
+
+def _with_nowcast(field, event_time: datetime, satellite_source, now: datetime | None):
+    """Run Stage C on the local grid; the small region shares one event time."""
+    from dataclasses import replace
+
+    if satellite_source is None:
+        from predictor.satellite import Himawari9Source
+
+        satellite_source = Himawari9Source()
+    event_times = np.full(
+        np.asarray(field.probability).shape,
+        np.datetime64(int(event_time.timestamp()), "s"),
+    )
+    result = apply_nowcast(
+        field.probability, field.lats, field.lons, event_times,
+        satellite_source, now=now or datetime.now(timezone.utc),
+    )
+    block = stage_block(result, field.probability)
+    if result.applied:
+        return replace(field, probability=result.corrected_probability, nowcast=block)
+    return replace(field, nowcast=block)

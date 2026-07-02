@@ -101,6 +101,40 @@ def _fetch_frames(satellite_source, lats, lons, now: datetime, config: NowcastSt
     ]
 
 
+def stage_block(result: NowcastStageResult, prior_probability: np.ndarray) -> dict:
+    """The product-metadata stats block for one nowcast run (#84).
+
+    Shared by the national and local products so both JSON sidecars carry the
+    same keys. Stats only — no grids — matching the products' metadata style.
+    """
+    prior = np.asarray(prior_probability, dtype=float)
+    finite = prior[np.isfinite(prior)]
+    return {
+        "applied": result.applied,
+        "source": result.source,
+        "reason": result.reason,
+        "regime": result.motion.regime if result.motion else None,
+        "confidence": result.motion.confidence if result.motion else None,
+        "motion_deg_per_hr": (
+            [result.motion.du_deg_per_hr, result.motion.dv_deg_per_hr]
+            if result.motion else None
+        ),
+        "cells_corrected": int(result.corrected_mask.sum()),
+        "mean_abs_delta": (
+            float(np.abs(
+                result.corrected_probability[result.corrected_mask]
+                - prior[result.corrected_mask]
+            ).mean())
+            if result.corrected_mask.any() else 0.0
+        ),
+        "lead_hr_range": list(result.lead_hr_range) if result.lead_hr_range else None,
+        "physics_probability_range": {
+            "min": float(finite.min()) if finite.size else None,
+            "max": float(finite.max()) if finite.size else None,
+        },
+    }
+
+
 def apply_nowcast(
     probability: np.ndarray,
     lats: np.ndarray,

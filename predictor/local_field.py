@@ -42,6 +42,9 @@ class LocalField:
     radius_km: float
     valid_time: datetime
     source_label: str | None = None
+    # Stage C satellite-nowcast stats block (#84); None when the stage was
+    # skipped entirely (satellite=False).
+    nowcast: dict | None = None
 
 
 # The default cap must admit the default radius/resolution across the WHOLE China

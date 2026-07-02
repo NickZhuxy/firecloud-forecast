@@ -28,7 +28,7 @@ from matplotlib.ticker import FuncFormatter
 from predictor.gfs import GFSSource
 from predictor.national_field import NationalField, build_national_field
 from predictor.national_physics import NationalPhysicsConfig
-from predictor.nowcast import apply_nowcast
+from predictor.nowcast import apply_nowcast, stage_block
 from predictor.solar_event import SolarEvent, spec_for
 from predictor.sunset_grid import sunset_utc_grid
 
@@ -639,33 +639,7 @@ def _with_nowcast(
         field.probability, field.lats, field.lons, event_times,
         satellite_source, now=now or datetime.now(timezone.utc),
     )
-    finite = field.probability[np.isfinite(field.probability)]
-    block = {
-        "applied": result.applied,
-        "source": result.source,
-        "reason": result.reason,
-        "regime": result.motion.regime if result.motion else None,
-        "confidence": result.motion.confidence if result.motion else None,
-        "motion_deg_per_hr": (
-            [result.motion.du_deg_per_hr, result.motion.dv_deg_per_hr]
-            if result.motion else None
-        ),
-        "cells_corrected": int(result.corrected_mask.sum()),
-        "mean_abs_delta": (
-            float(np.abs(
-                result.corrected_probability[result.corrected_mask]
-                - field.probability[result.corrected_mask]
-            ).mean())
-            if result.corrected_mask.any() else 0.0
-        ),
-        "lead_hr_range": (
-            list(result.lead_hr_range) if result.lead_hr_range else None
-        ),
-        "physics_probability_range": {
-            "min": float(finite.min()) if finite.size else None,
-            "max": float(finite.max()) if finite.size else None,
-        },
-    }
+    block = stage_block(result, field.probability)
     if result.applied:
         return replace(field, probability=result.corrected_probability, nowcast=block)
     return replace(field, nowcast=block)
