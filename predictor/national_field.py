@@ -233,6 +233,13 @@ def build_national_field(
         probability = score_grid(inputs)
 
         if config.enabled and config.refine and cube_source is not None:
+            # Real cube download cost for metadata; None for sources without
+            # accounting (test fakes). Snapshot a delta so a shared GFSSource's
+            # earlier surface traffic is not misattributed to the refine step.
+            counts_bytes = hasattr(cube_source, "network_bytes")
+            pressure_bytes_before = (
+                cube_source.network_bytes.get("pressure", 0) if counts_bytes else 0
+            )
             result = refine_field(
                 cube_source,
                 lats,
@@ -255,6 +262,12 @@ def build_national_field(
                 cubes_fetched=result.cubes_fetched,
                 tiles=result.tiles,
                 tile_deg=result.tile_deg,
+                cube_download_bytes=(
+                    cube_source.network_bytes.get("pressure", 0)
+                    - pressure_bytes_before
+                    if counts_bytes
+                    else None
+                ),
             )
 
         decoded_sizes = [grid.decoded_bytes for grid in grids]

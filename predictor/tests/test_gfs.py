@@ -542,3 +542,23 @@ def test_cached_big_subset_logs_cache_hit_not_download(
     messages = [r.message for r in caplog.records]
     assert any("cached" in m for m in messages)
     assert not any("downloading" in m for m in messages)
+
+
+# ---- network-bytes accounting ----
+#
+# The refine metadata reports real cube download cost. Only bytes that were
+# actually transferred count — a disk-cache hit re-parses a retained subset
+# and must not inflate the number.
+
+
+def test_network_bytes_counts_downloads_not_cache_hits(monkeypatch, tmp_path):
+    path = tmp_path / "subset_acct__gfs.f006"
+    fake = _SubsetHerbie(path, payload_sizes=[300])
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+    assert src.network_bytes["pressure"] == _SubsetHerbie.EXPECTED_BYTES
+
+    src._ds_cache.clear()   # force a re-parse; the complete file is on disk
+    src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+    assert src.network_bytes["pressure"] == _SubsetHerbie.EXPECTED_BYTES
