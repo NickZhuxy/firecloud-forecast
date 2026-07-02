@@ -225,3 +225,83 @@ def test_refine_westward_low_cloud_lowers_probability():
         threshold=0.5, distances_km=dist,
     ).refined_probability[0, 0]
     assert obstructed < clear
+
+
+def test_max_cells_caps_refinement_keeping_top_candidates(caplog):
+    import logging
+
+    lats, lons, ev, sel = _grids()
+    screen = np.array([[0.9, 0.8], [0.7, 0.6]])   # 4 candidates, known order
+    src = _FakeCubeSource(_cube())
+    with caplog.at_level(logging.WARNING, logger="predictor.national_refine"):
+        res = refine_field(
+            src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
+            threshold=0.5, distances_km=(0.0, 100.0, 200.0), max_cells=2,
+        )
+
+    assert res.cells_refined == 2
+    assert res.cells_skipped == 2
+    # Top screen probabilities kept: (0,0)=0.9 and (0,1)=0.8.
+    assert res.refined_mask.tolist() == [[True, True], [False, False]]
+    # Skipped candidates keep their screen value untouched.
+    assert res.refined_probability[1, 0] == 0.7
+    assert res.refined_probability[1, 1] == 0.6
+    assert any("capped" in r.message for r in caplog.records)
+
+
+def test_max_cells_none_refines_everything():
+    lats, lons, ev, sel = _grids()
+    screen = np.array([[0.9, 0.8], [0.7, 0.6]])
+    src = _FakeCubeSource(_cube())
+    res = refine_field(
+        src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
+        threshold=0.5, distances_km=(0.0, 100.0, 200.0),
+    )
+    assert res.cells_refined == 4
+    assert res.cells_skipped == 0
+
+
+def test_refine_releases_each_hours_datasets_after_its_last_group():
+    lats, lons, ev, sel = _grids()
+    # Two hours interleaved across cells: hour 0 at (0,0)/(1,1), hour 1 at (0,1)/(1,0).
+    sel = np.array([[0, 1], [1, 0]])
+    valid_b = datetime(2026, 6, 29, 10, tzinfo=timezone.utc)
+    screen = np.full((2, 2), 0.9)
+
+    class _ReleasingSource(_FakeCubeSource):
+        def __init__(self, cube):
+            super().__init__(cube)
+            self.events = []
+
+        def fetch_cube(self, bbox, time):
+            self.events.append(("fetch", time))
+            return super().fetch_cube(bbox, time)
+
+        def release_cube(self, valid_time):
+            self.events.append(("release", valid_time))
+            return 1
+
+    src = _ReleasingSource(_cube())
+    refine_field(
+        src, lats, lons, screen, ev, sel, (_VALID, valid_b), _surface((2, 2)),
+        threshold=0.5, distances_km=(0.0, 100.0, 200.0),
+    )
+
+    releases = [e for e in src.events if e[0] == "release"]
+    assert releases == [("release", _VALID), ("release", valid_b)]
+    # Every fetch of an hour happens before that hour's release (sorted order).
+    last_fetch = {t: max(i for i, e in enumerate(src.events) if e == ("fetch", t))
+                  for _kind, t in releases}
+    rel_index = {t: i for i, e in enumerate(src.events) if e[0] == "release" for t in [e[1]]}
+    assert all(last_fetch[t] < rel_index[t] for t in last_fetch)
+
+
+def test_refine_tolerates_sources_without_release():
+    lats, lons, ev, sel = _grids()
+    screen = np.full((2, 2), 0.9)
+    src = _FakeCubeSource(_cube())     # no release_cube attribute
+    res = refine_field(
+        src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
+        threshold=0.5, distances_km=(0.0, 100.0, 200.0),
+    )
+    assert res.cells_refined == 4

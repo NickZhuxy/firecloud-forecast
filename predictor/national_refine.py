@@ -12,11 +12,14 @@ fetched — no per-cell network round-trip.
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from predictor.clouds import CloudDiagnosisConfig, DEFAULT_CLOUD_CONFIG
 from predictor.fetch import WeatherSnapshot
@@ -37,6 +40,9 @@ class RefineResult:
     tile_deg: float
     distances_km: tuple[float, ...]
     threshold: float
+    # Candidates dropped by the max_cells cost cap (they keep their screen
+    # probability). Non-zero only when the cap actually bit; always logged.
+    cells_skipped: int = 0
 
 
 class _PlaceholderSource:
@@ -148,6 +154,7 @@ def refine_field(
     config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
     aod_fn=None,
     max_cube_cells: int = 6000,
+    max_cells: int | None = None,
 ) -> RefineResult:
     """Refine screen candidates (screen >= threshold) with the shared-cube 2-D ray trace.
 
@@ -160,12 +167,39 @@ def refine_field(
     refined_mask = np.zeros(screen.shape, dtype=bool)
     candidate_mask = np.isfinite(screen) & (screen >= threshold)
 
+    cells_skipped = 0
+    if max_cells is not None:
+        n_candidates = int(candidate_mask.sum())
+        if n_candidates > max_cells:
+            # Keep the highest-screen candidates (stable order → deterministic
+            # under ties); the rest keep their screen probability. Never
+            # silent: the cap is logged and reported via cells_skipped.
+            flat = np.flatnonzero(candidate_mask)
+            order = np.argsort(screen.ravel()[flat], kind="stable")[::-1]
+            candidate_mask = candidate_mask.copy()
+            candidate_mask.ravel()[flat[order[max_cells:]]] = False
+            cells_skipped = n_candidates - max_cells
+            logger.warning(
+                "national refine capped: refining %d of %d candidates "
+                "(max_cells=%d, %d keep their screen probability)",
+                max_cells, n_candidates, max_cells, cells_skipped,
+            )
+
     predictor = standard_predictor(_PlaceholderSource())
     groups = _candidate_groups(candidate_mask, selected_time, lats, lons, tile_deg)
 
     cubes_fetched = 0
     cells_refined = 0
-    for (hour_idx, _tj, _ti), cells in groups.items():
+    # Hour-major order: all of one valid hour's tile groups run back-to-back so
+    # the hour's decoded dataset (~300 MB resident) can be released before the
+    # next hour loads — peak memory stays ~one dataset instead of one per hour.
+    # (Also makes the processing order fully deterministic.)
+    release = getattr(cube_source, "release_cube", None)
+    previous_hour: int | None = None
+    for (hour_idx, _tj, _ti), cells in sorted(groups.items(), key=lambda kv: kv[0]):
+        if release is not None and previous_hour is not None and hour_idx != previous_hour:
+            release(valid_times[previous_hour])
+        previous_hour = hour_idx
         bbox = _group_bbox(cells, lats, lons, event_times, azimuth_deg, distances_km, margin_deg)
         if _bbox_cell_count(bbox) > max_cube_cells:
             raise ValueError(
@@ -193,6 +227,9 @@ def refine_field(
             refined_mask[j, i] = True
             cells_refined += 1
 
+    if release is not None and previous_hour is not None:
+        release(valid_times[previous_hour])
+
     spatial_tiles = {(tj, ti) for (_h, tj, ti) in groups}
     return RefineResult(
         refined_probability=refined,
@@ -203,4 +240,5 @@ def refine_field(
         tile_deg=tile_deg,
         distances_km=tuple(float(d) for d in distances_km),
         threshold=threshold,
+        cells_skipped=cells_skipped,
     )

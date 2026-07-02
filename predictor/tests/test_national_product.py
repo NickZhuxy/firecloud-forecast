@@ -251,8 +251,12 @@ def test_generate_product_reuses_national_field_with_converted_bbox_and_mask(
         metadata_path=tmp_path / "forecast.json",
     )
 
-    def fake_build(received_source, bbox, target_date, *, domain_mask, solar_event):
+    def fake_build(received_source, bbox, target_date, *, domain_mask, solar_event,
+                   physics_config, cube_source):
         calls["build"] = (received_source, bbox, target_date)
+        # A plain object() source has no fetch_cube → screen-only path.
+        assert cube_source is None
+        assert physics_config.enabled is True
         mask = domain_mask(
             np.array([17.0, 35.0, 54.0]),
             np.array([73.0, 100.0, 136.0]),
@@ -610,3 +614,97 @@ def test_plot_uses_one_continuous_raster_not_discrete_contour_bands():
     alpha = np.asarray(image.get_alpha())
     assert alpha.shape == image.get_array().shape
     assert float(np.nanmax(alpha)) <= 0.96
+
+
+def test_metadata_probability_levels_three_cases():
+    from dataclasses import replace
+
+    base = _field()                                    # physics=None → all model
+    meta = product_mod._metadata(base, _DATE, "x.png", _GENERATED)
+    finite = int(np.isfinite(base.probability).sum())
+    assert meta["probability_levels"] == {"model": finite, "screen": 0, "refined": 0}
+
+    screened = replace(base, physics={"screen": {"enabled": True}})
+    meta = product_mod._metadata(screened, _DATE, "x.png", _GENERATED)
+    assert meta["probability_levels"] == {"model": 0, "screen": finite, "refined": 0}
+
+    mask = np.zeros_like(base.probability, dtype=bool)
+    mask[0, 0] = True
+    refined = replace(screened, refined_mask=mask)
+    meta = product_mod._metadata(refined, _DATE, "x.png", _GENERATED)
+    assert meta["probability_levels"] == {"model": 0, "screen": finite - 1, "refined": 1}
+
+
+def test_plot_marks_refined_cells_and_caption():
+    from dataclasses import replace
+
+    field = _field()
+    mask = np.zeros_like(field.probability, dtype=bool)
+    mask[1, 1] = mask[2, 3] = True
+    field = replace(field, refined_mask=mask, physics={"refinement": {"status": "run"}})
+
+    fig = plot_sunsetwx_product(field, _DATE, _context(), generated_at=_GENERATED)
+
+    ax = fig.axes[0]
+    sizes = [
+        len(c.get_offsets()) for c in ax.collections if hasattr(c, "get_offsets")
+    ]
+    assert 2 in sizes                                   # one dot per refined cell
+    assert any("ray-trace refined" in t.get_text() for t in fig.texts)
+
+
+def test_plot_without_mask_adds_no_refined_markers():
+    fig = plot_sunsetwx_product(_field(), _DATE, _context(), generated_at=_GENERATED)
+    sizes = [
+        len(c.get_offsets())
+        for c in fig.axes[0].collections
+        if hasattr(c, "get_offsets")
+    ]
+    assert 2 not in sizes
+    assert not any("ray-trace refined" in t.get_text() for t in fig.texts)
+
+
+def _capture_build(monkeypatch, calls):
+    context = MapContext(country=box(80.0, 20.0, 120.0, 50.0), surrounding=(), admin1=())
+    monkeypatch.setattr(product_mod, "load_map_context", lambda: context)
+
+    def fake_build(source, bbox, target_date, *, domain_mask, solar_event,
+                   physics_config, cube_source):
+        calls["physics_config"] = physics_config
+        calls["cube_source"] = cube_source
+        calls["source"] = source
+        return _field()
+
+    monkeypatch.setattr(product_mod, "build_national_field", fake_build)
+    monkeypatch.setattr(
+        product_mod, "save_product",
+        lambda *a, **k: product_mod.ProductArtifacts(
+            image_path=MplPath, metadata_path=MplPath
+        ),
+    )
+
+
+def test_generate_product_wires_shared_cube_source_when_refining(monkeypatch, tmp_path):
+    class _CubeCapable:
+        def fetch_cube(self, bbox, time):   # pragma: no cover - marker only
+            raise AssertionError("not called in this test")
+
+    source = _CubeCapable()
+    calls = {}
+    _capture_build(monkeypatch, calls)
+
+    product_mod.generate_product(_DATE, tmp_path, source=source)
+    assert calls["cube_source"] is source          # shared instance (§3 cost model)
+    assert calls["physics_config"].refine is True
+
+    product_mod.generate_product(_DATE, tmp_path, source=source, refine=False)
+    assert calls["cube_source"] is None
+    assert calls["physics_config"].refine is False
+
+
+def test_generate_product_plain_source_degrades_to_no_refine(monkeypatch, tmp_path):
+    calls = {}
+    _capture_build(monkeypatch, calls)
+    product_mod.generate_product(_DATE, tmp_path, source=object())
+    assert calls["cube_source"] is None            # zero-regression path
+    assert calls["physics_config"].refine is True

@@ -542,3 +542,38 @@ def test_cached_big_subset_logs_cache_hit_not_download(
     messages = [r.message for r in caplog.records]
     assert any("cached" in m for m in messages)
     assert not any("downloading" in m for m in messages)
+
+
+# ---- network-bytes accounting ----
+#
+# The refine metadata reports real cube download cost. Only bytes that were
+# actually transferred count — a disk-cache hit re-parses a retained subset
+# and must not inflate the number.
+
+
+def test_network_bytes_counts_downloads_not_cache_hits(monkeypatch, tmp_path):
+    path = tmp_path / "subset_acct__gfs.f006"
+    fake = _SubsetHerbie(path, payload_sizes=[300])
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+    assert src.network_bytes["pressure"] == _SubsetHerbie.EXPECTED_BYTES
+
+    src._ds_cache.clear()   # force a re-parse; the complete file is on disk
+    src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+    assert src.network_bytes["pressure"] == _SubsetHerbie.EXPECTED_BYTES
+
+
+def test_release_cube_pops_matching_datasets(monkeypatch, tmp_path):
+    src = GFSSource(cache_dir=tmp_path)
+    run = datetime(2026, 6, 23, 0, tzinfo=timezone.utc)
+    older = datetime(2026, 6, 22, 18, tzinfo=timezone.utc)
+    ds = _synthetic_gfs_ds()
+    src._ds_cache[(run, 6)] = ds        # valid 06Z via 00Z+f06
+    src._ds_cache[(older, 12)] = ds     # same valid hour via fallback cycle
+    src._ds_cache[(run, 9)] = ds        # a different valid hour — must survive
+
+    released = src.release_cube(datetime(2026, 6, 23, 6, tzinfo=timezone.utc))
+
+    assert released == 2
+    assert list(src._ds_cache) == [(run, 9)]

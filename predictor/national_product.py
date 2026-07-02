@@ -27,6 +27,7 @@ from matplotlib.ticker import FuncFormatter
 
 from predictor.gfs import GFSSource
 from predictor.national_field import NationalField, build_national_field
+from predictor.national_physics import NationalPhysicsConfig
 from predictor.solar_event import SolarEvent, spec_for
 
 PRODUCT_SCHEMA_VERSION = "v3"
@@ -330,6 +331,19 @@ def plot_sunsetwx_product(
     )
     ax.add_patch(country_path)
     image.set_clip_path(country_path)
+    if field.refined_mask is not None and field.refined_mask.any():
+        jj, ii = np.nonzero(field.refined_mask)
+        refined_dots = ax.scatter(
+            np.asarray(field.lons)[ii],
+            np.asarray(field.lats)[jj],
+            s=2.5,
+            marker=".",
+            color="#1a1a1a",
+            alpha=0.55,
+            linewidths=0,
+            zorder=3,
+        )
+        refined_dots.set_clip_path(country_path)
     _draw_admin_lines(ax, context.admin1)
     _draw_polygon_boundary(ax, context.country, color="#151515", linewidth=1.0)
 
@@ -377,10 +391,15 @@ def plot_sunsetwx_product(
         fontsize=10,
         color="#202020",
     )
+    refined_note = (
+        f" · {int(field.refined_mask.sum()):,} cells ray-trace refined"
+        if field.refined_mask is not None and field.refined_mask.any()
+        else ""
+    )
     fig.text(
         0.045,
         0.07,
-        f"{field.n_points:,} grid cells · gate × modifier algorithm · "
+        f"{field.n_points:,} grid cells · gate × modifier algorithm{refined_note} · "
         f"generated {generated.isoformat()}",
         ha="left",
         va="center",
@@ -388,6 +407,17 @@ def plot_sunsetwx_product(
         color="#555555",
     )
     return fig
+
+
+def _probability_levels(field: NationalField, n_finite: int) -> dict:
+    n_refined = (
+        int(np.asarray(field.refined_mask, dtype=bool).sum())
+        if field.refined_mask is not None
+        else 0
+    )
+    if field.physics is None:
+        return {"model": n_finite, "screen": 0, "refined": 0}
+    return {"model": 0, "screen": n_finite - n_refined, "refined": n_refined}
 
 
 def _metadata(
@@ -418,6 +448,11 @@ def _metadata(
         "event_range_utc": [value.isoformat() for value in field.sunset_range_utc],
         "n_points": field.n_points,
         "probability_range": {"min": prob_min, "max": prob_max},
+        # Which pipeline produced each finite cell's probability: raw overview
+        # rules ("model"), the Stage A sunward screen ("screen"), or the Stage B
+        # shared-cube ray trace ("refined"). Physics on → every cell is at
+        # least screen-level; refined cells are counted apart via refined_mask.
+        "probability_levels": _probability_levels(field, int(finite.size)),
         "performance": {
             "surface_fetches": field.surface_fetches,
             "additional_surface_fetches": field.additional_surface_fetches,
@@ -541,16 +576,28 @@ def generate_product(
     dpi: int = 160,
     source=None,
     solar_event: SolarEvent | str = SolarEvent.SUNSET,
+    refine: bool = True,
 ) -> ProductArtifacts:
-    """Fetch, score, render and save one national China firecloud product (#60)."""
+    """Fetch, score, render and save one national China firecloud product (#60).
+
+    Stage B refinement runs by default (#59): the ONE shared source doubles as
+    ``cube_source`` so every same-cycle tile reuses a single decoded pressure
+    dataset (download ≈ 210 MB × distinct cycles, tile-independent). A source
+    without ``fetch_cube`` (test fakes) degrades to the screen-only
+    zero-regression path.
+    """
     context = load_map_context()
     south, west, north, east = CN_BBOX
+    src = source or GFSSource()
+    cube_source = src if (refine and hasattr(src, "fetch_cube")) else None
     field = build_national_field(
-        source or GFSSource(),
+        src,
         (south, north, west, east),
         target_date,
         domain_mask=lambda lats, lons: geometry_mask(context.country, lats, lons),
         solar_event=solar_event,
+        physics_config=NationalPhysicsConfig(enabled=True, refine=refine),
+        cube_source=cube_source,
     )
     return save_product(field, target_date, output_dir, context, dpi=dpi, solar_event=solar_event)
 

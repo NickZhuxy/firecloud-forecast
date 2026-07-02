@@ -42,6 +42,9 @@ class NationalField:
     runtime_s: float
     peak_mem_mb: float
     physics: dict | None = None
+    # (ny,nx) bool — cells whose probability came from the Stage B ray trace;
+    # None until refinement actually runs (metadata/render distinguish levels).
+    refined_mask: np.ndarray | None = None
 
 
 def _finite(arr: np.ndarray, default: float) -> np.ndarray:
@@ -184,6 +187,7 @@ def build_national_field(
             "visibility_m": _finite(select("visibility_m"), 25000.0),
         }
         physics = None
+        refined_mask = None
         grid_inputs_kwargs = {}
         config = physics_config or NationalPhysicsConfig()
         if config.enabled:
@@ -229,6 +233,13 @@ def build_national_field(
         probability = score_grid(inputs)
 
         if config.enabled and config.refine and cube_source is not None:
+            # Real cube download cost for metadata; None for sources without
+            # accounting (test fakes). Snapshot a delta so a shared GFSSource's
+            # earlier surface traffic is not misattributed to the refine step.
+            counts_bytes = hasattr(cube_source, "network_bytes")
+            pressure_bytes_before = (
+                cube_source.network_bytes.get("pressure", 0) if counts_bytes else 0
+            )
             result = refine_field(
                 cube_source,
                 lats,
@@ -240,14 +251,23 @@ def build_national_field(
                 selected_fields,
                 threshold=config.refine_threshold,
                 distances_km=config.refine_distances_km,
+                max_cells=config.max_refine_cells,
             )
             probability = result.refined_probability
+            refined_mask = result.refined_mask
             physics["refinement"].update(
                 status="run",
                 cells_refined=result.cells_refined,
+                cells_skipped=result.cells_skipped,
                 cubes_fetched=result.cubes_fetched,
                 tiles=result.tiles,
                 tile_deg=result.tile_deg,
+                cube_download_bytes=(
+                    cube_source.network_bytes.get("pressure", 0)
+                    - pressure_bytes_before
+                    if counts_bytes
+                    else None
+                ),
             )
 
         decoded_sizes = [grid.decoded_bytes for grid in grids]
@@ -291,6 +311,7 @@ def build_national_field(
             runtime_s=runtime_s,
             peak_mem_mb=peak_mem_mb,
             physics=physics,
+            refined_mask=refined_mask,
         )
     finally:
         if trace:

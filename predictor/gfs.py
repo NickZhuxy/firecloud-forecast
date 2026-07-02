@@ -118,56 +118,6 @@ def _subset_payload_bytes(herbie, search: str) -> int | None:
 _PROGRESS_ANNOUNCE_BYTES = 50_000_000
 
 
-def _verified_subset_download(herbie, search: str, fxx: int, what: str) -> int | None:
-    """Download a GRIB subset to disk, then verify it against the idx inventory.
-
-    Herbie fetches one HTTP range per message group and a dropped connection
-    leaves the partial file on disk; because both download() and xarray() treat
-    any existing file as cached, every later attempt would silently parse that
-    stub (whole fields/levels missing) forever. A mismatched file is deleted
-    and raised with a *transient* marker so _retry_transient re-downloads it
-    cleanly. Returns the expected payload bytes (None when no idx exists, in
-    which case verification is skipped).
-
-    Big transfers log progress at INFO (herbie's own chatter is silenced, so
-    without this a multi-minute cube download looks hung from the CLI).
-    """
-    expected = _subset_payload_bytes(herbie, search)
-    announce = expected is not None and expected >= _PROGRESS_ANNOUNCE_BYTES
-    if announce:
-        local = herbie.get_localFilePath(search)
-        if local.exists() and local.stat().st_size == expected:
-            logger.info(
-                "GFS %s subset f%02d: using cached %.0f MB",
-                what, fxx, expected / 1e6,
-            )
-            announce = False
-        else:
-            logger.info(
-                "GFS %s subset f%02d: downloading %.0f MB (one-off per cycle, "
-                "cached on disk afterwards)…",
-                what, fxx, expected / 1e6,
-            )
-    started = time.perf_counter()
-    herbie.download(search)
-    if expected is not None:
-        local = herbie.get_localFilePath(search)
-        actual = local.stat().st_size if local.exists() else None
-        if actual != expected:
-            if local.exists():
-                local.unlink()
-            raise GFSUnavailable(
-                f"GFS {what} subset f{fxx:02d} truncated "
-                f"({actual}/{expected} bytes) — deleted for re-download"
-            )
-    if announce:
-        logger.info(
-            "GFS %s subset f%02d: ready (%.0f MB in %.0f s)",
-            what, fxx, expected / 1e6, time.perf_counter() - started,
-        )
-    return expected
-
-
 def _dataset_download_bytes(ds: xr.Dataset) -> int | None:
     """Logical download bytes from inventory metadata or retained local files."""
     measured = ds.attrs.get(_DOWNLOAD_BYTES_ATTR)
@@ -305,6 +255,10 @@ class GFSSource:
         self._ds_cache: dict[tuple[datetime, int], xr.Dataset] = {}
         self._cover_cache: dict[tuple[datetime, int], xr.Dataset] = {}
         self._surface_cache: dict[tuple[datetime, int], xr.Dataset] = {}
+        # Logical payload bytes actually transferred, keyed by subset kind
+        # ("pressure"/"surface"/"cover"). Disk-cache hits do not count, so the
+        # national refine metadata can report the true cube download cost.
+        self.network_bytes: dict[str, int] = {}
 
     # ---- public API -----------------------------------------------------
 
@@ -446,6 +400,24 @@ class GFSSource:
         self._ds_cache[key] = ds
         return ds
 
+    def release_cube(self, valid_time: datetime) -> int:
+        """Drop decoded pressure datasets for one valid hour from memory.
+
+        A decoded global dataset is ~300 MB resident; the national refine walks
+        several sunset hours and would otherwise keep every one alive until the
+        product finishes. Matching by ``run + fxx == valid`` also catches
+        entries loaded through the cycle fallback. The on-disk GRIB cache is
+        untouched — a later fetch re-parses without re-downloading.
+        """
+        valid_utc = _as_utc(valid_time)
+        keys = [
+            key for key in self._ds_cache
+            if key[0] + timedelta(hours=key[1]) == valid_utc
+        ]
+        for key in keys:
+            del self._ds_cache[key]
+        return len(keys)
+
     def _load_cover(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         key = (run_dt, fxx)
         cached = self._cover_cache.get(key)
@@ -531,7 +503,7 @@ class GFSSource:
     def _prefetch_surface(self, run_dt: datetime, fxx: int) -> None:
         """Download one surface hour's GRIB subset to disk — network only, no parse."""
         H = self._herbie(run_dt, fxx, cache_namespace="surface")
-        _verified_subset_download(H, self._SURFACE_SEARCH, fxx, "surface")
+        self._verified_subset_download(H, self._SURFACE_SEARCH, fxx, "surface")
 
     def _herbie(self, run_dt: datetime, fxx: int, *, cache_namespace: str):
         """Construct a Herbie handle for a GFS 0.25° cycle (network on .xarray)."""
@@ -555,11 +527,70 @@ class GFSSource:
             verbose=False,
         )
 
+    def _verified_subset_download(
+        self, herbie, search: str, fxx: int, what: str
+    ) -> int | None:
+        """Download a GRIB subset to disk, then verify it against the idx inventory.
+
+        Herbie fetches one HTTP range per message group and a dropped connection
+        leaves the partial file on disk; because both download() and xarray() treat
+        any existing file as cached, every later attempt would silently parse that
+        stub (whole fields/levels missing) forever. A mismatched file is deleted
+        and raised with a *transient* marker so _retry_transient re-downloads it
+        cleanly. Returns the expected payload bytes (None when no idx exists, in
+        which case verification is skipped).
+
+        Big transfers log progress at INFO (herbie's own chatter is silenced, so
+        without this a multi-minute cube download looks hung from the CLI).
+        Verified fresh transfers accumulate into ``self.network_bytes[what]``;
+        disk-cache hits do not.
+        """
+        expected = _subset_payload_bytes(herbie, search)
+        was_complete = False
+        if expected is not None:
+            local = herbie.get_localFilePath(search)
+            was_complete = local.exists() and local.stat().st_size == expected
+        announce = expected is not None and expected >= _PROGRESS_ANNOUNCE_BYTES
+        if announce and was_complete:
+            logger.info(
+                "GFS %s subset f%02d: using cached %.0f MB",
+                what, fxx, expected / 1e6,
+            )
+            announce = False
+        elif announce:
+            logger.info(
+                "GFS %s subset f%02d: downloading %.0f MB (one-off per cycle, "
+                "cached on disk afterwards)…",
+                what, fxx, expected / 1e6,
+            )
+        started = time.perf_counter()
+        herbie.download(search)
+        if expected is not None:
+            local = herbie.get_localFilePath(search)
+            actual = local.stat().st_size if local.exists() else None
+            if actual != expected:
+                if local.exists():
+                    local.unlink()
+                raise GFSUnavailable(
+                    f"GFS {what} subset f{fxx:02d} truncated "
+                    f"({actual}/{expected} bytes) — deleted for re-download"
+                )
+            if not was_complete:
+                self.network_bytes[what] = (
+                    self.network_bytes.get(what, 0) + expected
+                )
+        if announce:
+            logger.info(
+                "GFS %s subset f%02d: ready (%.0f MB in %.0f s)",
+                what, fxx, expected / 1e6, time.perf_counter() - started,
+            )
+        return expected
+
     def _download_dataset(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         """Download + parse the GFS pressure-level subset via Herbie (network)."""
         H = self._herbie(run_dt, fxx, cache_namespace="pressure")
         search = r":(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLMR|CLWMR|ICMR):\d+ mb:"
-        _verified_subset_download(H, search, fxx, "pressure")
+        self._verified_subset_download(H, search, fxx, "pressure")
         # cfgrib may split into several datasets by step/type; merge into one
         # isobaric dataset. join="outer" is explicit (not the deprecated
         # default): GFS variables like CLWMR/ICMR are reported on fewer levels
@@ -577,7 +608,7 @@ class GFSSource:
         """Download the GFS three-tier cloud covers (LCDC/MCDC/HCDC) via Herbie."""
         H = self._herbie(run_dt, fxx, cache_namespace="cover")
         search = r":(?:LCDC|MCDC|HCDC):"
-        _verified_subset_download(H, search, fxx, "cover")
+        self._verified_subset_download(H, search, fxx, "cover")
         # Each étage cover sits on its own cloud-layer level type, so Herbie
         # returns one dataset per cover; merge them on the shared lat/lon grid.
         parsed = H.xarray(search)
@@ -589,7 +620,7 @@ class GFSSource:
         """Download (if needed) + parse GFS surface fields (cover, 2 m RH, visibility)."""
         H = self._herbie(run_dt, fxx, cache_namespace="surface")
         search = self._SURFACE_SEARCH
-        download_bytes = _verified_subset_download(H, search, fxx, "surface")
+        download_bytes = self._verified_subset_download(H, search, fxx, "surface")
         parsed = H.xarray(search)
         if isinstance(parsed, list):
             parsed = xr.merge(
