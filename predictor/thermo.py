@@ -48,6 +48,80 @@ def dewpoint_k(t_k, rh_pct):
     return np.minimum(td_k, np.asarray(t_k, dtype=float))
 
 
+# --- FA-C4 (#86): parcel lifting -------------------------------------------
+# Theory: research/theory/fa-c4-skewt-stability-convective-regime.md §2.1.
+# Manual (人工火烧云预报速成) constants: dry adiabat 9.8 ℃/km (§1.1.3, valid in
+# the lowest 3–4 km), mixing-ratio dewpoint line 1.2 ℃/km (§1.4.1). The moist
+# pseudo-adiabat has no manual formula ("gentler than dry, converges when the
+# vapor is exhausted"), so the standard AMS Glossary / Bolton (1980) form fills
+# the gap — it degenerates to the dry rate in cold dry air, matching the
+# manual's stage-3 description.
+DRY_LAPSE_C_PER_KM = 9.8
+DEWPOINT_LINE_C_PER_KM = 1.2
+_LV_J_KG = 2.501e6      # latent heat of vaporization
+_RD_J_KG_K = 287.04     # gas constant, dry air
+_CPD_J_KG_K = 1005.7    # specific heat, dry air, constant pressure
+
+
+def lcl_height_m(t0_k, td0_k):
+    """Lifting condensation level (m above the parcel start), manual-implied.
+
+    The parcel temperature falls at 9.8 ℃/km while its dewpoint falls at
+    1.2 ℃/km; they meet after (T−Td)/(9.8−1.2) km ≈ 116 m per kelvin of
+    dewpoint depression. A saturated (or super-saturated) parcel is already
+    at its LCL → 0.
+    """
+    depression = float(t0_k) - float(td0_k)
+    return max(depression / (DRY_LAPSE_C_PER_KM - DEWPOINT_LINE_C_PER_KM) * 1000.0, 0.0)
+
+
+def moist_adiabatic_lapse_c_per_km(t_k, p_hpa):
+    """Pseudo-adiabatic (moist) lapse rate (℃/km), AMS Glossary form.
+
+    Γm = Γd · (1 + Lv·rs/(Rd·T)) / (1 + Lv²·rs·ε/(cpd·Rd·T²)), with rs the
+    saturation mixing ratio at (T, p). Warm humid air → ~4–5 ℃/km; cold dry
+    air → Γm → Γd (manual §1.1.3 stage 3).
+    """
+    t = np.asarray(t_k, dtype=float)
+    es = saturation_vapor_pressure_hpa(t)
+    rs = EPSILON * es / np.maximum(np.asarray(p_hpa, dtype=float) - es, 1e-6)
+    numerator = 1.0 + _LV_J_KG * rs / (_RD_J_KG_K * t)
+    denominator = 1.0 + _LV_J_KG**2 * rs * EPSILON / (_CPD_J_KG_K * _RD_J_KG_K * t**2)
+    return DRY_LAPSE_C_PER_KM * numerator / denominator
+
+
+def parcel_profile_k(heights_m, pressures_hpa, t0_k, td0_k):
+    """State-curve temperatures (K) of a surface parcel lifted to ``heights_m``.
+
+    Manual §1.4.1: dry adiabat up to the LCL, then the moist adiabat, with the
+    local Γm re-evaluated segment by segment (it varies with T and p).
+    ``heights_m`` must be ascending and start at the parcel's launch level.
+    """
+    heights = np.asarray(heights_m, dtype=float)
+    pressures = np.asarray(pressures_hpa, dtype=float)
+    if heights.size and np.any(np.diff(heights) <= 0):
+        raise ValueError("heights_m must be strictly ascending")
+    lcl = lcl_height_m(t0_k, td0_k)
+    origin = heights[0] if heights.size else 0.0
+
+    parcel = np.empty_like(heights)
+    t = float(t0_k)
+    previous_h = origin
+    for i, h in enumerate(heights):
+        # Dry part of this segment (below the LCL, measured from launch level).
+        dry_top = min(h, origin + lcl)
+        if dry_top > previous_h:
+            t -= DRY_LAPSE_C_PER_KM * (dry_top - previous_h) / 1000.0
+        # Moist part, integrated with the local lapse at segment start.
+        moist_start = max(previous_h, origin + lcl)
+        if h > moist_start:
+            gamma = float(moist_adiabatic_lapse_c_per_km(t, pressures[i]))
+            t -= gamma * (h - moist_start) / 1000.0
+        parcel[i] = t
+        previous_h = h
+    return parcel
+
+
 def geopotential_to_geometric_height(geopotential_height_m, lat_deg=None):
     """Geometric height (m, true altitude) from geopotential height (m).
 
