@@ -99,3 +99,15 @@ regime 由 depth 分级(<400 stratiform/humilis 合并为 stratiform?——**否
 - 用户拍板 4 点:LCL 手册系数=Task1;伪绝热补公式=Task1;只有浓积云切几何=Task4(humilis/mediocris 只标注);§4.1.2 明示+降置信=Task4(damping 0.5 + explanation)✓
 - 类型一致:`StabilityDiagnosis`/`StabilityConfig`/`convective_duration_min`/`parcel_profile_k(heights_m, pressures_hpa, t0_k, td0_k)` 全文一致 ✓
 - 全国/局部产品不动(local_field 经 score_point_with_cube 自动获得 geometry 标注,但无渲染改动)✓
+
+## 完成记录(2026-07-02)
+
+5 任务完成,离线套件 **628 passed**(+18 个新测试:thermo 4 / stability 7 / geometry 4 / 接线 2 / metamorphic 1)。
+
+**实现中被物理修正的两处**(理论笔记已同步):
+1. 不变量 3 原表述"地面加热→右偏厚度不减"有误:固定露点下加热抬高 LCL,硬盖之下厚度可合法缩小 —— 单调不降的是**对流云顶**,测试与笔记均已改。
+2. 等温层"盖不住"暖湿气块(+10K 跳变后气块还能再爬 1km+)—— 教科书夹具需要随高增温的真逆温;顶点落点带一到两个网格层的分辨率容差。
+
+另:normalize 以比湿为水汽主变量重算露点,合成 cube 的"湿地面"必须写在 q 上(23 g/kg @925hPa ⇒ Td≈299K),RH 字段会被覆盖 —— 夹具坑,已注释在测试里。
+
+交付形态:所有 detailed 单点 Forecast.geometry 恒带 `cloud_regime/lcl_m/unstable_depth_m/regime_marginal`;明确浓积云级追加 `convective_duration_min` 并 damping(0.5 系数、components+explanation 可解释);局部产品经同一入口自动获得标注。全国产品未动(后续按需)。
