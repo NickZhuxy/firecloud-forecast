@@ -610,3 +610,22 @@ def test_plot_uses_one_continuous_raster_not_discrete_contour_bands():
     alpha = np.asarray(image.get_alpha())
     assert alpha.shape == image.get_array().shape
     assert float(np.nanmax(alpha)) <= 0.96
+
+
+def test_metadata_probability_levels_three_cases():
+    from dataclasses import replace
+
+    base = _field()                                    # physics=None → all model
+    meta = product_mod._metadata(base, _DATE, "x.png", _GENERATED)
+    finite = int(np.isfinite(base.probability).sum())
+    assert meta["probability_levels"] == {"model": finite, "screen": 0, "refined": 0}
+
+    screened = replace(base, physics={"screen": {"enabled": True}})
+    meta = product_mod._metadata(screened, _DATE, "x.png", _GENERATED)
+    assert meta["probability_levels"] == {"model": 0, "screen": finite, "refined": 0}
+
+    mask = np.zeros_like(base.probability, dtype=bool)
+    mask[0, 0] = True
+    refined = replace(screened, refined_mask=mask)
+    meta = product_mod._metadata(refined, _DATE, "x.png", _GENERATED)
+    assert meta["probability_levels"] == {"model": 0, "screen": finite - 1, "refined": 1}

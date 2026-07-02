@@ -390,6 +390,17 @@ def plot_sunsetwx_product(
     return fig
 
 
+def _probability_levels(field: NationalField, n_finite: int) -> dict:
+    n_refined = (
+        int(np.asarray(field.refined_mask, dtype=bool).sum())
+        if field.refined_mask is not None
+        else 0
+    )
+    if field.physics is None:
+        return {"model": n_finite, "screen": 0, "refined": 0}
+    return {"model": 0, "screen": n_finite - n_refined, "refined": n_refined}
+
+
 def _metadata(
     field: NationalField,
     target_date: date,
@@ -418,6 +429,11 @@ def _metadata(
         "event_range_utc": [value.isoformat() for value in field.sunset_range_utc],
         "n_points": field.n_points,
         "probability_range": {"min": prob_min, "max": prob_max},
+        # Which pipeline produced each finite cell's probability: raw overview
+        # rules ("model"), the Stage A sunward screen ("screen"), or the Stage B
+        # shared-cube ray trace ("refined"). Physics on → every cell is at
+        # least screen-level; refined cells are counted apart via refined_mask.
+        "probability_levels": _probability_levels(field, int(finite.size)),
         "performance": {
             "surface_fetches": field.surface_fetches,
             "additional_surface_fetches": field.additional_surface_fetches,
