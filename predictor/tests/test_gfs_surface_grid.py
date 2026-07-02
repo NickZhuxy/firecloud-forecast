@@ -283,12 +283,22 @@ def test_surface_grid_records_unique_grib_payload_bytes(tmp_path):
 
 def test_download_surface_records_inventory_byte_ranges(monkeypatch, tmp_path):
     class FakeHerbie:
+        path = tmp_path / "surface__gfs.f006"
+
         def inventory(self, search):
             return pd.DataFrame({
                 "grib_message": [1, 2, 4],
                 "start_byte": [100, 200, 500],
                 "end_byte": [199, 299, 599],
             })
+
+        def download(self, search):
+            # Adjacent messages 1–2 are one 200-byte range; message 4 adds 100.
+            self.path.write_bytes(b"\0" * 300)
+            return self.path
+
+        def get_localFilePath(self, search):
+            return self.path
 
         def xarray(self, search):
             return _surface_ds()
@@ -308,12 +318,21 @@ def test_download_surface_records_inventory_byte_ranges(monkeypatch, tmp_path):
 
 def test_download_surface_repairs_parse_that_lacks_cover(monkeypatch, tmp_path):
     class FakeHerbie:
+        path = tmp_path / "surface__gfs.f006"
+
         def inventory(self, search):
             return pd.DataFrame({
                 "grib_message": [1],
                 "start_byte": [100],
                 "end_byte": [199],
             })
+
+        def download(self, search):
+            self.path.write_bytes(b"\0" * 100)
+            return self.path
+
+        def get_localFilePath(self, search):
+            return self.path
 
         def xarray(self, search):
             return _surface_ds(drop=("lcc", "mcc", "hcc"))

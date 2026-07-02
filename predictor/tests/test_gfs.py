@@ -217,13 +217,15 @@ def test_fetch_raises_gfs_unavailable_after_retries(monkeypatch):
         src.fetch_profile(30.0, 120.0, datetime(2026, 6, 23, 6, tzinfo=timezone.utc))
 
 
-# ---- pressure-subset completeness verification (#59 live validation bug) ----
+# ---- subset completeness verification (#59 live validation bug) ----
 #
 # Herbie downloads a regex subset as one HTTP range request per message group
 # and, on a dropped connection, leaves the partial file on disk; every later
 # call (in-process retry or a whole new run) sees the file exists and silently
-# parses the stub — missing entire level blocks. _download_dataset must verify
-# the byte count against the idx inventory and delete-and-retry on mismatch.
+# parses the stub — missing entire level blocks. Every subset download path
+# (_download_dataset, _download_surface, _prefetch_surface, _download_cover)
+# must verify the byte count against the idx inventory and delete-and-retry
+# on mismatch.
 
 
 class _SubsetHerbie:
@@ -231,10 +233,11 @@ class _SubsetHerbie:
 
     EXPECTED_BYTES = 300  # groups: msgs [1,2] → 0..199, msg [4] → 300..399
 
-    def __init__(self, path, payload_sizes, has_inventory=True):
+    def __init__(self, path, payload_sizes, has_inventory=True, dataset=None):
         self.path = path
         self.payload_sizes = list(payload_sizes)  # bytes written per download call
         self.has_inventory = has_inventory
+        self.dataset = dataset                    # what xarray() parses into
         self.download_calls = 0
         self.xarray_calls = 0
 
@@ -264,7 +267,7 @@ class _SubsetHerbie:
 
     def xarray(self, search):
         self.xarray_calls += 1
-        return _synthetic_gfs_ds()
+        return self.dataset if self.dataset is not None else _synthetic_gfs_ds()
 
 
 def _patched_source(monkeypatch, tmp_path, fake):
@@ -324,3 +327,95 @@ def test_subset_without_inventory_skips_verification(monkeypatch, tmp_path):
 
     assert "t" in ds.data_vars
     assert fake.xarray_calls == 1
+
+
+def _synthetic_surface_ds() -> xr.Dataset:
+    """Cover-bearing surface dataset — keeps _download_surface off the cover path."""
+    dims = ("latitude", "longitude")
+    data = {
+        s: (dims, np.full((2, 2), 42.0)) for s in ("lcc", "mcc", "hcc", "r2", "vis")
+    }
+    return xr.Dataset(
+        data, coords={"latitude": [40.0, 30.0], "longitude": [118.0, 120.0]}
+    )
+
+
+def test_truncated_surface_subset_is_deleted_and_redownloaded(monkeypatch, tmp_path):
+    """A poisoned surface stub must be caught before parse, like the pressure path."""
+    path = tmp_path / "surface_dead__gfs.f006"
+    path.write_bytes(b"\0" * 37)                      # poisoned leftover
+    fake = _SubsetHerbie(path, payload_sizes=[300], dataset=_synthetic_surface_ds())
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    ds = src._load_surface(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+
+    assert "lcc" in ds.data_vars
+    assert path.stat().st_size == _SubsetHerbie.EXPECTED_BYTES
+    assert fake.download_calls == 2   # skip-existing, then real re-download
+    assert fake.xarray_calls == 1     # parsed only after verification passed
+
+
+def test_persistently_truncated_surface_fails_loud_and_leaves_no_stub(
+    monkeypatch, tmp_path
+):
+    path = tmp_path / "surface_dead__gfs.f006"
+    fake = _SubsetHerbie(
+        path, payload_sizes=[37, 37, 37], dataset=_synthetic_surface_ds()
+    )
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    with pytest.raises(GFSUnavailable, match="surface subset f06 truncated"):
+        src._load_surface(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+
+    assert not path.exists()          # never left behind to poison later runs
+    assert fake.download_calls == src.SURFACE_DOWNLOAD_ATTEMPTS
+    assert fake.xarray_calls == 0     # a truncated file is never parsed
+
+
+def test_truncated_batch_prefetch_is_deleted_and_redownloaded(monkeypatch, tmp_path):
+    """_load_surface_batch heals a truncated prefetch instead of parsing the stub."""
+    fakes = {
+        6: _SubsetHerbie(
+            tmp_path / "surface__gfs.f006",
+            payload_sizes=[37, 300],              # truncated once, then complete
+            dataset=_synthetic_surface_ds(),
+        ),
+        9: _SubsetHerbie(
+            tmp_path / "surface__gfs.f009",
+            payload_sizes=[300],
+            dataset=_synthetic_surface_ds(),
+        ),
+    }
+    src = GFSSource(cache_dir=tmp_path)
+    src.SURFACE_RETRY_BACKOFF_S = 0.0
+    monkeypatch.setattr(
+        src, "_herbie", lambda run_dt, fxx, *, cache_namespace: fakes[fxx]
+    )
+
+    datasets = src._load_surface_batch(
+        datetime(2026, 6, 23, 0, tzinfo=timezone.utc), [6, 9]
+    )
+
+    assert len(datasets) == 2
+    for fake in fakes.values():
+        assert fake.path.stat().st_size == _SubsetHerbie.EXPECTED_BYTES
+        assert fake.xarray_calls == 1
+    # f06: truncated prefetch + verified re-download + skip-existing at parse.
+    assert fakes[6].download_calls == 3
+    # f09: clean prefetch + skip-existing at parse.
+    assert fakes[9].download_calls == 2
+
+
+def test_truncated_cover_subset_is_deleted_and_redownloaded(monkeypatch, tmp_path):
+    """The cover path must verify, delete and retry like every other subset."""
+    path = tmp_path / "cover_dead__gfs.f006"
+    path.write_bytes(b"\0" * 37)                      # poisoned leftover
+    fake = _SubsetHerbie(path, payload_sizes=[300])
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    ds = src._load_cover(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+
+    assert "t" in ds.data_vars
+    assert path.stat().st_size == _SubsetHerbie.EXPECTED_BYTES
+    assert fake.download_calls == 2   # skip-existing, then real re-download
+    assert fake.xarray_calls == 1     # parsed only after verification passed
