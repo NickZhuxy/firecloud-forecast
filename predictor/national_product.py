@@ -330,6 +330,19 @@ def plot_sunsetwx_product(
     )
     ax.add_patch(country_path)
     image.set_clip_path(country_path)
+    if field.refined_mask is not None and field.refined_mask.any():
+        jj, ii = np.nonzero(field.refined_mask)
+        refined_dots = ax.scatter(
+            np.asarray(field.lons)[ii],
+            np.asarray(field.lats)[jj],
+            s=2.5,
+            marker=".",
+            color="#1a1a1a",
+            alpha=0.55,
+            linewidths=0,
+            zorder=3,
+        )
+        refined_dots.set_clip_path(country_path)
     _draw_admin_lines(ax, context.admin1)
     _draw_polygon_boundary(ax, context.country, color="#151515", linewidth=1.0)
 
@@ -377,10 +390,15 @@ def plot_sunsetwx_product(
         fontsize=10,
         color="#202020",
     )
+    refined_note = (
+        f" · {int(field.refined_mask.sum()):,} cells ray-trace refined"
+        if field.refined_mask is not None and field.refined_mask.any()
+        else ""
+    )
     fig.text(
         0.045,
         0.07,
-        f"{field.n_points:,} grid cells · gate × modifier algorithm · "
+        f"{field.n_points:,} grid cells · gate × modifier algorithm{refined_note} · "
         f"generated {generated.isoformat()}",
         ha="left",
         va="center",

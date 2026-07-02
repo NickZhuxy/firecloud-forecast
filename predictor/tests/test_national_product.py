@@ -629,3 +629,32 @@ def test_metadata_probability_levels_three_cases():
     refined = replace(screened, refined_mask=mask)
     meta = product_mod._metadata(refined, _DATE, "x.png", _GENERATED)
     assert meta["probability_levels"] == {"model": 0, "screen": finite - 1, "refined": 1}
+
+
+def test_plot_marks_refined_cells_and_caption():
+    from dataclasses import replace
+
+    field = _field()
+    mask = np.zeros_like(field.probability, dtype=bool)
+    mask[1, 1] = mask[2, 3] = True
+    field = replace(field, refined_mask=mask, physics={"refinement": {"status": "run"}})
+
+    fig = plot_sunsetwx_product(field, _DATE, _context(), generated_at=_GENERATED)
+
+    ax = fig.axes[0]
+    sizes = [
+        len(c.get_offsets()) for c in ax.collections if hasattr(c, "get_offsets")
+    ]
+    assert 2 in sizes                                   # one dot per refined cell
+    assert any("ray-trace refined" in t.get_text() for t in fig.texts)
+
+
+def test_plot_without_mask_adds_no_refined_markers():
+    fig = plot_sunsetwx_product(_field(), _DATE, _context(), generated_at=_GENERATED)
+    sizes = [
+        len(c.get_offsets())
+        for c in fig.axes[0].collections
+        if hasattr(c, "get_offsets")
+    ]
+    assert 2 not in sizes
+    assert not any("ray-trace refined" in t.get_text() for t in fig.texts)
