@@ -540,3 +540,41 @@ def test_compute_geometry_new_fields_none_without_boundary():
     # Existing behaviour unchanged.
     assert result.max_reach_km is not None
     assert result.duration_min is not None
+
+
+# ---- FA-C4 (#86): convective vertical-line duration (manual §1.2.3) ----
+
+
+def test_convective_duration_scales_with_sqrt_cloud_top():
+    from predictor.geometry import convective_duration_min
+
+    d1 = convective_duration_min(2500.0, lat=31.0)
+    d4 = convective_duration_min(10000.0, lat=31.0)
+    assert d4 == pytest.approx(2.0 * d1, rel=1e-6)   # √(4h) = 2√h
+
+
+def test_convective_duration_yichun_magnitude():
+    from predictor.geometry import convective_duration_min
+
+    # Manual's Yichun case quotes v = 18 km/min at 47.7°N; a 10 km congestus
+    # top then sustains ≈ √(2·6371·10)/18 ≈ 20 min. Allow the FA-G4 blended
+    # speed to move this within 15–25 min.
+    d = convective_duration_min(10000.0, lat=47.7)
+    assert 15.0 <= d <= 25.0
+
+
+def test_convective_duration_degenerate_inputs():
+    from predictor.geometry import convective_duration_min
+
+    assert convective_duration_min(0.0, lat=31.0) == 0.0
+    assert convective_duration_min(-100.0, lat=31.0) == 0.0
+
+
+def test_convective_duration_is_half_the_stratiform_characteristic():
+    from predictor.geometry import characteristic_duration_min, convective_duration_min
+
+    # Same h: the stratiform triangle spans 2L/v, the vertical-line model L/v.
+    h, lat = 6000.0, 31.0
+    assert convective_duration_min(h, lat) == pytest.approx(
+        characteristic_duration_min(h, lat) / 2.0, rel=1e-9
+    )
