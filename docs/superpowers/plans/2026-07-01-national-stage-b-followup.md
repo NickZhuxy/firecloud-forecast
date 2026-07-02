@@ -82,3 +82,26 @@ PYTHONPATH=. uv run --no-sync python research/experiments/live_refine_validation
 - 合成基准：`research/experiments/nationalization_spike.py`。
 - 研究路线：`research/theory/intelligent-nationalization-spike-58.md`。
 - 记忆（`~/.claude/projects/.../memory/`）：`firecloud-issue-59-status`、`firecloud-desktop-tcc`、`firecloud-pytest-cov-broken`、`firecloud-agile-workflow`、`firecloud-metric-philosophy`。
+
+## 7. §2 验证结果（2026-07-02,用户本机实测)——已完成
+
+命令与 §2 完全一致(`--date 2026-06-30 --event sunset --bbox 20 42 100 122 --threshold 0.50`)。
+
+```
+[screen ] wall=  10.3s  peak_mem=  30.2MB  grid=(89, 89)  >=0.50 frac=0.179  surface_fetches=4  dl_MB=23.5
+[refine ] wall=1180.4s  peak_mem=1035.9MB  grid=(89, 89)  >=0.50 frac=0.087  surface_fetches=4  dl_MB=23.5
+[refine ] status=run cells_refined=1419 cubes_fetched=31 tiles=23 tile_deg=5.0
+[delta  ] cells_moved=1133  mean|Δ|=0.0594  max|Δ|=1.0000  screen>=0.50=1419 -> refine>=0.50=686
+```
+
+按 §4 逐条解读:
+
+- **每周期一次下载成立**:31 个 (hour,tile) cube 组、23 个 tile,实际只下载了 3 块 t06z 压力子集(f005/f006/f007,各 ≈210MB,字节数与 idx 精确相符)+1 块回退周期 t00z f011。`_ds_cache` 去重到 (run,fxx) 级,与 tile 数无关,§3 成本模型确认。
+- **[refine] 的 `dl_MB=23.5` 只计了地面场**——cube 下载字节未接入 `download_bytes` 记账(PR-B 待补的小口子)。真实压力下载 ≈ 210MB × 周期数。
+- **refine 收益显著且方向正确**:screen 的 1419 个 ≥0.50 候选精修后只剩 686(-52%),≥0.50 面积占比 0.179→0.087——与离线合成基准"screen 系统性偏乐观、refine 压 FP"一致。mean|Δ|=0.059、max|Δ|=1.0(有格点完全翻转)。**值得默认开启**。
+- **wall 1180s 几乎全是网络**:本次网络极不稳定(多次 200MB range GET 中途断),纯计算部分(cube 已落盘后 1419 格完整单点物理 + 31 次裁剪)估算 ≈ 0.3–0.6s/格。周期子集落盘后重跑走磁盘缓存,预计 ~10min 内。
+- **peak_mem ≈ 1.04GB**:3–4 个全球 721×1440 数据集同时驻留 `_ds_cache` 所致,开发机可接受;PR-B 建议按周期用完即释放或全国先裁一块再逐 tile 切。
+
+**过程中发现并修复的真实 bug**(commit `be4cfa0`,已在分支):herbie 子集下载断连会留半截 GRIB,且 download/xarray 只按"文件存在"判缓存 → 半截文件永久毒化缓存,首次验证运行死于只剩 [15..1] hPa 平流层顶的 f007 子集(37MB/210MB)。修复:`_download_dataset` 先落盘、对照 idx inventory 期望字节数校验、不符删除并按 transient 重试;顺带让压力子集从此保留磁盘缓存。三次运行共治愈 7 次真实截断(含 3 个历史遗留毒化文件,其中一个自 6 月起就潜伏在缓存里)。**PR-B 注意**:同样的静默截断风险存在于 surface/cover 子集路径(更小、概率低,但会以 NaN 空洞形式出现),建议 PR-B 顺手加同款校验。
+
+对 §5 PR-B 参数的建议:`tile_deg=5.0` 保持(内存/裁剪合理);`threshold=0.50` 起步(1419 格 ≈ 10min 计算,可接受;若要更快可收紧或加 max-cells 护栏并 log 截断量);下载成本按"≈210MB × 跨越周期数、一次性、之后磁盘命中"宣传。
