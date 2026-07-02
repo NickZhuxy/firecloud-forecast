@@ -112,6 +112,12 @@ def _subset_payload_bytes(herbie, search: str) -> int | None:
     )
 
 
+# Announce transfers at least this large at INFO. A pressure cube (~210 MB)
+# takes minutes and deserves progress lines; the ~0.6 MB surface hours of a
+# national run stay quiet.
+_PROGRESS_ANNOUNCE_BYTES = 50_000_000
+
+
 def _verified_subset_download(herbie, search: str, fxx: int, what: str) -> int | None:
     """Download a GRIB subset to disk, then verify it against the idx inventory.
 
@@ -122,9 +128,28 @@ def _verified_subset_download(herbie, search: str, fxx: int, what: str) -> int |
     and raised with a *transient* marker so _retry_transient re-downloads it
     cleanly. Returns the expected payload bytes (None when no idx exists, in
     which case verification is skipped).
+
+    Big transfers log progress at INFO (herbie's own chatter is silenced, so
+    without this a multi-minute cube download looks hung from the CLI).
     """
-    herbie.download(search)
     expected = _subset_payload_bytes(herbie, search)
+    announce = expected is not None and expected >= _PROGRESS_ANNOUNCE_BYTES
+    if announce:
+        local = herbie.get_localFilePath(search)
+        if local.exists() and local.stat().st_size == expected:
+            logger.info(
+                "GFS %s subset f%02d: using cached %.0f MB",
+                what, fxx, expected / 1e6,
+            )
+            announce = False
+        else:
+            logger.info(
+                "GFS %s subset f%02d: downloading %.0f MB (one-off per cycle, "
+                "cached on disk afterwards)…",
+                what, fxx, expected / 1e6,
+            )
+    started = time.perf_counter()
+    herbie.download(search)
     if expected is not None:
         local = herbie.get_localFilePath(search)
         actual = local.stat().st_size if local.exists() else None
@@ -135,6 +160,11 @@ def _verified_subset_download(herbie, search: str, fxx: int, what: str) -> int |
                 f"GFS {what} subset f{fxx:02d} truncated "
                 f"({actual}/{expected} bytes) — deleted for re-download"
             )
+    if announce:
+        logger.info(
+            "GFS %s subset f%02d: ready (%.0f MB in %.0f s)",
+            what, fxx, expected / 1e6, time.perf_counter() - started,
+        )
     return expected
 
 

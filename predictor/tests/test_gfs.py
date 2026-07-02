@@ -482,3 +482,63 @@ def test_gfssource_init_installs_chatter_filters(tmp_path):
         warnings.warn("Will not remove GRIB file because it previously existed.")
 
     assert rec == []
+
+
+# ---- download progress logging (big transfers only) ----
+#
+# A pressure cube is a ~210 MB download that takes minutes; with herbie's
+# chatter silenced the CLI would look hung. _verified_subset_download logs
+# meaningful progress at INFO — but only for payloads over the announce
+# threshold, so the six ~0.6 MB surface hours of a national run stay quiet.
+
+
+def test_big_subset_download_logs_progress(monkeypatch, tmp_path, caplog):
+    import logging
+
+    from predictor import gfs as gfs_module
+
+    monkeypatch.setattr(gfs_module, "_PROGRESS_ANNOUNCE_BYTES", 100)
+    path = tmp_path / "subset_big__gfs.f006"
+    fake = _SubsetHerbie(path, payload_sizes=[300])
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    with caplog.at_level(logging.INFO, logger="predictor.gfs"):
+        src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+
+    messages = [r.message for r in caplog.records]
+    assert any("downloading" in m for m in messages)
+    assert any("ready" in m for m in messages)
+
+
+def test_small_subset_download_stays_quiet(monkeypatch, tmp_path, caplog):
+    import logging
+
+    path = tmp_path / "subset_small__gfs.f006"
+    fake = _SubsetHerbie(path, payload_sizes=[300])   # 300 B << threshold
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    with caplog.at_level(logging.INFO, logger="predictor.gfs"):
+        src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+
+    assert caplog.records == []
+
+
+def test_cached_big_subset_logs_cache_hit_not_download(
+    monkeypatch, tmp_path, caplog
+):
+    import logging
+
+    from predictor import gfs as gfs_module
+
+    monkeypatch.setattr(gfs_module, "_PROGRESS_ANNOUNCE_BYTES", 100)
+    path = tmp_path / "subset_big__gfs.f006"
+    path.write_bytes(b"\0" * _SubsetHerbie.EXPECTED_BYTES)   # complete on disk
+    fake = _SubsetHerbie(path, payload_sizes=[])
+    src = _patched_source(monkeypatch, tmp_path, fake)
+
+    with caplog.at_level(logging.INFO, logger="predictor.gfs"):
+        src._load_dataset(datetime(2026, 6, 23, 0, tzinfo=timezone.utc), 6)
+
+    messages = [r.message for r in caplog.records]
+    assert any("cached" in m for m in messages)
+    assert not any("downloading" in m for m in messages)
