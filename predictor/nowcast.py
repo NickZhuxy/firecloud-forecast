@@ -85,20 +85,30 @@ def _passthrough(
 
 
 def _fetch_frames(satellite_source, lats, lons, now: datetime, config: NowcastStageConfig):
-    """Two consecutive B13 frames around ``now``, over the model grid + margin.
+    """Two consecutive *published* B13 frames near ``now``.
 
     The correlation search needs context beyond the model grid (±6 px at
-    0.25° = 1.5°), so widen the frame bbox by 2°.
+    0.25° = 1.5°), so the frame bbox widens by 2°. Himawari L1b lands on S3
+    with 10–20 min latency, so the nearest slot often 404s while earlier
+    slots exist — walk back up to three slots for a published pair (the
+    later frame of each pair is tried first to fail fast).
     """
     lat_min, lat_max = float(np.min(lats)) - 2.0, float(np.max(lats)) + 2.0
     lon_min, lon_max = float(np.min(lons)) - 2.0, float(np.max(lons)) + 2.0
     bbox = (lat_min, lat_max, lon_min, lon_max)
-    slot = nearest_slot(_as_utc(now))
-    earlier = slot - timedelta(minutes=config.frame_gap_min)
-    return [
-        satellite_source.fetch_brightness_temp(earlier, bbox=bbox),
-        satellite_source.fetch_brightness_temp(slot, bbox=bbox),
-    ]
+    newest = nearest_slot(_as_utc(now))
+    last_exc: Exception | None = None
+    for shift in range(3):
+        later = newest - timedelta(minutes=config.frame_gap_min * shift)
+        earlier = later - timedelta(minutes=config.frame_gap_min)
+        try:
+            later_frame = satellite_source.fetch_brightness_temp(later, bbox=bbox)
+            earlier_frame = satellite_source.fetch_brightness_temp(earlier, bbox=bbox)
+        except Exception as exc:  # noqa: BLE001 — try the previous slot pair
+            last_exc = exc
+            continue
+        return [earlier_frame, later_frame]
+    raise last_exc if last_exc is not None else SatelliteUnavailable("no frames")
 
 
 def stage_block(result: NowcastStageResult, prior_probability: np.ndarray) -> dict:

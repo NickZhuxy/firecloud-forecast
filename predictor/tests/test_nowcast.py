@@ -170,3 +170,28 @@ def test_ascending_latitude_direction_is_correct():
     assert res.applied
     j = 5 + 6                                     # 北移 6 行
     assert res.corrected_probability[j, :].mean() > prob[j, :].mean()
+
+
+def test_fetch_walks_back_past_unpublished_slots():
+    """Himawari L1b lands on S3 with 10–20 min latency: the newest slot 404s
+    while earlier ones exist. The stage must walk back to a published pair."""
+    lats, lons, f0, f1 = _shifted_frames()
+    prob = np.full((lats.size, lons.size), 0.7)
+    times = _grid_times(prob.shape, 1.0)
+
+    class _LatencySat:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_brightness_temp(self, valid_time, bbox=None, band="B13"):
+            self.calls.append(valid_time)
+            published = {f0.observation_time: f0, f1.observation_time: f1}
+            if valid_time not in published:        # newest slot not on S3 yet
+                raise SatelliteUnavailable("HTTP 404")
+            return published[valid_time]
+
+    sat = _LatencySat()
+    res = apply_nowcast(prob, lats, lons, times, sat, now=_NOW + timedelta(minutes=10))
+    # nearest_slot(now)=10:10Z 404s → walked back to the (09:50,10:00) pair.
+    assert res.applied is True
+    assert any(t > _NOW for t in sat.calls)        # tried the newest first
