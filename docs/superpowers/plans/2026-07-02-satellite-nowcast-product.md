@@ -294,3 +294,15 @@ def test_ascending_latitude_direction_is_correct():
 - **Spec 覆盖**:门/取帧/分带/防回卷=T1+T2;上图替换+双存+caption(国/局)=T3+T4;默认开关=T3/T4 参数+T5 flag;失败矩阵各路径=T1 测试+T3 的 applied=False 用例;零回归双保护=T1(窗口外)+T3(satellite=False);integration=T6 ✓
 - **占位符**:T3/T4 的 Step 1 描述了断言目标但未展开全部测试体——执行者为本会话(上下文在手),按 T1/T2 的完整风格落地;其余任务代码完整 ✓
 - **类型一致性**:`apply_nowcast` 签名、`NowcastStageResult` 字段、`satellite/satellite_source/now` 参数名在 T1–T5 全文一致;`fetch_brightness_temp(valid_time, bbox=…)` 参数序与 satellite.py 实况一致 ✓
+
+## 完成记录(2026-07-02)
+
+6 任务全部完成,离线套件 **610 passed**(含 12 个 nowcast 单测:门/失败矩阵/分带/方向/防回卷/发布延迟回退/诚实 no-op)。integration 档 1 例(satpy 缺失自动 skip;本机已装 `uv sync --extra satellite`)。
+
+**Live 实弹的三个发现**(都当场修复/确认):
+
+1. **Himawari 发布延迟**:`nearest_slot(now)` 常 404(L1b 上 S3 延迟 10–20 分钟)→ 取帧回退至已发布的连续槽对(≤3 级,先试新帧快速失败),commit `483e3a0`。
+2. **速度分辨率地板**:10 分钟帧距 × 0.25° 像素 ⇒ 1.5°/hr(165 km/h),真实云速全部量化为零位移——首次 applied 实为恒等订正且虚报 4826 格。运动对拉开到 30 分钟(地板 0.5°/hr),零像素位移诚实 no-op(`applied=false, reason="below grid resolution"`)。
+3. **窗口语义实证**:提前跑图 `reason="no cells within nowcast window"` 零成本;窗口内(lead [0,1.87]h)真帧真解码,今晚全国主导运动子像素 → 诚实未订正。0.25° 全国栅格下 Stage C 结构性地只对快系统(急流卷云/飑线/台风外围 >55 km/h)生效——这正是临近订正价值最大的场景。
+
+**后续想法**(不阻塞):局部产品可传 `Himawari9Source(resolution_deg=0.1)` 细栅格,速度地板降到 ~11 km/h,普通平流可测;代价是 satpy 重栅格更贵。多帧(>2)拟合可再压噪声。
