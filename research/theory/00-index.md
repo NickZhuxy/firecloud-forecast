@@ -17,6 +17,7 @@
 | [fa-a2-path-extinction](fa-a2-path-extinction.md) | FA-A2 | 沿光线逐列路径消光（替代沿程 AOD 均值）；逐列等效不透明地表 | §1.3.1–4 / §4.1.1 / §2.4.2 |
 | [fa-t1-boundary-advection](fa-t1-boundary-advection.md) | FA-T1 | 云边界按云高风平移到日落时刻（Δt=日落−valid_time）| §4.1.1 / §4.2 |
 | [fa-g4-terminator-speed](fa-g4-terminator-speed.md) | FA-G4 | 日落终结线速度 v（手册 vs 物理统计中点，仅进时长不进概率）| 附录 v 表 |
+| [fa-c4-skewt-stability-convective-regime](fa-c4-skewt-stability-convective-regime.md) | FA-C4 | 斜温图状态曲线/条件不稳定 → 对流/层状判别；浓积云切 §1.2.3 垂直线模型 + 降置信 | §1.1.3 / §1.4.1 / §1.2.3(1) / §2.2 / §4.1.2 |
 
 ## 推荐阅读顺序
 
