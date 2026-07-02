@@ -71,6 +71,31 @@ def test_aod_path_matches_scalar():
     assert abs(grid[0, 0] - scalar) < 1e-9
 
 
+def test_optional_sunward_gate_blocks_cloud_deck_without_reachable_edge():
+    base_kwargs = dict(
+        cloud_low_pct=np.array([[5.0]]),
+        cloud_mid_pct=np.array([[55.0]]),
+        cloud_high_pct=np.array([[40.0]]),
+        humidity_pct=np.array([[60.0]]),
+        visibility_m=np.array([[25000.0]]),
+        cloud_base_m=np.array([[3500.0]]),
+        sunward_profile_max_km=np.array([[800.0]]),
+        sunward_aod_mean=np.array([[0.02]]),
+    )
+
+    no_edge = score_grid(GridInputs(
+        **base_kwargs,
+        sunward_cloud_boundary_km=np.array([[np.nan]]),
+    ))
+    near_edge = score_grid(GridInputs(
+        **base_kwargs,
+        sunward_cloud_boundary_km=np.array([[100.0]]),
+    ))
+
+    assert no_edge[0, 0] == 0.0
+    assert near_edge[0, 0] > 0.0
+
+
 def test_missing_clean_air_signals_are_neutral_like_scalar():
     # When neither visibility nor AOD is available, CleanAirGate is neutral (1.0).
     low = np.array([[5.0]]); mid = np.array([[55.0]]); high = np.array([[40.0]])

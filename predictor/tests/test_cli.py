@@ -25,6 +25,12 @@ def test_event_choice_rejects_junk():
         build_parser().parse_args(["--event", "noon"])
 
 
+def test_long_alias_parses_as_lon():
+    args = build_parser().parse_args(["--lat", "31.5", "--long", "121.5"])
+    assert args.lat == 31.5
+    assert args.lon == 121.5
+
+
 # --- planning (pure) ---
 
 def test_plan_both_events_national_only():

@@ -1,6 +1,7 @@
 # predictor/tests/test_local_field.py
 """Tests for the local fine-product field (#62), offline with a synthetic cube."""
 import math
+import logging
 from datetime import datetime, timezone
 
 import numpy as np
@@ -114,6 +115,22 @@ def test_build_local_field_shape_and_one_cube_fetch():
     assert field.probability.shape == (field.lats.size, field.lons.size)
     assert np.all((field.probability >= 0.0) & (field.probability <= 1.0))
     assert src.calls == 1   # ONE shared cube for the whole grid
+
+
+def test_build_local_field_logs_progress(caplog):
+    predictor = standard_predictor(FakeSource(snapshot=_snapshot()))
+    caplog.set_level(logging.INFO, logger="predictor.local_field")
+
+    build_local_field(
+        predictor, _FakeCubeSource(_cube()), 30.0, 120.0, _VALID,
+        radius_km=40.0, resolution_deg=0.2, distances_km=[0.0, 100.0, 200.0],
+    )
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("Local product grid:" in message for message in messages)
+    assert any("Local product GFS cube: fetching" in message for message in messages)
+    assert any("Local product weather: loaded" in message for message in messages)
+    assert any("Local product scoring:" in message for message in messages)
 
 
 def test_shared_cube_bbox_covers_every_cell_sunward_path():

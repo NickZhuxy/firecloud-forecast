@@ -112,6 +112,62 @@ def _subset_payload_bytes(herbie, search: str) -> int | None:
     )
 
 
+# Announce transfers at least this large at INFO. A pressure cube (~210 MB)
+# takes minutes and deserves progress lines; the ~0.6 MB surface hours of a
+# national run stay quiet.
+_PROGRESS_ANNOUNCE_BYTES = 50_000_000
+
+
+def _verified_subset_download(herbie, search: str, fxx: int, what: str) -> int | None:
+    """Download a GRIB subset to disk, then verify it against the idx inventory.
+
+    Herbie fetches one HTTP range per message group and a dropped connection
+    leaves the partial file on disk; because both download() and xarray() treat
+    any existing file as cached, every later attempt would silently parse that
+    stub (whole fields/levels missing) forever. A mismatched file is deleted
+    and raised with a *transient* marker so _retry_transient re-downloads it
+    cleanly. Returns the expected payload bytes (None when no idx exists, in
+    which case verification is skipped).
+
+    Big transfers log progress at INFO (herbie's own chatter is silenced, so
+    without this a multi-minute cube download looks hung from the CLI).
+    """
+    expected = _subset_payload_bytes(herbie, search)
+    announce = expected is not None and expected >= _PROGRESS_ANNOUNCE_BYTES
+    if announce:
+        local = herbie.get_localFilePath(search)
+        if local.exists() and local.stat().st_size == expected:
+            logger.info(
+                "GFS %s subset f%02d: using cached %.0f MB",
+                what, fxx, expected / 1e6,
+            )
+            announce = False
+        else:
+            logger.info(
+                "GFS %s subset f%02d: downloading %.0f MB (one-off per cycle, "
+                "cached on disk afterwards)…",
+                what, fxx, expected / 1e6,
+            )
+    started = time.perf_counter()
+    herbie.download(search)
+    if expected is not None:
+        local = herbie.get_localFilePath(search)
+        actual = local.stat().st_size if local.exists() else None
+        if actual != expected:
+            if local.exists():
+                local.unlink()
+            raise GFSUnavailable(
+                f"GFS {what} subset f{fxx:02d} truncated "
+                f"({actual}/{expected} bytes) — deleted for re-download"
+            )
+    if announce:
+        logger.info(
+            "GFS %s subset f%02d: ready (%.0f MB in %.0f s)",
+            what, fxx, expected / 1e6, time.perf_counter() - started,
+        )
+    return expected
+
+
 def _dataset_download_bytes(ds: xr.Dataset) -> int | None:
     """Logical download bytes from inventory metadata or retained local files."""
     measured = ds.attrs.get(_DOWNLOAD_BYTES_ATTR)
@@ -141,6 +197,7 @@ GFS_VAR_MAP: dict[str, str] = {
     "u": "u_wind_m_s",
     "v": "v_wind_m_s",
     "w": "vertical_velocity_pa_s",
+    "clmr": "cloud_water_kg_kg",
     "clwmr": "cloud_water_kg_kg",
     "icmr": "cloud_ice_kg_kg",
 }
@@ -156,6 +213,9 @@ class GFSUnavailable(RuntimeError):
 _TRANSIENT_NETWORK_MARKERS = (
     "timed out", "timeout", "connection", "reset by peer",
     "temporarily unavailable", "throttl", " 500", " 502", " 503", " 504",
+    # A truncated subset download (verified against the idx byte count) is a
+    # dropped transfer: the cycle exists, so re-downloading is the right move.
+    "truncated",
 )
 
 
@@ -168,6 +228,39 @@ def _is_transient_network_error(exc: Exception) -> bool:
     through to the caller's cycle fallback immediately).
     """
     return any(marker in str(exc).lower() for marker in _TRANSIENT_NETWORK_MARKERS)
+
+
+def _is_empty_xarray_selection_error(exc: ValueError) -> bool:
+    """cfgrib can surface absent sparse levels as an empty lazy index."""
+    message = str(exc).lower()
+    return "zero-size array" in message and "reduction operation" in message
+
+
+_GRIB_CHATTER_SILENCED = False
+
+
+def _silence_grib_chatter() -> None:
+    """Suppress the two recurring third-party warnings of every GRIB fetch.
+
+    Targeted by message so anything unexpected still surfaces:
+    - herbie warns "Will not remove GRIB file…" whenever it parses an
+      already-cached subset — which is our normal path, not a problem;
+    - cfgrib's internal ``xr.merge`` triggers xarray's compat-default
+      FutureWarning once per opened dataset (our own merges pass ``compat``
+      explicitly and never warn).
+    Herbie's prints ("✅ Found…", per-message download rows) are silenced
+    separately via ``Herbie(verbose=False)`` in ``_herbie``.
+    """
+    import warnings
+
+    warnings.filterwarnings(
+        "ignore", message=r"Will not remove GRIB file"
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"In a future version of xarray the default value for compat",
+        category=FutureWarning,
+    )
 
 
 class GFSSource:
@@ -201,6 +294,12 @@ class GFSSource:
         self.cache_dir = Path(cache_dir or self.DEFAULT_CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.levels = tuple(levels) if levels else self.DEFAULT_LEVELS_HPA
+        # Install once per process, before any download threads exist
+        # (warnings filters are global, mutating them from workers races).
+        global _GRIB_CHATTER_SILENCED
+        if not _GRIB_CHATTER_SILENCED:
+            _silence_grib_chatter()
+            _GRIB_CHATTER_SILENCED = True
         # Per-instance in-memory caches keyed by (run_dt, fxx), mirroring
         # HRRRSource: avoids re-parsing for repeated same-cycle queries.
         self._ds_cache: dict[tuple[datetime, int], xr.Dataset] = {}
@@ -341,7 +440,9 @@ class GFSSource:
         cached = self._ds_cache.get(key)
         if cached is not None:
             return cached
-        ds = self._download_dataset(run_dt, fxx)
+        ds = self._retry_transient(
+            lambda: self._download_dataset(run_dt, fxx), fxx, "pressure cube download"
+        )
         self._ds_cache[key] = ds
         return ds
 
@@ -350,7 +451,9 @@ class GFSSource:
         cached = self._cover_cache.get(key)
         if cached is not None:
             return cached
-        ds = self._download_cover(run_dt, fxx)
+        ds = self._retry_transient(
+            lambda: self._download_cover(run_dt, fxx), fxx, "cover download"
+        )
         self._cover_cache[key] = ds
         return ds
 
@@ -370,7 +473,7 @@ class GFSSource:
                 if attempt == self.SURFACE_DOWNLOAD_ATTEMPTS or not _is_transient_network_error(exc):
                     raise
                 logger.warning(
-                    "GFS surface %s f%02d: transient error (attempt %d/%d): %s — retrying",
+                    "GFS %s f%02d: transient error (attempt %d/%d): %s — retrying",
                     what, fxx, attempt, self.SURFACE_DOWNLOAD_ATTEMPTS, exc,
                 )
                 time.sleep(self.SURFACE_RETRY_BACKOFF_S * attempt)
@@ -383,7 +486,9 @@ class GFSSource:
             return cached
         # Parse (eccodes/cfgrib). If the file was prefetched this is a local read;
         # otherwise _download_surface also fetches it. Retried for the latter case.
-        ds = self._retry_transient(lambda: self._download_surface(run_dt, fxx), fxx, "parse")
+        ds = self._retry_transient(
+            lambda: self._download_surface(run_dt, fxx), fxx, "surface parse"
+        )
         self._surface_cache[key] = ds
         return ds
 
@@ -412,7 +517,9 @@ class GFSSource:
                 futures = [
                     pool.submit(
                         self._retry_transient,
-                        lambda f=f: self._prefetch_surface(run_dt, f), f, "download",
+                        lambda f=f: self._prefetch_surface(run_dt, f),
+                        f,
+                        "surface download",
                     )
                     for f in pending
                 ]
@@ -423,30 +530,42 @@ class GFSSource:
 
     def _prefetch_surface(self, run_dt: datetime, fxx: int) -> None:
         """Download one surface hour's GRIB subset to disk — network only, no parse."""
-        self._herbie(run_dt, fxx).download(self._SURFACE_SEARCH)
+        H = self._herbie(run_dt, fxx, cache_namespace="surface")
+        _verified_subset_download(H, self._SURFACE_SEARCH, fxx, "surface")
 
-    def _herbie(self, run_dt: datetime, fxx: int):
+    def _herbie(self, run_dt: datetime, fxx: int, *, cache_namespace: str):
         """Construct a Herbie handle for a GFS 0.25° cycle (network on .xarray)."""
         from herbie import Herbie
 
+        save_dir = self.cache_dir / cache_namespace
+        # Pre-create the dated subdir herbie writes into: its download() emits
+        # an ungated "Created directory" print when the dir is missing.
+        (save_dir / "gfs" / f"{run_dt:%Y%m%d}").mkdir(parents=True, exist_ok=True)
         return Herbie(
             run_dt.strftime("%Y-%m-%d %H:%M"),
             model="gfs",
             product="pgrb2.0p25",
             fxx=fxx,
-            save_dir=self.cache_dir,
+            save_dir=save_dir,
+            # Silence herbie's per-fetch chatter ("✅ Found …", subset download
+            # rows, "Note: Returning a list of …") — a national run makes
+            # dozens of fetches and each would print several lines into the
+            # product output. Meaningful state still reaches the user via our
+            # own logger (retries, truncation heals, batch progress).
+            verbose=False,
         )
 
     def _download_dataset(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         """Download + parse the GFS pressure-level subset via Herbie (network)."""
-        H = self._herbie(run_dt, fxx)
-        # Subset to our variables on pressure (mb) levels. cfgrib may split into
-        # several datasets by step/type; merge into one isobaric dataset.
-        # join="outer" is explicit (not the deprecated default): GFS variables
-        # like CLWMR/ICMR are reported on fewer levels than TMP, so the union of
-        # levels must be kept (missing levels NaN-filled), and a future xarray
-        # default of join="exact" would otherwise raise on the mismatch.
-        search = r":(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLWMR|ICMR):\d+ mb:"
+        H = self._herbie(run_dt, fxx, cache_namespace="pressure")
+        search = r":(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLMR|CLWMR|ICMR):\d+ mb:"
+        _verified_subset_download(H, search, fxx, "pressure")
+        # cfgrib may split into several datasets by step/type; merge into one
+        # isobaric dataset. join="outer" is explicit (not the deprecated
+        # default): GFS variables like CLWMR/ICMR are reported on fewer levels
+        # than TMP, so the union of levels must be kept (missing levels
+        # NaN-filled), and a future xarray default of join="exact" would
+        # otherwise raise on the mismatch.
         parsed = H.xarray(search)
         if isinstance(parsed, list):
             return xr.merge(
@@ -456,23 +575,30 @@ class GFSSource:
 
     def _download_cover(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         """Download the GFS three-tier cloud covers (LCDC/MCDC/HCDC) via Herbie."""
-        H = self._herbie(run_dt, fxx)
+        H = self._herbie(run_dt, fxx, cache_namespace="cover")
+        search = r":(?:LCDC|MCDC|HCDC):"
+        _verified_subset_download(H, search, fxx, "cover")
         # Each étage cover sits on its own cloud-layer level type, so Herbie
         # returns one dataset per cover; merge them on the shared lat/lon grid.
-        parsed = H.xarray(r":(?:LCDC|MCDC|HCDC):")
+        parsed = H.xarray(search)
         if isinstance(parsed, list):
             return xr.merge(parsed, compat="override", combine_attrs="override")
         return parsed
 
     def _download_surface(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         """Download (if needed) + parse GFS surface fields (cover, 2 m RH, visibility)."""
-        H = self._herbie(run_dt, fxx)
+        H = self._herbie(run_dt, fxx, cache_namespace="surface")
         search = self._SURFACE_SEARCH
-        download_bytes = _subset_payload_bytes(H, search)
+        download_bytes = _verified_subset_download(H, search, fxx, "surface")
         parsed = H.xarray(search)
         if isinstance(parsed, list):
             parsed = xr.merge(
                 parsed, compat="override", combine_attrs="override", join="outer"
+            )
+        if not any(short in parsed.data_vars for short in self._COVER_SHORTNAMES):
+            cover = self._download_cover(run_dt, fxx)
+            parsed = xr.merge(
+                [parsed, cover], compat="override", combine_attrs="override", join="outer"
             )
         if download_bytes is not None:
             parsed.attrs[_DOWNLOAD_BYTES_ATTR] = download_bytes
@@ -608,10 +734,14 @@ class GFSSource:
         present_levels = sorted(
             (lv for lv in levels if lv in set(grid_levels)), reverse=True
         )
-        sub = ds.sel(isobaricInhPa=present_levels)
+        if not present_levels:
+            raise GFSUnavailable(
+                f"GFS pressure dataset has none of the requested levels {levels}; "
+                f"got {grid_levels}"
+            )
 
-        lats = np.asarray(sub["latitude"].values, dtype=float)
-        grid_lons = np.asarray(sub["longitude"].values, dtype=float)
+        lats = np.asarray(ds["latitude"].values, dtype=float)
+        grid_lons = np.asarray(ds["longitude"].values, dtype=float)
         uses_0_360 = float(np.nanmax(grid_lons)) > 180.0
 
         def _norm(x: float) -> float:
@@ -626,23 +756,78 @@ class GFSSource:
 
         lat_idx = np.where(lat_mask)[0]
         lon_idx = np.where(lon_mask)[0]
-        sub = sub.isel(latitude=lat_idx, longitude=lon_idx)
+        if lat_idx.size == 0 or lon_idx.size == 0:
+            raise GFSUnavailable(f"GFS pressure crop is empty for bbox {bbox}")
+
+        sub = ds.isel(latitude=lat_idx, longitude=lon_idx)
 
         out_lats = np.asarray(sub["latitude"].values, dtype=float)
         out_lons = np.asarray(sub["longitude"].values, dtype=float)
         nz, ny, nx = len(present_levels), out_lats.size, out_lons.size
 
-        short_by_field = {v: k for k, v in GFS_VAR_MAP.items()}
+        shorts_by_field: dict[str, list[str]] = {}
+        for short, field in GFS_VAR_MAP.items():
+            shorts_by_field.setdefault(field, []).append(short)
         arrays: dict[str, np.ndarray] = {}
         missing: list[str] = []
         for field_name in PROFILE_VARS:
-            short = short_by_field[field_name]
-            if short in sub.data_vars:
-                arr = (
-                    sub[short]
-                    .transpose("isobaricInhPa", "latitude", "longitude")
-                    .values.astype(float)
-                )
+            short = next(
+                (candidate for candidate in shorts_by_field[field_name] if candidate in sub.data_vars),
+                None,
+            )
+            if short is not None:
+                da = sub[short]
+                required_dims = {"isobaricInhPa", "latitude", "longitude"}
+                if not required_dims.issubset(da.dims):
+                    arr = np.full((nz, ny, nx), np.nan)
+                    missing.append(field_name)
+                    arrays[field_name] = arr
+                    continue
+
+                extra_dims = [dim for dim in da.dims if dim not in required_dims]
+                if extra_dims:
+                    da = da.isel({dim: 0 for dim in extra_dims})
+
+                try:
+                    arr = (
+                        da.sel(isobaricInhPa=present_levels)
+                        .transpose("isobaricInhPa", "latitude", "longitude")
+                        .values.astype(float)
+                    )
+                except ValueError as exc:
+                    if not _is_empty_xarray_selection_error(exc):
+                        raise
+                    arr = np.full((nz, ny, nx), np.nan)
+                    for zi, level in enumerate(present_levels):
+                        try:
+                            values = (
+                                da.sel(isobaricInhPa=level)
+                                .transpose("latitude", "longitude")
+                                .values.astype(float)
+                            )
+                        except KeyError:
+                            continue
+                        except ValueError as level_exc:
+                            if not _is_empty_xarray_selection_error(level_exc):
+                                raise
+                            continue
+                        if values.shape != (ny, nx):
+                            values = np.asarray(values, dtype=float).squeeze()
+                        if values.shape != (ny, nx):
+                            raise GFSUnavailable(
+                                f"GFS field {short!r} has unexpected shape "
+                                f"{values.shape}; expected {(ny, nx)}"
+                            )
+                        arr[zi] = values
+                if arr.shape != (nz, ny, nx):
+                    arr = np.asarray(arr, dtype=float).squeeze()
+                if arr.shape != (nz, ny, nx):
+                    raise GFSUnavailable(
+                        f"GFS field {short!r} has unexpected shape {arr.shape}; "
+                        f"expected {(nz, ny, nx)}"
+                    )
+                if not np.isfinite(arr).any():
+                    missing.append(field_name)
             else:
                 arr = np.full((nz, ny, nx), np.nan)
                 missing.append(field_name)
