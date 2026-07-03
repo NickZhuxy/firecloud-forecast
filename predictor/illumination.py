@@ -12,9 +12,10 @@ with a graceful fallback to the three-tier estimate when no layers are given.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
-from predictor.clouds import CloudLayer
+from predictor.clouds import CloudLayer, tier_from_height
 from predictor.geometry import characteristic_duration_min
 
 
@@ -23,6 +24,19 @@ from predictor.geometry import characteristic_duration_min
 # attenuates most, glaciated (ice) cirrus least, mixed in between.
 _FULL_OPACITY_THICKNESS_M = 2000.0
 _PHASE_OPACITY = {"liquid": 1.0, "mixed": 0.7, "ice": 0.4}
+
+# FA-C2 (manual §4.1.1): multi-criteria canvas selection. Cover is the dominant
+# criterion — the only one allowed to zero a candidate; the others are bounded
+# modifiers with floors so a thin-but-real deck stays viable (thin cirrus burns
+# beautifully — thinness means "less robust", not "not a canvas").
+# Mirrors features._LAYER_PRESENCE_THRESHOLD; features imports this module, so
+# the constant cannot be imported the other way without a cycle.
+_CANVAS_PRESENCE_COVER_PCT = 10.0
+_SUBSTANCE_FLOOR = 0.5
+_HEIGHT_FLOOR = 0.6
+_HEIGHT_SPAN = 0.4
+_HEIGHT_FULL_M = 8000.0
+_EXTENT_FLOOR = 0.5
 
 
 @dataclass
@@ -85,11 +99,145 @@ def canvas_obstruction_fraction(layers: list[CloudLayer]) -> float | None:
     return _obstruction_below(canvas, layers)
 
 
-def canvas_layer_from_diagnosis(layers: list[CloudLayer]) -> CloudLayer | None:
-    """Pick the colour canvas: the highest diagnosed deck (lit longest)."""
-    if not layers:
+@dataclass
+class CanvasCandidate:
+    """One diagnosed deck's standing in the canvas selection (FA-C2)."""
+
+    layer: CloudLayer
+    tier: str                  # WMO étage of the deck's base
+    eligible: bool             # passed étage precedence (low ≠ canvas under mid/high)
+    is_canvas: bool
+    cover_pct: float | None    # étage cover fed in; None = unknown
+    boundary_km: float | None  # sunward étage boundary fed in; None = unknown
+    cover_term: float
+    substance_term: float
+    height_term: float
+    extent_term: float
+    score: float               # cover · substance · height · extent
+
+
+@dataclass
+class CanvasSelection:
+    """The chosen canvas plus the per-candidate criteria that explain it."""
+
+    layer: CloudLayer | None
+    candidates: list[CanvasCandidate]
+
+
+def _tier_value(
+    mapping: Mapping[str, float] | None, tier: str
+) -> float | None:
+    if mapping is None:
         return None
-    return max(layers, key=lambda layer: layer.base_m)
+    value = mapping.get(tier)
+    if value is None:
+        return None
+    value = float(value)
+    return value if math.isfinite(value) else None
+
+
+def select_canvas(
+    layers: list[CloudLayer],
+    *,
+    cover_pct_by_tier: Mapping[str, float] | None = None,
+    boundary_km_by_tier: Mapping[str, float] | None = None,
+) -> CanvasSelection:
+    """Pick the colour canvas by the manual's multi-criteria logic (FA-C2, §4.1.1).
+
+    Two steps, mirroring the 伊春 worked example ("高云云量没有中云多,而且高云
+    边界比中云边界近,所以直接看中云"):
+
+    1. Étage precedence: candidates are the mid/high decks whose étage cover is
+       unknown or ≥ the presence threshold — low cloud under a present elevated
+       deck is obstruction, not canvas (#13). Only when no elevated deck is
+       present does the whole sky compete (深圳 stratocumulus case).
+    2. ``score = cover · substance · height · extent`` over the candidates;
+       ties break to the higher base (the old rule's degenerate case). Cover is
+       dominant; substance (τ, thickness×phase fallback), height and boundary
+       extent are floored modifiers — robustness signals, not vetoes.
+
+    ``cover_pct_by_tier``/``boundary_km_by_tier`` map étage → value from the
+    same-source cover field / sunward transect; missing entries read neutral.
+    With no auxiliary data at all, equal-substance decks fall back to the old
+    "highest deck wins" behaviour.
+    """
+    if not layers:
+        return CanvasSelection(layer=None, candidates=[])
+
+    tiers = [tier_from_height(layer.base_m) for layer in layers]
+    covers = [_tier_value(cover_pct_by_tier, tier) for tier in tiers]
+
+    def _present(idx: int) -> bool:
+        cover = covers[idx]
+        return cover is None or cover >= _CANVAS_PRESENCE_COVER_PCT
+
+    elevated = [
+        idx for idx, tier in enumerate(tiers) if tier != "low" and _present(idx)
+    ]
+    eligible = set(elevated) if elevated else set(range(len(layers)))
+
+    boundaries = [_tier_value(boundary_km_by_tier, tier) for tier in tiers]
+    boundary_ref = max(
+        (boundaries[idx] for idx in eligible if boundaries[idx] is not None),
+        default=None,
+    )
+
+    candidates: list[CanvasCandidate] = []
+    for idx, layer in enumerate(layers):
+        cover = covers[idx]
+        cover_term = (
+            1.0 if cover is None else min(100.0, max(0.0, cover)) / 100.0
+        )
+        substance_term = (
+            _SUBSTANCE_FLOOR + (1.0 - _SUBSTANCE_FLOOR) * _layer_opacity(layer)
+        )
+        base_m = layer.base_m if math.isfinite(layer.base_m) else 0.0
+        height_term = _HEIGHT_FLOOR + _HEIGHT_SPAN * min(
+            max(base_m, 0.0) / _HEIGHT_FULL_M, 1.0
+        )
+        boundary = boundaries[idx]
+        if boundary is None or boundary_ref is None or boundary_ref <= 0.0:
+            extent_term = 1.0
+        else:
+            extent_term = _EXTENT_FLOOR + (1.0 - _EXTENT_FLOOR) * min(
+                boundary / boundary_ref, 1.0
+            )
+        candidates.append(
+            CanvasCandidate(
+                layer=layer,
+                tier=tiers[idx],
+                eligible=idx in eligible,
+                is_canvas=False,
+                cover_pct=cover,
+                boundary_km=boundary,
+                cover_term=cover_term,
+                substance_term=substance_term,
+                height_term=height_term,
+                extent_term=extent_term,
+                score=cover_term * substance_term * height_term * extent_term,
+            )
+        )
+
+    winner = max(
+        (cand for cand in candidates if cand.eligible),
+        key=lambda cand: (cand.score, cand.layer.base_m),
+    )
+    winner.is_canvas = True
+    return CanvasSelection(layer=winner.layer, candidates=candidates)
+
+
+def canvas_layer_from_diagnosis(
+    layers: list[CloudLayer],
+    *,
+    cover_pct_by_tier: Mapping[str, float] | None = None,
+    boundary_km_by_tier: Mapping[str, float] | None = None,
+) -> CloudLayer | None:
+    """The canvas deck per :func:`select_canvas` (FA-C2), or None without layers."""
+    return select_canvas(
+        layers,
+        cover_pct_by_tier=cover_pct_by_tier,
+        boundary_km_by_tier=boundary_km_by_tier,
+    ).layer
 
 
 def cloud_base_from_diagnosis(layers: list[CloudLayer]) -> float | None:
