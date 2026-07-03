@@ -82,3 +82,34 @@ def test_high_cloud_canvas_scores_at_least_as_well_as_mid(base_features):
     # Non-vacuous at this baseline: the altitude preference is a real, strict
     # advantage here, not a tie that would pass trivially.
     assert high_canvas > mid_canvas
+
+
+def test_convective_regime_handling_never_pushes_probability_from_half():
+    """FA-C4 (#86), manual §4.1.2 as a directional law: the regime treatment
+    may only shrink |P − 0.5| (damping toward uninformative) or leave it
+    untouched (stratiform / marginal) — for ANY atmosphere, it must never
+    manufacture confidence. End-to-end through score_point_with_cube."""
+    from predictor.stability import StabilityConfig
+    from predictor.sunward_section import score_point_with_cube
+    from predictor.tests.test_sunward_section import (
+        _LOW_AND_HIGH,
+        _VALID,
+        _convective_cube,
+        _detail_snapshot,
+        _uniform_cube,
+    )
+
+    predictor = standard_predictor(FakeSource(snapshot=_detail_snapshot()))
+    no_regime = StabilityConfig(congestus_min_depth_m=1e9)
+    for cube in (_uniform_cube(_LOW_AND_HIGH), _convective_cube()):
+        undamped = score_point_with_cube(
+            predictor, cube, _detail_snapshot(), 30.0, 120.0, _VALID,
+            distances_km=[0.0, 100.0, 200.0], stability_config=no_regime,
+        )
+        handled = score_point_with_cube(
+            predictor, cube, _detail_snapshot(), 30.0, 120.0, _VALID,
+            distances_km=[0.0, 100.0, 200.0],
+        )
+        assert abs(handled.probability - 0.5) <= abs(undamped.probability - 0.5) + 1e-12
+        if handled.geometry["cloud_regime"] == "stratiform":
+            assert handled.probability == undamped.probability

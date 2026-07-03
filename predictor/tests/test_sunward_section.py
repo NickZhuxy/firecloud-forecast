@@ -303,3 +303,81 @@ def test_more_upstream_aerosol_never_raises_composite_probability():
     assert dirty_upstream <= clean + 1e-12
     assert clean > 0.0
     assert dirty_upstream == 0.0
+
+
+# ---- FA-C4 (#86): convective-regime detection in the detailed point path ----
+
+
+def _convective_cube() -> AtmosphericCube:
+    """Uniform columns with a hot humid surface under a conditionally unstable
+    lapse, capped by a strong inversion at the top level (manual §1.4.1)."""
+    lats = np.array([28.0, 30.0, 32.0])
+    lons = np.array([110.0, 115.0, 120.0, 125.0])
+    temps = np.array([303.0, 295.65, 285.15, 267.65, 255.75, 270.0])
+    rh = np.array([90.0, 85.0, 60.0, 40.0, 30.0, 10.0])
+    # normalize() derives dewpoints from specific humidity (the moisture master
+    # variable), so the humid surface must be expressed in q: ~23 g/kg at 925
+    # hPa/303 K ⇒ Td ≈ 299 K ⇒ LCL ≈ 465 m above the surface level.
+    q_humid = np.array([2.3e-2, 1.5e-2, 8e-3, 2e-3, 5e-4, 1e-4])
+    nz, ny, nx = _LEVELS.size, lats.size, lons.size
+
+    def grid(col):
+        return np.broadcast_to(np.asarray(col, float)[:, None, None], (nz, ny, nx)).copy()
+
+    zeros = grid(np.zeros(nz))
+    return AtmosphericCube(
+        lats=lats, lons=lons, levels_hpa=_LEVELS,
+        temperature_k=grid(temps),
+        relative_humidity_pct=grid(rh),
+        specific_humidity_kg_kg=grid(q_humid),
+        geopotential_height_m=grid(_GPH),
+        u_wind_m_s=zeros, v_wind_m_s=zeros, vertical_velocity_pa_s=zeros,
+        cloud_water_kg_kg=grid(_MID_DECK), cloud_ice_kg_kg=grid(np.zeros(nz)),
+        run_time=_RUN, valid_time=_VALID, source_label="gfs@test", retrieved_at=_RET,
+    )
+
+
+def _no_congestus_config():
+    from predictor.stability import StabilityConfig
+
+    return StabilityConfig(congestus_min_depth_m=1e9)   # threshold unreachable
+
+
+def test_stable_cube_is_labeled_stratiform_with_zero_regression():
+    predictor = standard_predictor(FakeSource(snapshot=_detail_snapshot()))
+    dist = [0.0, 100.0, 200.0]
+    baseline = score_point_with_cube(
+        predictor, _uniform_cube(_LOW_AND_HIGH), _detail_snapshot(),
+        30.0, 120.0, _VALID, distances_km=dist,
+        stability_config=_no_congestus_config(),
+    )
+    labeled = score_point_with_cube(
+        predictor, _uniform_cube(_LOW_AND_HIGH), _detail_snapshot(),
+        30.0, 120.0, _VALID, distances_km=dist,
+    )
+    assert labeled.geometry["cloud_regime"] == "stratiform"
+    assert labeled.probability == baseline.probability           # 零回归
+    assert "convective_regime_damping" not in labeled.components
+
+
+def test_congestus_cube_is_damped_labeled_and_explained():
+    predictor = standard_predictor(FakeSource(snapshot=_detail_snapshot()))
+    dist = [0.0, 100.0, 200.0]
+    cube = _convective_cube()
+    undamped = score_point_with_cube(
+        predictor, cube, _detail_snapshot(), 30.0, 120.0, _VALID,
+        distances_km=dist, stability_config=_no_congestus_config(),
+    )
+    damped = score_point_with_cube(
+        predictor, cube, _detail_snapshot(), 30.0, 120.0, _VALID, distances_km=dist,
+    )
+
+    geometry = damped.geometry
+    assert geometry["cloud_regime"] == "cumulus_congestus"
+    assert geometry["unstable_depth_m"] >= 2000.0
+    assert geometry["convective_duration_min"] > 0.0
+    assert damped.components["convective_regime_damping"] == 0.5
+    assert damped.probability == pytest.approx(
+        0.5 + (undamped.probability - 0.5) * 0.5
+    )
+    assert "对流云况" in damped.explanation

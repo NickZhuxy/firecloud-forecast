@@ -275,6 +275,25 @@ def characteristic_duration_min(cloud_base_eff_m: float, lat: float) -> float:
     return 2.0 * L_km / v
 
 
+def convective_duration_min(cloud_top_m: float, lat: float) -> float:
+    """Convective fire-cloud window (minutes) — vertical-line model (FA-C4).
+
+    Manual §1.2.3(1): a cumulus tower is a vertical line at the origin; after
+    local sunset the earth-shadow height climbs as h_S(t) = (t·v)²/(2R) and the
+    tower stays lit while h_S < h_CT, i.e. for 0 ≤ t ≤ √(2R·h_CT)/v. Note the
+    height is the cloud TOP (not the base) and the window is HALF the
+    stratiform characteristic 2L/v — the tower has no horizontal extent for
+    the terminator to sweep. Sunrise mirrors the time axis; the window length
+    is identical. Informational output only; never enters the probability.
+    """
+    if cloud_top_m <= 0:
+        return 0.0
+    v = representative_terminator_speed_km_min(lat)
+    if v <= 0:
+        return 0.0
+    return math.sqrt(2.0 * EARTH_RADIUS_KM * (cloud_top_m / 1000.0)) / v
+
+
 def overhead_firecloud_window(
     boundary_km: float,
     cloud_base_eff_m: float,
