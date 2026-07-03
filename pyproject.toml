@@ -43,6 +43,10 @@ packages = ["predictor"]
 
 [tool.pytest.ini_options]
 testpaths = ["predictor/tests"]
+# Default run stays offline: network tests opt in via `pytest -m integration`
+# (a later -m overrides this addopts value). Without this, slow GFS/S3 mirrors
+# hang the default suite (#89).
+addopts = "-m 'not integration'"
 markers = [
     "integration: marks tests requiring network (deselect with -m 'not integration')",
 ]
