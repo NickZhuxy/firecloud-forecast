@@ -167,3 +167,27 @@ def test_profile_span_entirely_outside_heights_is_masked():
     xsec = build_cross_section(path, [p], [[]], heights_m=[12000.0, 14000.0])
     assert not xsec.mask[:, 0].any()
     assert np.isnan(xsec.relative_humidity_pct[:, 0]).all()
+
+
+def test_build_cross_section_carries_terrain_elevation_per_column():
+    # FA-G6: the per-sample ground elevation (already fetched for grid masking)
+    # rides along on the section for the terrain-obscuration trace.
+    path = build_sunward_path(
+        31.0, 121.0, _T, azimuth_deg=290.0,
+        distances_km=[0.0, 400.0, 800.0],
+        elevation_fn=lambda la, lo: 250.0,
+    )
+    profiles = [_profile(s.lat, s.lon) for s in path.samples]
+    xsec = build_cross_section(path, profiles, [[] for _ in path.samples])
+    assert xsec.terrain_elevation_m_per_column == [250.0, 250.0, 250.0]
+
+
+def test_build_cross_section_without_elevation_leaves_terrain_none():
+    # No elevation provider anywhere → the attribute stays None (regression
+    # lock: pre-FA-G6 sections and the trace's no-terrain path are untouched).
+    path = build_sunward_path(
+        31.0, 121.0, _T, azimuth_deg=290.0, distances_km=[0.0, 400.0, 800.0],
+    )
+    profiles = [_profile(s.lat, s.lon) for s in path.samples]
+    xsec = build_cross_section(path, profiles, [[] for _ in path.samples])
+    assert xsec.terrain_elevation_m_per_column is None

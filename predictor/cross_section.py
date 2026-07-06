@@ -38,6 +38,10 @@ class SunwardCrossSection:
     # Per-column column AOD (FA-A2), aligned with ``distances_km``; None entries are
     # unknown columns, the whole attribute is None when no aerosol field was supplied.
     aerosol_optical_depth_per_column: list[float | None] | None = None
+    # Per-column ground elevation (FA-G6), aligned with ``distances_km``; None
+    # entries are unknown columns, the whole attribute is None when no elevation
+    # provider was injected on the path.
+    terrain_elevation_m_per_column: list[float | None] | None = None
 
 
 def even_heights(max_m: float = 15000.0, count: int = 31) -> list[float]:
@@ -119,5 +123,13 @@ def build_cross_section(
         source_label=source_label,
         aerosol_optical_depth_per_column=(
             list(aod_per_column) if aod_per_column is not None else None
+        ),
+        # FA-G6: ground elevation per sample rides along for the terrain trace;
+        # all-None (no elevation provider) collapses to None so the no-terrain
+        # path stays bit-identical.
+        terrain_elevation_m_per_column=(
+            [s.elevation_m for s in samples]
+            if any(s.elevation_m is not None for s in samples)
+            else None
         ),
     )

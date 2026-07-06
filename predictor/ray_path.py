@@ -53,7 +53,7 @@ class RayClearance:
     clear: bool
     blocked_at_km: float | None      # distance of the first obstruction (None if clear)
     blocked_height_m: float | None   # ray height there
-    blocked_layer: CloudLayer | None  # the obstructing layer (None for a ground/aerosol block)
+    blocked_layer: CloudLayer | None  # the obstructing layer (None for a terrain/aerosol block)
     columns_checked: int
 
 
@@ -80,7 +80,10 @@ def trace_ray_clearance(
     Walks the cross-section columns from the observer outward; at each column the
     ray height is ``ray_height_m(distance, vertex)``. A column blocks the ray when
     either (a) a diagnosed cloud layer there spans that height with
-    ``_layer_opacity(layer) >= opacity_threshold``, or (b) per-column aerosol
+    ``_layer_opacity(layer) >= opacity_threshold``, (b) terrain (FA-G6): the
+    column's ground elevation exceeds the observer-column elevation datum and
+    the ray dips into that excess (a uniform plateau is a shifted datum and
+    never self-vetoes; no datum → no terrain checks), or (c) per-column aerosol
     (FA-A2, RH-amplified per FA-A4): the column's AOD — swollen by its own
     near-ground humidity via ``hygroscopic_growth_factor`` — gives an equivalent
     opaque-ground height ``h_x`` and the ray dips to/below it
@@ -100,10 +103,14 @@ def trace_ray_clearance(
     if not math.isfinite(observer_cloud_base_eff_m) or observer_cloud_base_eff_m <= 0:
         return RayClearance(False, 0.0, 0.0, None, 0)
 
+    n_columns = len(cross_section.distances_km)
     aod_per_column = cross_section.aerosol_optical_depth_per_column
     if aod_per_column is None:
-        aod_per_column = [None] * len(cross_section.distances_km)
+        aod_per_column = [None] * n_columns
     rh_per_column = _near_ground_rh_per_column(cross_section)
+    terrain_per_column = cross_section.terrain_elevation_m_per_column
+    if terrain_per_column is None:
+        terrain_per_column = [None] * n_columns
 
     # The observer's own equivalent aerosol ground is the grazing datum: it already
     # lowered the effective base (vertex), so the ray height here is measured *above*
@@ -114,19 +121,22 @@ def trace_ray_clearance(
     # amplified by its own near-ground humidity (manual §2.4.3 雾霾), so a humid
     # upstream pocket can veto at uniform AOD while uniform humidity cancels out.
     observer_ground_m = 0.0
-    for distance_km, aod, rh in zip(
-        cross_section.distances_km, aod_per_column, rh_per_column
+    observer_terrain_m = None
+    for distance_km, aod, rh, terrain in zip(
+        cross_section.distances_km, aod_per_column, rh_per_column, terrain_per_column
     ):
         if distance_km < min_path_distance_km:
             observer_ground_m = aerosol_ground_height_m(
                 aod, aerosol_scale_height_m, rh_pct=rh
             )
+            observer_terrain_m = terrain
             break
 
     vertex_km = math.sqrt(2.0 * EARTH_RADIUS_KM * (observer_cloud_base_eff_m / 1000.0))
     checked = 0
-    for distance_km, layers, aod, rh in zip(
-        cross_section.distances_km, cross_section.cloud_layers, aod_per_column, rh_per_column
+    for distance_km, layers, aod, rh, terrain in zip(
+        cross_section.distances_km, cross_section.cloud_layers, aod_per_column,
+        rh_per_column, terrain_per_column,
     ):
         if distance_km < min_path_distance_km:
             continue
@@ -135,6 +145,15 @@ def trace_ray_clearance(
         for layer in layers or []:
             if layer.base_m <= height_m <= layer.top_m and _layer_opacity(layer) >= opacity_threshold:
                 return RayClearance(False, float(distance_km), height_m, layer, checked)
+        # FA-G6 terrain horizon: a ridge obstructs only by its EXCESS over the
+        # observer-column elevation datum — a uniform plateau is a shifted
+        # datum (never self-vetoes), an elevated observer sees over lower
+        # ridges (horizon depression), and with no datum we don't guess (an
+        # absolute floor would wrongly veto every elevated plain).
+        if observer_terrain_m is not None and terrain is not None:
+            terrain_excess_m = terrain - observer_terrain_m
+            if terrain_excess_m > 0.0 and height_m <= terrain_excess_m:
+                return RayClearance(False, float(distance_km), height_m, None, checked)
         aerosol_excess_m = (
             aerosol_ground_height_m(aod, aerosol_scale_height_m, rh_pct=rh)
             - observer_ground_m
