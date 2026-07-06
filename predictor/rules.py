@@ -219,8 +219,15 @@ class SunwardIlluminationGate:
         # columns coarsely and could miss a deck between them, so it must not turn
         # a geometrically-impossible canvas (no sunward edge within reach) into a
         # pass. Both conditions are physically necessary.
-        if f.sunward_ray_clearance is not None and not f.sunward_ray_clearance.clear:
-            return 0.0
+        transmittance = 1.0
+        if f.sunward_ray_clearance is not None:
+            if not f.sunward_ray_clearance.clear:
+                return 0.0
+            # FA-C3: semi-transparent 杂云 crossed by the ray dims whatever the
+            # 1-D geometry allows through (manual §4.2.1(2) 闷烧). Only actual
+            # geometric scores are scaled — the None (component omitted)
+            # branches keep their missing-data semantics.
+            transmittance = f.sunward_ray_clearance.path_transmittance
 
         if f.sunward_profile_max_km is None or f.cloud_base_m is None:
             return None
@@ -239,10 +246,10 @@ class SunwardIlluminationGate:
             return 0.0 if f.sunward_profile_max_km >= reach_km else None
         ratio = boundary_km / reach_km
         if ratio <= 0.70:
-            return 1.0
+            return transmittance
         if ratio >= 1.0:
             return 0.0
-        return (1.0 - ratio) / 0.30
+        return (1.0 - ratio) / 0.30 * transmittance
 
 
 class BoundaryConfidence:

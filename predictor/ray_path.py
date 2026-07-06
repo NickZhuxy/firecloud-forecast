@@ -55,6 +55,12 @@ class RayClearance:
     blocked_height_m: float | None   # ray height there
     blocked_layer: CloudLayer | None  # the obstructing layer (None for a terrain/aerosol block)
     columns_checked: int
+    # FA-C3 (manual §4.2.1(2)): survival fraction of the ray through the
+    # semi-transparent 杂云 it crossed — Π(1−opacity) per crossed column (a
+    # crude slant-path integration at the section's sampling step). 1.0 on a
+    # clean path, 0.0 when blocked. The illumination gate multiplies by this,
+    # turning "clear but veiled" into the manual's 闷烧 band.
+    path_transmittance: float = 1.0
 
 
 def ray_height_m(distance_km: float, vertex_km: float) -> float:
@@ -101,7 +107,7 @@ def trace_ray_clearance(
     it → ``clear=False``.
     """
     if not math.isfinite(observer_cloud_base_eff_m) or observer_cloud_base_eff_m <= 0:
-        return RayClearance(False, 0.0, 0.0, None, 0)
+        return RayClearance(False, 0.0, 0.0, None, 0, path_transmittance=0.0)
 
     n_columns = len(cross_section.distances_km)
     aod_per_column = cross_section.aerosol_optical_depth_per_column
@@ -134,6 +140,7 @@ def trace_ray_clearance(
 
     vertex_km = math.sqrt(2.0 * EARTH_RADIUS_KM * (observer_cloud_base_eff_m / 1000.0))
     checked = 0
+    transmittance = 1.0
     for distance_km, layers, aod, rh, terrain in zip(
         cross_section.distances_km, cross_section.cloud_layers, aod_per_column,
         rh_per_column, terrain_per_column,
@@ -147,8 +154,17 @@ def trace_ray_clearance(
             # span downward — "浓密幡状云还会挡住阳光". Opacity still comes from
             # the deck itself, so thin wisps gain no obstruction from streaks.
             span_bottom_m = layer.base_m - layer.virga_extension_m
-            if span_bottom_m <= height_m <= layer.top_m and _layer_opacity(layer) >= opacity_threshold:
-                return RayClearance(False, float(distance_km), height_m, layer, checked)
+            if span_bottom_m <= height_m <= layer.top_m:
+                opacity = _layer_opacity(layer)
+                if opacity >= opacity_threshold:
+                    return RayClearance(
+                        False, float(distance_km), height_m, layer, checked,
+                        path_transmittance=0.0,
+                    )
+                # FA-C3: semi-transparent 杂云 dims the surviving ray — one
+                # (1−opacity) factor per crossed column approximates the
+                # grazing path length inside the veil (§4.2.1(2) 闷烧).
+                transmittance *= 1.0 - opacity
         # FA-G6 terrain horizon: a ridge obstructs only by its EXCESS over the
         # observer-column elevation datum — a uniform plateau is a shifted
         # datum (never self-vetoes), an elevated observer sees over lower
@@ -157,14 +173,20 @@ def trace_ray_clearance(
         if observer_terrain_m is not None and terrain is not None:
             terrain_excess_m = terrain - observer_terrain_m
             if terrain_excess_m > 0.0 and height_m <= terrain_excess_m:
-                return RayClearance(False, float(distance_km), height_m, None, checked)
+                return RayClearance(
+                    False, float(distance_km), height_m, None, checked,
+                    path_transmittance=0.0,
+                )
         aerosol_excess_m = (
             aerosol_ground_height_m(aod, aerosol_scale_height_m, rh_pct=rh)
             - observer_ground_m
         )
         if aerosol_excess_m > 0.0 and height_m <= aerosol_excess_m:
-            return RayClearance(False, float(distance_km), height_m, None, checked)
-    return RayClearance(True, None, None, None, checked)
+            return RayClearance(
+                False, float(distance_km), height_m, None, checked,
+                path_transmittance=0.0,
+            )
+    return RayClearance(True, None, None, None, checked, path_transmittance=transmittance)
 
 
 _NEAR_GROUND_MAX_HEIGHT_M = 1500.0
