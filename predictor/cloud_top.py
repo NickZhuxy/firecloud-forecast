@@ -152,6 +152,28 @@ def correct_cloud_top(
     )
 
 
+def infer_base_from_corrected_top(
+    model_base_m: float,
+    model_top_m: float,
+    correction: CloudTopCorrection,
+) -> float:
+    """Propagate an adopted satellite top to the layer base (FA-C6, §4.2.1(1)).
+
+    The manual's workflow identifies the layer by its IR top and then reads
+    that layer's base — so when the top moves, the base moves with it. The
+    model THICKNESS is the steadiest quantity the model has for the layer
+    (an observed top offset cannot be attributed between "thickness wrong"
+    and "base wrong", manual fig. 4.21 — preserving thickness is the neutral
+    split), so ``base = corrected_top − model_thickness``. When the correction
+    kept the model top, the base is kept too. Pure function; wiring into the
+    live satellite path is #15's remaining work, not done here.
+    """
+    if correction.source != "satellite":
+        return float(model_base_m)
+    thickness_m = model_top_m - model_base_m
+    return float(correction.corrected_top_m - thickness_m)
+
+
 def _as_utc(time: datetime) -> datetime:
     if time.tzinfo is None:
         time = time.replace(tzinfo=timezone.utc)

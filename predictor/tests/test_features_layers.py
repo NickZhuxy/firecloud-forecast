@@ -74,3 +74,16 @@ def test_existing_behavior_unchanged_without_layers():
     # Backward compatibility: same cloud_base_m as the pre-#13 estimate path.
     feats = derive(_snapshot(), 31.0, 121.0, _T)
     assert feats.cloud_base_m == 3500.0  # mid deck representative height
+
+
+def test_virga_lowers_effective_base_but_not_etage_identity():
+    # FA-C6: the canvas's fall streaks lower the GEOMETRY base (reach/duration
+    # shrink with it), but the deck's étage identity keeps the true base — the
+    # manual measures "云底（不算落幡）".
+    virga_canvas = CloudLayer(
+        6500.0, 9000.0, 2500.0, "ice", 0.63, "condensate",
+        signal_margin=10.0, virga_extension_m=800.0,
+    )
+    feats = derive(_snapshot(), 31.0, 121.0, _T, cloud_layers=[virga_canvas])
+    assert feats.cloud_base_m == 5700.0        # 6500 − 800: effective base
+    assert feats.canvas_layer == "high"        # étage by true base (6500 > 6 km)

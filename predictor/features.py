@@ -308,7 +308,9 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, 
     source_base = getattr(snapshot, "cloud_base_m", None)
 
     if diagnosed_canvas is not None:
-        cloud_base_m = diagnosed_canvas.base_m
+        # FA-C6: fall streaks lower the effective geometry base (reach and
+        # duration follow); the étage identity above used the TRUE base.
+        cloud_base_m = diagnosed_canvas.base_m - diagnosed_canvas.virga_extension_m
         cloud_base_source = "diagnosed"
         cloud_base_confidence = diagnosed_canvas.confidence
     elif source_base is not None:

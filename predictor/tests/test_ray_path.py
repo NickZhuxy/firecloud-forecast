@@ -451,3 +451,24 @@ def test_missing_observer_elevation_skips_terrain_checks():
         observer_cloud_base_eff_m=2000.0,
     )
     assert result.clear is True
+
+
+def test_virga_extends_an_opaque_layer_downward_into_the_ray():
+    # FA-C6 "浓密幡状云还会挡住阳光": an opaque deck whose hard base sits 500 m
+    # above the ray blocks once its 600 m fall streaks are accounted for.
+    h50 = ray_height_m(50.0, VERTEX_2KM)
+    hard_base = h50 + 500.0
+    deck = CloudLayer(
+        base_m=hard_base, top_m=hard_base + 2000.0, thickness_m=2000.0,
+        phase_hint="liquid", confidence=1.0, source="condensate", signal_margin=5.0,
+        virga_extension_m=600.0,
+    )
+    xs = _xsec([0, 50, 100, 150, 200], [[], [deck], [], [], []])
+    assert trace_ray_clearance(xs, 2000.0).clear is False
+    # Without the streaks the same deck stays above the ray (regression pair).
+    dry_deck = CloudLayer(
+        base_m=hard_base, top_m=hard_base + 2000.0, thickness_m=2000.0,
+        phase_hint="liquid", confidence=1.0, source="condensate", signal_margin=5.0,
+    )
+    xs2 = _xsec([0, 50, 100, 150, 200], [[], [dry_deck], [], [], []])
+    assert trace_ray_clearance(xs2, 2000.0).clear is True
