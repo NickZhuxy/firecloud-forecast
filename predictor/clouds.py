@@ -42,6 +42,20 @@ class CloudLayer:
     optical_depth: float = float("nan")
 
 
+def tier_from_height(base_m: float) -> str:
+    """Map a cloud-base height (m) to a WMO étage tier.
+
+    Boundaries follow the standard étages: low < 2 km, mid 2–6 km, high > 6 km.
+    Lives here (rather than features) so illumination's canvas selection can use
+    it without a features↔illumination import cycle (FA-C2).
+    """
+    if base_m < 2000.0:
+        return "low"
+    if base_m < 6000.0:
+        return "mid"
+    return "high"
+
+
 # Standard cloud optics (FA-C1): τ = 1.5·WP / (ρ_cond·r_e), WP = ∫ ρ_air·q dz.
 _R_DRY_AIR = 287.05         # J/(kg·K)
 _RHO_WATER = 1000.0         # kg/m³

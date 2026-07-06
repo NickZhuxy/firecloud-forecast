@@ -7,6 +7,7 @@ from astral import Observer
 from astral.sun import sun
 
 from predictor.spatial import SunwardProfile
+from predictor.clouds import tier_from_height
 from predictor.geometry import advect_boundary_km, equivalent_cloud_base_from_aod_m
 from predictor.solar_event import SolarEvent, spec_for
 from predictor.illumination import (
@@ -102,17 +103,9 @@ def estimate_cloud_base_m(
     return _LAYER_BASE_M[layer] if layer is not None else None
 
 
-def tier_from_height(base_m: float) -> str:
-    """Map a cloud-base height (m) to a WMO étage tier.
-
-    Boundaries follow the standard étages: low < 2 km, mid 2–6 km, high > 6 km.
-    Used to make canvas_layer follow a diagnosed canvas height (#32).
-    """
-    if base_m < 2000.0:
-        return "low"
-    if base_m < 6000.0:
-        return "mid"
-    return "high"
+# tier_from_height moved to predictor.clouds (FA-C2) so illumination's canvas
+# selection can share it without an import cycle; re-exported here for callers
+# that keep importing it from features (#32).
 
 
 def _layer_values(profile: SunwardProfile, layer: str) -> list[float]:
