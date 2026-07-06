@@ -20,6 +20,7 @@
 | [fa-c4-skewt-stability-convective-regime](fa-c4-skewt-stability-convective-regime.md) | FA-C4 | 斜温图状态曲线/条件不稳定 → 对流/层状判别；浓积云切 §1.2.3 垂直线模型 + 降置信 | §1.1.3 / §1.4.1 / §1.2.3(1) / §2.2 / §4.1.2 |
 | [fa-c2-canvas-layer-selection](fa-c2-canvas-layer-selection.md) | FA-C2 | 画布层多准则选择：étage 优先权 + cover·substance·height·extent 乘法分（替代「取最高层」）| §4.1.1（伊春/深圳算例）/ §4.1.2(b) |
 | [fa-a3-aerosol-dual-role](fa-a3-aerosol-dual-role.md) | FA-A3 | 气溶胶双角色拆分：路径消光留几何通道（概率），本地观感 AOD 转 modifier（质量）| §2.4.1（表 2.3）/ §1.3.4 / §4.1.1 |
+| [fa-a4-hygroscopic-growth](fa-a4-hygroscopic-growth.md) | FA-A4 | RH 吸湿增长放大 β：有界 Hänel 幂律 g(RH)，有效 AOD 进观感+等效底+逐列否决 | §2.4.3 / §1.1.3 / §1.3.1 |
 
 ## 推荐阅读顺序
 
