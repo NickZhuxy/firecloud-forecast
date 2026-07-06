@@ -113,3 +113,20 @@ def test_convective_regime_handling_never_pushes_probability_from_half():
         assert abs(handled.probability - 0.5) <= abs(undamped.probability - 0.5) + 1e-12
         if handled.geometry["cloud_regime"] == "stratiform":
             assert handled.probability == undamped.probability
+
+
+def test_more_local_aerosol_dims_but_never_extinguishes(base_features):
+    """FA-A3, manual §2.4.1: local aerosol dims the perceived brightness and
+    saturation (质量) monotonically — but it does not prevent the burn. Even at
+    the >0.8 "污烧" band the event still happens, so with every necessary
+    condition passing, the composite must fall with local AOD yet stay > 0."""
+    aods = [0.0, 0.1, 0.3, 0.5, 0.8, 0.9]
+    scores = [
+        composite(replace(base_features, aerosol_optical_depth=a)) for a in aods
+    ]
+    for earlier, later in zip(scores, scores[1:]):
+        assert later <= earlier + 1e-12
+    # Non-vacuous: the perception penalty really bites…
+    assert scores[-1] < scores[0]
+    # …but never pretends the burn does not happen (污烧 ≠ 无烧).
+    assert scores[-1] > 0.0

@@ -28,13 +28,14 @@ _GATE_WEIGHTS = {
     "mid_high_cloud_presence": STANDARD_WEIGHTS["mid_high_cloud_presence"],
     "low_cloud_obstruction": STANDARD_WEIGHTS["low_cloud_obstruction"],
     "solar_angle": STANDARD_WEIGHTS["solar_angle"],
-    "clean_air": STANDARD_WEIGHTS["clean_air"],
     "sunward_illumination": STANDARD_WEIGHTS["sunward_illumination"],
 }
 _MODIFIER_WEIGHTS = {
     "humidity": STANDARD_WEIGHTS["humidity"],
     "cloud_altitude_preference": STANDARD_WEIGHTS["cloud_altitude_preference"],
     "cloud_cover_sweet_spot": STANDARD_WEIGHTS["cloud_cover_sweet_spot"],
+    # FA-A3: local aerosol perception is a quality modifier, not a gate.
+    "clean_air": STANDARD_WEIGHTS["clean_air"],
 }
 
 _CLEAN_AIR_AOD_POINTS = np.array([
@@ -78,7 +79,8 @@ def _clean_air(visibility_m, aod):
         # last breakpoint (0.8) the scalar rule returns 0, which np.interp matches.
         return np.interp(a, xs, ys)
     if visibility_m is None:
-        # The scalar CleanAirGate returns 1.0 when neither signal is available.
+        # The scalar rule returns None when neither signal is available; the
+        # caller omits the component (FA-A3), mirroring that contract.
         return None
     vis_km = np.asarray(visibility_m, dtype=float) / 1000.0
     return np.clip((vis_km - 5.0) / 15.0, 0.0, 1.0)
@@ -149,14 +151,11 @@ def score_grid(inputs: GridInputs) -> np.ndarray:
     g_presence = np.where(canvas <= 0, 0.0, np.minimum(1.0, canvas / 20.0))
     g_obstruction = np.where(low <= 20, 1.0, np.maximum(0.0, 1.0 - (low - 20) / 80.0))
     g_solar = np.ones_like(low)  # each cell evaluated at its own sunset
-    clean = _clean_air(inputs.visibility_m, inputs.aerosol_optical_depth)
-    g_clean = np.ones_like(low) if clean is None else clean
 
     gates = {
         "mid_high_cloud_presence": g_presence,
         "low_cloud_obstruction": g_obstruction,
         "solar_angle": g_solar,
-        "clean_air": g_clean,
     }
     if (
         inputs.cloud_base_m is not None
@@ -180,6 +179,12 @@ def score_grid(inputs: GridInputs) -> np.ndarray:
         "cloud_altitude_preference": m_altitude,
         "cloud_cover_sweet_spot": m_sweet,
     }
+    # FA-A3: local aerosol perception joins the modifier layer when a signal
+    # exists; with neither AOD nor visibility the component is omitted, exactly
+    # like the scalar rule returning None.
+    clean = _clean_air(inputs.visibility_m, inputs.aerosol_optical_depth)
+    if clean is not None:
+        modifiers["clean_air"] = clean
 
     # Gate layer: weighted geometric mean (a 0 gate forces the product to 0).
     w_gate = sum(_GATE_WEIGHTS[name] for name in gates)
@@ -187,8 +192,8 @@ def score_grid(inputs: GridInputs) -> np.ndarray:
     for name, score in gates.items():
         gate = gate * np.power(score, _GATE_WEIGHTS[name] / w_gate)
 
-    # Modifier layer: weighted arithmetic mean.
-    w_mod = sum(_MODIFIER_WEIGHTS.values())
+    # Modifier layer: weighted arithmetic mean over the present components.
+    w_mod = sum(_MODIFIER_WEIGHTS[n] for n in modifiers)
     modifier = sum(_MODIFIER_WEIGHTS[n] * m for n, m in modifiers.items()) / w_mod
 
     return np.clip(gate * modifier, 0.0, 1.0)

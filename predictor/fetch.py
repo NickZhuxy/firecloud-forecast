@@ -209,7 +209,7 @@ class OpenMeteoSource:
 
         def _fetch_air():
             # AOD improves the forecast but must not make point forecasts fail;
-            # CleanAirGate falls back to visibility when it is absent.
+            # LocalAerosolPerception (clean_air) falls back to visibility when absent.
             try:
                 return self._get_json(
                     self.AIR_QUALITY_ENDPOINT,
