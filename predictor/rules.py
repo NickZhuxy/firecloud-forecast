@@ -4,7 +4,11 @@ import math
 from typing import Callable, Protocol
 from predictor.features import Features, derive
 from predictor.fetch import WeatherSource
-from predictor.geometry import equivalent_cloud_base_from_aod_m, max_penetration_km
+from predictor.geometry import (
+    equivalent_cloud_base_from_aod_m,
+    hygroscopic_growth_factor,
+    max_penetration_km,
+)
 from predictor.score import Forecast
 
 
@@ -124,6 +128,9 @@ class LocalAerosolPerception:
     def evaluate(self, f: Features) -> float | None:
         aod = f.aerosol_optical_depth
         if aod is not None:
+            # FA-A4 (manual §2.4.3): hygroscopic swelling — the same column AOD
+            # reads murkier through a humid boundary layer.
+            aod = aod * hygroscopic_growth_factor(f.humidity_pct)
             points = (
                 (0.00, 1.00),
                 (0.10, 1.00),
@@ -217,8 +224,9 @@ class SunwardIlluminationGate:
 
         if f.sunward_profile_max_km is None or f.cloud_base_m is None:
             return None
+        # FA-A4: boundary-layer humidity swells the sunward-mean aerosol too.
         effective_base = equivalent_cloud_base_from_aod_m(
-            f.cloud_base_m, f.sunward_aod_mean
+            f.cloud_base_m, f.sunward_aod_mean, rh_pct=f.humidity_pct
         )
         reach_km = max_penetration_km(effective_base)
         if reach_km <= 0:

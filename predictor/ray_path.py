@@ -81,8 +81,9 @@ def trace_ray_clearance(
     ray height is ``ray_height_m(distance, vertex)``. A column blocks the ray when
     either (a) a diagnosed cloud layer there spans that height with
     ``_layer_opacity(layer) >= opacity_threshold``, or (b) per-column aerosol
-    (FA-A2): the column's AOD gives an equivalent opaque-ground height
-    ``h_x = aerosol_ground_height_m(aod)`` and the ray dips to/below it
+    (FA-A2, RH-amplified per FA-A4): the column's AOD — swollen by its own
+    near-ground humidity via ``hygroscopic_growth_factor`` — gives an equivalent
+    opaque-ground height ``h_x`` and the ray dips to/below it
     (``height <= h_x``, ``h_x > 0``). Clouds are checked before aerosol within a
     column, so a real deck is reported in preference to the aerosol floor it shares
     the column with. The observer's own column (``distance < min_path_distance_km``)
@@ -102,23 +103,30 @@ def trace_ray_clearance(
     aod_per_column = cross_section.aerosol_optical_depth_per_column
     if aod_per_column is None:
         aod_per_column = [None] * len(cross_section.distances_km)
+    rh_per_column = _near_ground_rh_per_column(cross_section)
 
     # The observer's own equivalent aerosol ground is the grazing datum: it already
     # lowered the effective base (vertex), so the ray height here is measured *above*
     # it. An upstream column only obstructs when its equivalent ground rises ABOVE
     # that datum — i.e. by its EXCESS over the observer — so uniform haze (already in
     # the effective base) never self-vetoes and only a genuinely denser upstream
-    # plume (manual §1.3.4) intercepts the low ray.
+    # plume (manual §1.3.4) intercepts the low ray. FA-A4: each column's AOD is
+    # amplified by its own near-ground humidity (manual §2.4.3 雾霾), so a humid
+    # upstream pocket can veto at uniform AOD while uniform humidity cancels out.
     observer_ground_m = 0.0
-    for distance_km, aod in zip(cross_section.distances_km, aod_per_column):
+    for distance_km, aod, rh in zip(
+        cross_section.distances_km, aod_per_column, rh_per_column
+    ):
         if distance_km < min_path_distance_km:
-            observer_ground_m = aerosol_ground_height_m(aod, aerosol_scale_height_m)
+            observer_ground_m = aerosol_ground_height_m(
+                aod, aerosol_scale_height_m, rh_pct=rh
+            )
             break
 
     vertex_km = math.sqrt(2.0 * EARTH_RADIUS_KM * (observer_cloud_base_eff_m / 1000.0))
     checked = 0
-    for distance_km, layers, aod in zip(
-        cross_section.distances_km, cross_section.cloud_layers, aod_per_column
+    for distance_km, layers, aod, rh in zip(
+        cross_section.distances_km, cross_section.cloud_layers, aod_per_column, rh_per_column
     ):
         if distance_km < min_path_distance_km:
             continue
@@ -127,7 +135,39 @@ def trace_ray_clearance(
         for layer in layers or []:
             if layer.base_m <= height_m <= layer.top_m and _layer_opacity(layer) >= opacity_threshold:
                 return RayClearance(False, float(distance_km), height_m, layer, checked)
-        aerosol_excess_m = aerosol_ground_height_m(aod, aerosol_scale_height_m) - observer_ground_m
+        aerosol_excess_m = (
+            aerosol_ground_height_m(aod, aerosol_scale_height_m, rh_pct=rh)
+            - observer_ground_m
+        )
         if aerosol_excess_m > 0.0 and height_m <= aerosol_excess_m:
             return RayClearance(False, float(distance_km), height_m, None, checked)
     return RayClearance(True, None, None, None, checked)
+
+
+_NEAR_GROUND_MAX_HEIGHT_M = 1500.0
+
+
+def _near_ground_rh_per_column(
+    cross_section: SunwardCrossSection,
+    max_height_m: float = _NEAR_GROUND_MAX_HEIGHT_M,
+) -> list[float | None]:
+    """Lowest-level (≤ ~boundary-layer top) finite RH per column, for FA-A4.
+
+    Returns None for columns with no finite RH below ``max_height_m`` — those
+    columns get no hygroscopic amplification (bit-exact dry behaviour).
+    """
+    n = len(cross_section.distances_km)
+    rh_grid = cross_section.relative_humidity_pct
+    if rh_grid is None:
+        return [None] * n
+    low_rows = [
+        k for k, h in enumerate(cross_section.heights_m) if h <= max_height_m
+    ]
+    out: list[float | None] = [None] * n
+    for i in range(n):
+        for k in low_rows:  # heights ascend → first finite value is the lowest
+            value = rh_grid[k, i]
+            if value is not None and math.isfinite(value):
+                out[i] = float(value)
+                break
+    return out

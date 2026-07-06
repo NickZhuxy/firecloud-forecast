@@ -130,3 +130,19 @@ def test_more_local_aerosol_dims_but_never_extinguishes(base_features):
     assert scores[-1] < scores[0]
     # …but never pretends the burn does not happen (污烧 ≠ 无烧).
     assert scores[-1] > 0.0
+
+
+def test_rising_humidity_with_local_aerosol_never_raises_composite(base_features):
+    """FA-A4, manual §2.4.3: hygroscopic swelling makes the same aerosol column
+    murkier as boundary-layer RH climbs, so with local AOD present the
+    composite must be monotonically non-increasing in surface RH — and must
+    fall STRICTLY inside [60, 80] where the humidity trapezoid is flat and the
+    hygroscopic channel is the only mover (non-vacuity isolated to FA-A4)."""
+    with_aerosol = replace(base_features, aerosol_optical_depth=0.4)
+    rhs = [60.0, 70.0, 80.0, 84.0, 88.0, 90.0]
+    scores = [
+        composite(replace(with_aerosol, humidity_pct=rh)) for rh in rhs
+    ]
+    for earlier, later in zip(scores, scores[1:]):
+        assert later <= earlier + 1e-12
+    assert scores[1] < scores[0]

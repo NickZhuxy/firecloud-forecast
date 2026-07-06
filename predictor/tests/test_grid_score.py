@@ -133,3 +133,40 @@ def test_heavy_local_aerosol_dims_but_does_not_zero_grid():
     scalar = _scalar_predictor().score_snapshot(snap, 31.0, 121.0, _T).probability
     assert grid[0, 0] > 0.0
     assert abs(grid[0, 0] - scalar) < 1e-9
+
+
+def test_hygroscopic_humidity_dims_aerosol_cell_and_matches_scalar():
+    # FA-A4: inside the humidity trapezoid's flat top ([40, 80]% → 1.0) only
+    # the hygroscopic aerosol channel moves the composite, so a 70% RH cell
+    # with the same AOD must score strictly below its 60% RH twin — in
+    # lockstep with the scalar predictor.
+    low = np.array([[5.0, 5.0]]); mid = np.array([[55.0, 55.0]]); high = np.array([[40.0, 40.0]])
+    humidity = np.array([[60.0, 70.0]]); aod = np.array([[0.4, 0.4]])
+    grid = score_grid(GridInputs(low, mid, high, humidity, aerosol_optical_depth=aod))
+    assert grid[0, 1] < grid[0, 0]
+    for i, rh in enumerate((60.0, 70.0)):
+        snap = WeatherSnapshot(
+            cloud_low_pct=5.0, cloud_mid_pct=55.0, cloud_high_pct=40.0, humidity_pct=rh,
+            source_label="cell", retrieved_at=_T, aerosol_optical_depth=0.4, sunset_time=_T,
+        )
+        scalar = _scalar_predictor().score_snapshot(snap, 31.0, 121.0, _T).probability
+        assert abs(grid[0, i] - scalar) < 1e-9
+
+
+def test_grid_sunward_gate_applies_hygroscopic_growth():
+    # FA-A4 on the national 1-D screen: same sunward AOD/boundary, 70% vs 60%
+    # RH — the humid cell's reach shrinks and its gate leaves the 1.0 plateau.
+    # (No local AOD/visibility → clean_air absent in both cells; humidity
+    # trapezoid flat: the sunward gate is the only mover.)
+    kwargs = dict(
+        cloud_low_pct=np.array([[5.0, 5.0]]),
+        cloud_mid_pct=np.array([[55.0, 55.0]]),
+        cloud_high_pct=np.array([[40.0, 40.0]]),
+        humidity_pct=np.array([[60.0, 70.0]]),
+        cloud_base_m=np.array([[7000.0, 7000.0]]),
+        sunward_profile_max_km=np.array([[800.0, 800.0]]),
+        sunward_cloud_boundary_km=np.array([[350.0, 350.0]]),
+        sunward_aod_mean=np.array([[0.1, 0.1]]),
+    )
+    grid = score_grid(GridInputs(**kwargs))
+    assert grid[0, 1] < grid[0, 0]

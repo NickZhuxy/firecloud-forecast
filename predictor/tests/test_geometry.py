@@ -16,6 +16,7 @@ from predictor.geometry import (
     equivalent_cloud_base_m,
     equivalent_cloud_base_from_aod_m,
     equivalent_cloud_base_range_from_aod_m,
+    hygroscopic_growth_factor,
     max_penetration_km,
     overhead_firecloud_window,
     representative_terminator_speed_km_min,
@@ -578,3 +579,45 @@ def test_convective_duration_is_half_the_stratiform_characteristic():
     assert convective_duration_min(h, lat) == pytest.approx(
         characteristic_duration_min(h, lat) / 2.0, rel=1e-9
     )
+
+
+# ---------------------------------------------------------------------------
+# hygroscopic_growth_factor (FA-A4) — bounded Hänel power law g(RH)
+# ---------------------------------------------------------------------------
+
+
+def test_hygroscopic_growth_unity_at_or_below_reference():
+    # Dry regime (IMPROVE f(RH)≈1 below 60%): strictly no amplification, so
+    # every RH≤60 scenario stays bit-exact with the pre-FA-A4 model.
+    assert hygroscopic_growth_factor(60.0) == 1.0
+    assert hygroscopic_growth_factor(35.0) == 1.0
+    assert hygroscopic_growth_factor(None) == 1.0  # missing RH → no amplification
+
+
+def test_hygroscopic_growth_monotone_and_capped_at_fog_regime():
+    rhs = [60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 90.0]
+    gs = [hygroscopic_growth_factor(r) for r in rhs]
+    assert all(later >= earlier for earlier, later in zip(gs, gs[1:]))
+    # Above ~90% RH is fog/activation territory (manual §2.4.3 hands that to
+    # visibility/cloud signals); the power law is capped, not divergent.
+    assert hygroscopic_growth_factor(97.0) == hygroscopic_growth_factor(90.0)
+    # Pin the Hänel form at one point: g(80) = (0.40/0.20)^0.6.
+    assert hygroscopic_growth_factor(80.0) == pytest.approx((0.40 / 0.20) ** 0.6)
+
+
+def test_equivalent_base_lowered_further_by_humid_boundary_layer():
+    # FA-A4: the same column AOD swells at high RH → the equivalent opaque
+    # ground rises → the effective canvas base drops further than when dry.
+    dry = equivalent_cloud_base_from_aod_m(5000.0, 0.4)
+    humid = equivalent_cloud_base_from_aod_m(5000.0, 0.4, rh_pct=84.0)
+    assert humid < dry
+    # No RH / dry RH degrade bit-exact to the pre-FA-A4 result.
+    assert equivalent_cloud_base_from_aod_m(5000.0, 0.4, rh_pct=None) == dry
+    assert equivalent_cloud_base_from_aod_m(5000.0, 0.4, rh_pct=55.0) == dry
+
+
+def test_aerosol_ground_height_amplified_by_humidity():
+    dry = aerosol_ground_height_m(0.5)
+    humid = aerosol_ground_height_m(0.5, rh_pct=85.0)
+    # h_x = H·ln(AOD·g/(H·β_x)): g enters the log, so the rise is H·ln(g).
+    assert humid == pytest.approx(dry + 2000.0 * math.log(hygroscopic_growth_factor(85.0)))
