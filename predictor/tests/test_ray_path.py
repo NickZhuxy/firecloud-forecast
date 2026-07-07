@@ -39,11 +39,13 @@ def _thin(base_m, top_m):
     )
 
 
-def _xsec(distances_km, cloud_layers_per_col, aod_per_column=None, rh_ground_per_column=None):
+def _xsec(distances_km, cloud_layers_per_col, aod_per_column=None, rh_ground_per_column=None,
+          terrain_per_column=None):
     """Minimal synthetic cross-section: only distances + per-column layers/AOD matter.
 
     ``rh_ground_per_column`` (FA-A4) fills the lowest-height RH row per column;
     None entries stay NaN (unknown → no hygroscopic amplification).
+    ``terrain_per_column`` (FA-G6) is the per-column ground elevation.
     """
     n = len(distances_km)
     heights = [0.0, 5000.0, 10000.0]
@@ -65,6 +67,7 @@ def _xsec(distances_km, cloud_layers_per_col, aod_per_column=None, rh_ground_per
         azimuth_deg=270.0,
         target_time=datetime(2026, 6, 26, tzinfo=timezone.utc),
         aerosol_optical_depth_per_column=aod_per_column,
+        terrain_elevation_m_per_column=terrain_per_column,
     )
 
 
@@ -394,6 +397,57 @@ def test_missing_column_humidity_matches_dry_behaviour():
     aod = [0.5] * 5
     result = trace_ray_clearance(
         _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True
+
+
+# ---------------------------------------------------------------------------
+# FA-G6: terrain horizon obscuration (manual §1.2.1 plains assumption relaxed)
+# ---------------------------------------------------------------------------
+
+
+def test_uniform_plateau_does_not_self_block():
+    # A uniform 500 m plateau is just a shifted datum — the excess criterion
+    # keeps it neutral, so elevated flat regions behave exactly like the sea.
+    terrain = [500.0] * 5
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, terrain_per_column=terrain),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True
+
+
+def test_upstream_ridge_blocks_grazing_ray():
+    # Observer at sea level; an 800 m ridge at 150 km where the grazing ray is
+    # only ~7 m up — the mountain eats the low sun (cloudless column).
+    terrain = [0.0, 0.0, 0.0, 800.0, 0.0]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, terrain_per_column=terrain),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is False
+    assert result.blocked_at_km == pytest.approx(150.0)
+    assert result.blocked_layer is None  # ground-type block, not a cloud
+
+
+def test_elevated_observer_sees_over_the_same_ridge():
+    # Horizon depression in flat coordinates: a 1000 m observer makes the same
+    # 800 m ridge sit BELOW the datum (negative excess) → clear.
+    terrain = [1000.0, 0.0, 0.0, 800.0, 0.0]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, terrain_per_column=terrain),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True
+
+
+def test_missing_observer_elevation_skips_terrain_checks():
+    # No datum → no guessing: an absolute floor would wrongly veto every
+    # elevated plateau, so unknown observer elevation disables terrain vetoes.
+    terrain = [None, 0.0, 0.0, 800.0, 0.0]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, terrain_per_column=terrain),
         observer_cloud_base_eff_m=2000.0,
     )
     assert result.clear is True
