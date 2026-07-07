@@ -150,6 +150,38 @@ def test_clean_air_ignores_sunward_path_aod(base_features):
     assert LocalAerosolPerception().evaluate(f) == 1.0
 
 
+def test_clean_air_humid_boundary_layer_dims_perception(base_features):
+    # FA-A4, manual §2.4.3: the same AOD looks murkier when boundary-layer RH
+    # is high — hygroscopic growth swells the perceived extinction.
+    dry = LocalAerosolPerception().evaluate(
+        replace(base_features, aerosol_optical_depth=0.4, humidity_pct=60.0)
+    )
+    humid = LocalAerosolPerception().evaluate(
+        replace(base_features, aerosol_optical_depth=0.4, humidity_pct=84.0)
+    )
+    assert humid < dry
+
+
+def test_sunward_illumination_humid_haze_shortens_reach(base_features):
+    # FA-A4 on the 1-D geometric channel: 84% RH swells the sunward-mean AOD,
+    # the equivalent base drops further, the reach shrinks, and a boundary that
+    # was comfortably inside reach when dry lands on the marginal ramp.
+    kwargs = dict(
+        cloud_base_m=7000.0,
+        sunward_aod_mean=0.1,
+        sunward_profile_max_km=800.0,
+        sunward_cloud_boundary_km=350.0,
+    )
+    dry = SunwardIlluminationGate().evaluate(
+        replace(base_features, humidity_pct=60.0, **kwargs)
+    )
+    humid = SunwardIlluminationGate().evaluate(
+        replace(base_features, humidity_pct=84.0, **kwargs)
+    )
+    assert dry == 1.0
+    assert humid < dry
+
+
 def test_low_cloud_obstruction_uses_sunward_path_when_available(base_features):
     f = replace(
         base_features,

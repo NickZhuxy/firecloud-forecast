@@ -39,15 +39,24 @@ def _thin(base_m, top_m):
     )
 
 
-def _xsec(distances_km, cloud_layers_per_col, aod_per_column=None):
-    """Minimal synthetic cross-section: only distances + per-column layers/AOD matter."""
+def _xsec(distances_km, cloud_layers_per_col, aod_per_column=None, rh_ground_per_column=None):
+    """Minimal synthetic cross-section: only distances + per-column layers/AOD matter.
+
+    ``rh_ground_per_column`` (FA-A4) fills the lowest-height RH row per column;
+    None entries stay NaN (unknown → no hygroscopic amplification).
+    """
     n = len(distances_km)
     heights = [0.0, 5000.0, 10000.0]
     empty = np.full((len(heights), n), np.nan)
+    rh = empty.copy()
+    if rh_ground_per_column is not None:
+        for i, value in enumerate(rh_ground_per_column):
+            if value is not None:
+                rh[0, i] = value
     return SunwardCrossSection(
         distances_km=list(distances_km),
         heights_m=heights,
-        relative_humidity_pct=empty.copy(),
+        relative_humidity_pct=rh,
         vertical_velocity_pa_s=empty.copy(),
         temperature_k=empty.copy(),
         mask=np.ones((len(heights), n), dtype=bool),
@@ -331,3 +340,60 @@ def test_upstream_excess_over_hazy_observer_blocks():
     assert result.clear is False
     assert result.blocked_at_km == pytest.approx(150.0)
     assert result.blocked_layer is None
+
+
+# ---------------------------------------------------------------------------
+# FA-A4: hygroscopic growth on the per-column veto (manual §2.4.3 雾霾)
+# ---------------------------------------------------------------------------
+
+
+def test_uniform_aod_and_uniform_humidity_do_not_self_block():
+    # Growth is uniform when RH is uniform: every column swells alike, the
+    # observer datum swells alike, excess stays 0 — FA-A2's core no-self-veto
+    # invariant survives FA-A4 even in dense humid haze.
+    aod = [0.5] * 5
+    rh = [85.0] * 5
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod, rh_ground_per_column=rh),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True
+
+
+def test_humid_upstream_pocket_blocks_at_uniform_aod():
+    # Same column AOD everywhere, but an 85% RH pocket at 150 km swells that
+    # column's extinction (g≈1.80): its equivalent ground rises ~1.2 km above
+    # the dry-observer datum while the grazing ray is only ~7 m up → veto.
+    # This is the manual's 雾霾联手 case, the gap FA-A2's note §5 left open.
+    aod = [0.5] * 5
+    rh = [60.0, 60.0, 60.0, 85.0, 60.0]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod, rh_ground_per_column=rh),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is False
+    assert result.blocked_at_km == pytest.approx(150.0)
+    assert result.blocked_layer is None
+
+
+def test_humid_observer_with_dry_upstream_does_not_block():
+    # The humid observer column raises the datum; drier upstream columns sit
+    # BELOW it (negative excess) → no veto.
+    aod = [0.5] * 5
+    rh = [85.0, 60.0, 60.0, 60.0, 60.0]
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod, rh_ground_per_column=rh),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True
+
+
+def test_missing_column_humidity_matches_dry_behaviour():
+    # NaN RH rows (the default fixture) must trace bit-identically to the
+    # pre-FA-A4 model — dense uniform AOD stays clear.
+    aod = [0.5] * 5
+    result = trace_ray_clearance(
+        _xsec([0, 50, 100, 150, 200], _CLEAR5, aod_per_column=aod),
+        observer_cloud_base_eff_m=2000.0,
+    )
+    assert result.clear is True

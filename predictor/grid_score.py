@@ -71,9 +71,21 @@ def _trapezoid(x, low0, low1, high1, high0):
     return out
 
 
-def _clean_air(visibility_m, aod):
+def _hygroscopic_growth(humidity_pct):
+    """Vectorized mirror of ``geometry.hygroscopic_growth_factor`` (FA-A4)."""
+    rh = np.asarray(humidity_pct, dtype=float)
+    rh_eff = np.minimum(rh, 90.0)
+    with np.errstate(invalid="ignore"):
+        grown = (0.40 / (1.0 - rh_eff / 100.0)) ** 0.6
+        g = np.where(rh_eff <= 60.0, 1.0, grown)
+    return np.where(np.isfinite(rh), g, 1.0)
+
+
+def _clean_air(visibility_m, aod, humidity_pct):
     if aod is not None:
-        a = np.asarray(aod, dtype=float)
+        # FA-A4: hygroscopic swelling — same AOD reads murkier in a humid
+        # boundary layer, mirroring LocalAerosolPerception.
+        a = np.asarray(aod, dtype=float) * _hygroscopic_growth(humidity_pct)
         xs, ys = _CLEAN_AIR_AOD_POINTS[:, 0], _CLEAN_AIR_AOD_POINTS[:, 1]
         # np.interp clamps below xs[0]/above xs[-1] to the end values; beyond the
         # last breakpoint (0.8) the scalar rule returns 0, which np.interp matches.
@@ -86,11 +98,13 @@ def _clean_air(visibility_m, aod):
     return np.clip((vis_km - 5.0) / 15.0, 0.0, 1.0)
 
 
-def _equivalent_base_from_aod(cloud_base_m, aod):
+def _equivalent_base_from_aod(cloud_base_m, aod, humidity_pct=None):
     base = np.asarray(cloud_base_m, dtype=float)
     if aod is None:
         return base
     a = np.asarray(aod, dtype=float)
+    if humidity_pct is not None:
+        a = a * _hygroscopic_growth(humidity_pct)  # FA-A4
     scale_height_km = 2.0
     beta_x = 0.02
     beta_0 = a / scale_height_km
@@ -111,11 +125,11 @@ def _max_penetration_km(cloud_base_m):
     )
 
 
-def _sunward_illumination(cloud_base_m, boundary_km, profile_max_km, aod):
+def _sunward_illumination(cloud_base_m, boundary_km, profile_max_km, aod, humidity_pct=None):
     base = np.asarray(cloud_base_m, dtype=float)
     boundary = np.asarray(boundary_km, dtype=float)
     profile_max = np.asarray(profile_max_km, dtype=float)
-    effective_base = _equivalent_base_from_aod(base, aod)
+    effective_base = _equivalent_base_from_aod(base, aod, humidity_pct)
     reach = _max_penetration_km(effective_base)
 
     score = np.zeros_like(base)
@@ -167,6 +181,7 @@ def score_grid(inputs: GridInputs) -> np.ndarray:
             inputs.sunward_cloud_boundary_km,
             inputs.sunward_profile_max_km,
             inputs.sunward_aod_mean,
+            humidity,
         )
 
     # Modifiers.
@@ -182,7 +197,7 @@ def score_grid(inputs: GridInputs) -> np.ndarray:
     # FA-A3: local aerosol perception joins the modifier layer when a signal
     # exists; with neither AOD nor visibility the component is omitted, exactly
     # like the scalar rule returning None.
-    clean = _clean_air(inputs.visibility_m, inputs.aerosol_optical_depth)
+    clean = _clean_air(inputs.visibility_m, inputs.aerosol_optical_depth, humidity)
     if clean is not None:
         modifiers["clean_air"] = clean
 

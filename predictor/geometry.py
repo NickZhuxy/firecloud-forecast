@@ -154,9 +154,35 @@ def equivalent_cloud_base_m(
     return max(0.0, cloud_base_m - h_x_m)
 
 
+# FA-A4 hygroscopic growth (manual §2.4.3): bounded Hänel power law. Below the
+# reference RH growth is negligible (IMPROVE f(RH)≈1), above ~90% RH the fog /
+# droplet-activation regime takes over (handled by visibility and cloud
+# diagnostics), so the law is capped there rather than allowed to diverge.
+_HYGROSCOPIC_RH_REF_PCT = 60.0
+_HYGROSCOPIC_RH_CAP_PCT = 90.0
+_HYGROSCOPIC_GAMMA = 0.6
+
+
+def hygroscopic_growth_factor(rh_pct: float | None) -> float:
+    """Aerosol extinction amplification g(RH) from hygroscopic swelling (FA-A4).
+
+    Hänel-form ``g = ((1-RH_ref)/(1-RH))^γ`` with RH clamped to the ~90% cap;
+    γ=0.6 sits mid-range of urban aerosol (Hänel 1976, IMPROVE f(RH)). Unknown
+    RH or RH at/below the 60% reference returns exactly 1.0, keeping every dry
+    scenario bit-identical to the pre-FA-A4 model.
+    """
+    if rh_pct is None or rh_pct <= _HYGROSCOPIC_RH_REF_PCT:
+        return 1.0
+    rh = min(rh_pct, _HYGROSCOPIC_RH_CAP_PCT)
+    dry_gap = 1.0 - _HYGROSCOPIC_RH_REF_PCT / 100.0
+    wet_gap = 1.0 - rh / 100.0
+    return (dry_gap / wet_gap) ** _HYGROSCOPIC_GAMMA
+
+
 def aerosol_ground_height_m(
     aerosol_optical_depth: float | None,
     scale_height_m: float = _DEFAULT_AEROSOL_SCALE_HEIGHT_M,
+    rh_pct: float | None = None,
 ) -> float:
     """Equivalent opaque-ground height ``h_x`` from a column AOD (paper §5.4).
 
@@ -166,6 +192,10 @@ def aerosol_ground_height_m(
 
         ``h_x = H · ln(beta_0 / beta_x)``  (``beta_0 = AOD/H``).
 
+    ``rh_pct`` (FA-A4) is the co-located near-ground relative humidity: the AOD
+    is amplified by :func:`hygroscopic_growth_factor` before the profile math,
+    so a humid boundary layer raises h_x by ``H·ln(g)`` (manual §2.4.3 雾霾).
+
     Below ``h_x`` the near-surface aerosol is "effectively opaque" to grazing
     sunlight. Returns 0 when AOD is unknown / non-positive, or when the surface is
     already cleaner than the threshold (``beta_0 <= beta_x``). This is the per-
@@ -174,8 +204,9 @@ def aerosol_ground_height_m(
     """
     if aerosol_optical_depth is None or aerosol_optical_depth <= 0:
         return 0.0
+    effective_aod = aerosol_optical_depth * hygroscopic_growth_factor(rh_pct)
     scale_height_km = scale_height_m / 1000.0
-    beta_0 = aerosol_optical_depth / scale_height_km
+    beta_0 = effective_aod / scale_height_km
     if beta_0 <= _BETA_X_KM_INV:
         return 0.0
     return scale_height_m * math.log(beta_0 / _BETA_X_KM_INV)
@@ -185,6 +216,7 @@ def equivalent_cloud_base_from_aod_m(
     cloud_base_m: float,
     aerosol_optical_depth: float | None,
     scale_height_m: float = _DEFAULT_AEROSOL_SCALE_HEIGHT_M,
+    rh_pct: float | None = None,
 ) -> float:
     """AOD-based equivalent cloud base from the manual's exponential profile.
 
@@ -192,10 +224,13 @@ def equivalent_cloud_base_from_aod_m(
     ``AOD=beta_0*H``. This lets us estimate the equivalent opaque-ground height
     without treating fog-sensitive surface visibility as a column aerosol
     measurement. The base drops by ``aerosol_ground_height_m`` (floored at 0);
-    unknown AOD leaves the cloud base unchanged.
+    unknown AOD leaves the cloud base unchanged. ``rh_pct`` (FA-A4) amplifies
+    the AOD for hygroscopic growth; None keeps the dry behaviour bit-exact.
     """
     return max(
-        0.0, cloud_base_m - aerosol_ground_height_m(aerosol_optical_depth, scale_height_m)
+        0.0,
+        cloud_base_m
+        - aerosol_ground_height_m(aerosol_optical_depth, scale_height_m, rh_pct=rh_pct),
     )
 
 

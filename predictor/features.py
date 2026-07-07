@@ -358,7 +358,10 @@ def derive(snapshot, lat: float, lon: float, time: datetime, cloud_layers=None, 
         observer_aod = _observer_column_aod(sunward_cross_section)
         if observer_aod is None:
             observer_aod = spatial.get("sunward_aod_mean")
-        effective_base = equivalent_cloud_base_from_aod_m(cloud_base_m, observer_aod)
+        # FA-A4: the observer's boundary-layer humidity swells that same haze.
+        effective_base = equivalent_cloud_base_from_aod_m(
+            cloud_base_m, observer_aod, rh_pct=snapshot.humidity_pct
+        )
         sunward_ray_clearance = trace_ray_clearance(sunward_cross_section, effective_base)
 
     return Features(
