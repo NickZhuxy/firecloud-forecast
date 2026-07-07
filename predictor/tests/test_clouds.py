@@ -220,3 +220,66 @@ def test_single_level_condensate_layer_optical_depth_nan():
     layers = diagnose_clouds(p)
     assert len(layers) == 1
     assert np.isnan(layers[0].optical_depth)
+
+
+# ---------------------------------------------------------------------------
+# FA-C6: virga (落幡) lowering the effective base
+# ---------------------------------------------------------------------------
+
+_VIRGA_HEIGHTS = [500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
+_COLD_AT_BASE = [285, 280, 275, 270, 265, 258, 250, 242]  # T(5500 m) = −15 °C
+_THICK_ICE = [0, 0, 0, 0, 0, 1e-3, 1e-3, 1e-3]            # τ ≫ 1 ice deck 5.5–7.5 km
+
+
+def _virga_rh(humid_levels):
+    return [70.0 if h in humid_levels else 30.0 for h in _VIRGA_HEIGHTS]
+
+
+def test_cold_precipitating_layer_with_humid_subbase_gets_virga_capped():
+    # Cold (−15 °C) thick ice deck over a deep contiguous humid layer: the fall
+    # streaks reach down through it, capped at the configured maximum.
+    p = _profile(
+        _VIRGA_HEIGHTS, ice=_THICK_ICE, temp=_COLD_AT_BASE,
+        rh=_virga_rh({2500, 3500, 4500}),
+    )
+    (layer,) = diagnose_clouds(p)
+    assert layer.virga_extension_m == pytest.approx(1500.0)  # cap bites (raw 2500)
+
+
+def test_virga_stops_at_the_first_dry_sublayer():
+    # Only the level right under the base is humid; the streaks evaporate at
+    # the dry layer below it.
+    p = _profile(
+        _VIRGA_HEIGHTS, ice=_THICK_ICE, temp=_COLD_AT_BASE,
+        rh=_virga_rh({4500}),
+    )
+    (layer,) = diagnose_clouds(p)
+    assert layer.virga_extension_m == pytest.approx(500.0)  # base 5000 → 4500
+
+
+def test_warm_base_layer_gets_no_virga():
+    # +5 °C base: no ice-phase fall-streak propensity (manual: 落幡 is a cold
+    # altocumulus / high-cloud phenomenon).
+    warm = [295, 292, 289, 286, 283, 278, 272, 266]
+    p = _profile(
+        _VIRGA_HEIGHTS, ice=_THICK_ICE, temp=warm, rh=_virga_rh({2500, 3500, 4500}),
+    )
+    (layer,) = diagnose_clouds(p)
+    assert layer.virga_extension_m == 0.0
+
+
+def test_dry_subbase_gets_no_virga():
+    p = _profile(_VIRGA_HEIGHTS, ice=_THICK_ICE, temp=_COLD_AT_BASE, rh=_virga_rh(set()))
+    (layer,) = diagnose_clouds(p)
+    assert layer.virga_extension_m == 0.0
+
+
+def test_optically_thin_layer_gets_no_virga():
+    # Barely-detected wisp (τ < 1): nothing substantial to shed.
+    thin = [0, 0, 0, 0, 0, 2e-6, 2e-6, 2e-6]
+    p = _profile(
+        _VIRGA_HEIGHTS, ice=thin, temp=_COLD_AT_BASE, rh=_virga_rh({2500, 3500, 4500}),
+    )
+    layers = diagnose_clouds(p)
+    assert len(layers) == 1
+    assert layers[0].virga_extension_m == 0.0

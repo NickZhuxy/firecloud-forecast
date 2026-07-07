@@ -17,6 +17,7 @@ Thresholds and merge rules live in ``CloudDiagnosisConfig`` with provenance.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -40,6 +41,12 @@ class CloudLayer:
     # when not derivable (RH-fallback layer, or a single-level layer that cannot
     # be integrated); consumers then fall back to the thickness×phase proxy.
     optical_depth: float = float("nan")
+    # Fall-streak (落幡/virga) depth below base_m (FA-C6, manual §2.2.2): how far
+    # precipitation from a cold, optically substantial deck survives into the
+    # humid sub-base air before evaporating. Lowers the EFFECTIVE geometry base
+    # (base_m − virga_extension_m); the étage identity keeps the true base
+    # (the manual measures "云底（不算落幡）"). 0 when absent.
+    virga_extension_m: float = 0.0
 
 
 def tier_from_height(base_m: float) -> str:
@@ -86,6 +93,16 @@ class CloudDiagnosisConfig:
     # ~10 µm (manual §1.1.2); ice crystals larger → same path is more transparent.
     liquid_eff_radius_m: float = 1.0e-5
     ice_eff_radius_m: float = 3.0e-5
+    # Virga (FA-C6, manual §2.2.2). A deck sheds visible fall streaks when its
+    # base is cold (ice-phase propensity; the manual's 落幡云洞 altocumulus runs
+    # from about −20 °C, generic 幡 earlier → −10 °C default) AND it is optically
+    # substantial (τ ≥ 1: thin wisps shed nothing that survives). The streaks
+    # reach down through the CONTIGUOUS humid sub-base air (RH ≥ 60%) and
+    # evaporate at the first dry layer, capped at a typical virga depth.
+    virga_max_base_temp_k: float = 263.15
+    virga_min_optical_depth: float = 1.0
+    virga_min_subbase_rh_pct: float = 60.0
+    virga_max_extension_m: float = 1500.0
 
 
 DEFAULT_CLOUD_CONFIG = CloudDiagnosisConfig()
@@ -157,9 +174,45 @@ def diagnose_clouds(
                 source=source,
                 signal_margin=peak / threshold if threshold else float("nan"),
                 optical_depth=optical_depth,
+                virga_extension_m=_virga_extension_m(
+                    h, rh, temp, i0, float(base), optical_depth, source, config
+                ),
             )
         )
     return layers
+
+
+def _virga_extension_m(
+    h: np.ndarray,
+    rh: np.ndarray,
+    temp: np.ndarray,
+    i0: int,
+    base_m: float,
+    optical_depth: float,
+    source: str,
+    config: CloudDiagnosisConfig,
+) -> float:
+    """Fall-streak depth below a layer's base (FA-C6, manual §2.2.2).
+
+    Cold (ice-propensity), optically substantial decks shed precipitation that
+    survives down through the contiguous humid sub-base air and evaporates at
+    the first dry level. Warm, thin, or dry-footed decks return 0, so typical
+    scenarios are bit-identical to the pre-FA-C6 model.
+    """
+    if source != "condensate":
+        return 0.0
+    if not math.isfinite(optical_depth) or optical_depth < config.virga_min_optical_depth:
+        return 0.0
+    if temp[i0] > config.virga_max_base_temp_k:
+        return 0.0
+    lowest_humid_m = None
+    for j in range(i0 - 1, -1, -1):
+        if not (math.isfinite(rh[j]) and rh[j] >= config.virga_min_subbase_rh_pct):
+            break
+        lowest_humid_m = float(h[j])
+    if lowest_humid_m is None:
+        return 0.0
+    return float(min(base_m - lowest_humid_m, config.virga_max_extension_m))
 
 
 def _layer_optical_depth(p_hpa, t_k, h_m, clw, ice, i0: int, i1: int, config) -> float:

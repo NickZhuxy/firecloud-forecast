@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
+import pytest
 
 from predictor.cloud_top import (
     CloudTopRetrieval,
@@ -130,3 +131,23 @@ def test_colocate_falls_back_when_time_gap_too_large():
     assert c.source == "model"
     assert c.corrected_top_m == 7000.0
     assert "gap" in c.reason.lower() or "stale" in c.reason.lower()
+
+
+# ---------------------------------------------------------------------------
+# FA-C6: IR top → base inference (manual §4.2.1(1) workflow companion)
+# ---------------------------------------------------------------------------
+
+
+def test_adopted_satellite_top_shifts_base_preserving_model_thickness():
+    from predictor.cloud_top import CloudTopCorrection, infer_base_from_corrected_top
+
+    correction = CloudTopCorrection(2800.0, 0.9, "satellite-corrected top", "satellite")
+    base = infer_base_from_corrected_top(2043.0, 3110.0, correction)
+    assert base == pytest.approx(2800.0 - (3110.0 - 2043.0))
+
+
+def test_kept_model_top_keeps_model_base():
+    from predictor.cloud_top import CloudTopCorrection, infer_base_from_corrected_top
+
+    correction = CloudTopCorrection(3110.0, 0.0, "no satellite top; kept model top", "model")
+    assert infer_base_from_corrected_top(2043.0, 3110.0, correction) == 2043.0

@@ -143,7 +143,11 @@ def trace_ray_clearance(
         height_m = ray_height_m(distance_km, vertex_km)
         checked += 1
         for layer in layers or []:
-            if layer.base_m <= height_m <= layer.top_m and _layer_opacity(layer) >= opacity_threshold:
+            # FA-C6: an opaque deck's fall streaks (虚幡) extend its blocking
+            # span downward — "浓密幡状云还会挡住阳光". Opacity still comes from
+            # the deck itself, so thin wisps gain no obstruction from streaks.
+            span_bottom_m = layer.base_m - layer.virga_extension_m
+            if span_bottom_m <= height_m <= layer.top_m and _layer_opacity(layer) >= opacity_threshold:
                 return RayClearance(False, float(distance_km), height_m, layer, checked)
         # FA-G6 terrain horizon: a ridge obstructs only by its EXCESS over the
         # observer-column elevation datum — a uniform plateau is a shifted
