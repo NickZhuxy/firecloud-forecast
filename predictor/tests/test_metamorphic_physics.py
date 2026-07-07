@@ -146,3 +146,29 @@ def test_rising_humidity_with_local_aerosol_never_raises_composite(base_features
     for earlier, later in zip(scores, scores[1:]):
         assert later <= earlier + 1e-12
     assert scores[1] < scores[0]
+
+
+def test_semi_transparent_wisp_on_the_lit_path_never_raises_composite(base_features):
+    """FA-C3, manual §4.2.1(2): a semi-transparent veil on the light path dims
+    the burn (闷烧) — adding one must never RAISE the composite, and must
+    strictly lower it when the path was previously clean (non-vacuity)."""
+    from predictor.ray_path import RayClearance
+
+    geometry = dict(
+        cloud_base_m=7000.0,
+        sunward_aod_mean=0.1,
+        sunward_profile_max_km=800.0,
+        sunward_cloud_boundary_km=150.0,
+    )
+    clean = composite(replace(
+        base_features, **geometry,
+        sunward_ray_clearance=RayClearance(True, None, None, None, 5),
+    ))
+    dimmed = composite(replace(
+        base_features, **geometry,
+        sunward_ray_clearance=RayClearance(
+            True, None, None, None, 5, path_transmittance=0.9
+        ),
+    ))
+    assert dimmed <= clean + 1e-12
+    assert dimmed < clean

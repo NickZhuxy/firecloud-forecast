@@ -220,6 +220,19 @@ def test_sunward_illumination_skips_without_profile(base_features):
 # --- FA-G5 second cut: gate consumes the ray-trace clearance when present -----
 
 
+def test_sunward_illumination_scales_by_path_transmittance(base_features):
+    # FA-C3: a clear-but-dimmed trace (semi-transparent 杂云 on the path)
+    # multiplies the geometric score — 闷烧, not a binary pass.
+    f = replace(
+        base_features, cloud_base_m=7000.0, sunward_aod_mean=0.1,
+        sunward_profile_max_km=800.0, sunward_cloud_boundary_km=150.0,
+        sunward_ray_clearance=RayClearance(
+            True, None, None, None, 5, path_transmittance=0.6
+        ),
+    )
+    assert SunwardIlluminationGate().evaluate(f) == pytest.approx(0.6)
+
+
 def test_sunward_illumination_clear_ray_trace_keeps_scalar_pass(base_features):
     # A clear path does not override the geometry: with a valid sunward edge within
     # reach the scalar still passes (1.0); the clear trace simply does not veto.

@@ -472,3 +472,48 @@ def test_virga_extends_an_opaque_layer_downward_into_the_ray():
     )
     xs2 = _xsec([0, 50, 100, 150, 200], [[], [dry_deck], [], [], []])
     assert trace_ray_clearance(xs2, 2000.0).clear is True
+
+
+# ---------------------------------------------------------------------------
+# FA-C3: graded semi-transparent obstruction along the light path (杂云调光)
+# ---------------------------------------------------------------------------
+
+from predictor.illumination import _layer_opacity as _opacity
+
+
+def test_clear_sky_path_transmittance_is_unity():
+    xs = _xsec([0, 50, 100, 150, 200], _CLEAR5)
+    result = trace_ray_clearance(xs, 2000.0)
+    assert result.clear is True
+    assert result.path_transmittance == 1.0
+
+
+def test_semi_transparent_wisp_dims_but_does_not_block():
+    # A thin wisp (opacity < threshold) on the lit path: the ray survives but
+    # arrives dimmed — the manual's 半透明 → 闷烧 band, invisible to the old
+    # binary veto.
+    wisp = _thin(0.0, 500.0)
+    xs = _xsec([0, 50, 100, 150, 200], [[], [], [], [wisp], []])
+    result = trace_ray_clearance(xs, 2000.0)
+    assert result.clear is True
+    expected = 1.0 - _opacity(wisp)
+    assert expected < 1.0  # fixture sanity: the wisp really extinguishes some light
+    assert result.path_transmittance == pytest.approx(expected)
+
+
+def test_transmittance_multiplies_per_crossed_column():
+    # The same veil crossed at two sampled columns loses light twice: the
+    # per-column product is the crude slant-path integration (§4.2.1(2): the
+    # longer the grazing run inside the veil, the closer to 封死).
+    wisp = _thin(0.0, 500.0)
+    xs = _xsec([0, 50, 100, 150, 200], [[], [], [wisp], [wisp], []])
+    result = trace_ray_clearance(xs, 2000.0)
+    assert result.clear is True
+    assert result.path_transmittance == pytest.approx((1.0 - _opacity(wisp)) ** 2)
+
+
+def test_opaque_block_reports_zero_transmittance():
+    xs = _xsec([0, 50, 100, 150, 200], [[], [], [], [_opaque(0.0, 2000.0)], []])
+    result = trace_ray_clearance(xs, 2000.0)
+    assert result.clear is False
+    assert result.path_transmittance == 0.0

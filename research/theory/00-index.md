@@ -23,6 +23,7 @@
 | [fa-a4-hygroscopic-growth](fa-a4-hygroscopic-growth.md) | FA-A4 | RH 吸湿增长放大 β：有界 Hänel 幂律 g(RH)，有效 AOD 进观感+等效底+逐列否决 | §2.4.3 / §1.1.3 / §1.3.1 |
 | [fa-g6-terrain-horizon](fa-g6-terrain-horizon.md) | FA-G6 | 地形地平线遮蔽：逐列地形超出量否决（云→地形→气溶胶），下沉角自然涌现 | §1.2.1 / §1.2.4 |
 | [fa-c6-virga-effective-base](fa-c6-virga-effective-base.md) | FA-C6 | 落幡压低有效云底（冷底浓层+湿次层→虚幡延伸）+ IR 顶→底厚度平移 | §2.2.2 / §4.2.1(1) / §1.4.3 |
+| [fa-c3-path-graded-obstruction](fa-c3-path-graded-obstruction.md) | FA-C3 | 沿光路半透明杂云分级调光 Π(1−opacity)（闷烧）；互照论证延后至 FA-S3 | §4.1.1-5 / §4.2.1(2) / §4.2.2 |
 
 ## 推荐阅读顺序
 
