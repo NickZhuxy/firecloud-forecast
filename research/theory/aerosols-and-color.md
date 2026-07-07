@@ -88,6 +88,7 @@ Ribeiro 等 (2024, *Atmos. Chem. Phys.*) 用现代辐射传输模型重新分析
    - **第 2 阶**：接入 MERRA-2 或 OMI 的卫星 AOD，全球扩展时启用。
 
 2. **不要把"气溶胶"做成单一 gate**。Lee 2003 表明背景平流层气溶胶反而**支持**火烧云生成。所以严格的 `CleanAirGate` 只应惩罚**对流层**异常高 AOD，不要惩罚平流层贡献——这意味着如果未来有了卫星反演的分层 AOD 数据，要区分 trop/strato。
+   **澄清（2026-07-06，与 [single-point-fidelity-audit](single-point-fidelity-audit.md) §5 交叉引用）**：对火烧云这种**反射现象**，权威手册 §2.4.1 的结论是"本地的气溶胶对于火烧云基本没有正面影响，我们希望气溶胶光学厚度越小越好"——**单调下降是对的，不做 Goldilocks**（atmospheric-optics 笔记 §启示-1 的梯形隶属建议不适用于火烧云主评分；Lee 2003 的增强效应属于暮光余晖/紫光场景）。FA-A3 落地后该规则更名 `LocalAerosolPerception`（组件键仍为 `clean_air`），并从 gate 层移入 modifier 层：本地气溶胶压的是**观感质量**，路径消光的概率角色由几何通道（FA-A2）承担。
 
 3. **PBL 高度调节 PM2.5 → AOD 的转换**：同一 PM2.5 浓度，PBL 厚度大时柱总 AOD 大、薄时小。`HPBL` 是 HRRR 直接输出的变量；如果将来用 PM2.5，应该构造 `PM2.5 × HPBL` 作为派生特征。
 

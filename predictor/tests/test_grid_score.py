@@ -58,7 +58,7 @@ def test_heavy_low_cloud_gates_to_zero():
 
 
 def test_aod_path_matches_scalar():
-    # When AOD is supplied it takes precedence over visibility, matching CleanAirGate.
+    # When AOD is supplied it takes precedence over visibility, matching LocalAerosolPerception.
     low = np.array([[5.0]]); mid = np.array([[55.0]]); high = np.array([[40.0]])
     humidity = np.array([[60.0]]); aod = np.array([[0.25]])
     grid = score_grid(GridInputs(low, mid, high, humidity, aerosol_optical_depth=aod))
@@ -97,7 +97,8 @@ def test_optional_sunward_gate_blocks_cloud_deck_without_reachable_edge():
 
 
 def test_missing_clean_air_signals_are_neutral_like_scalar():
-    # When neither visibility nor AOD is available, CleanAirGate is neutral (1.0).
+    # When neither visibility nor AOD is available, both sides omit the clean_air
+    # component (FA-A3 missing-data contract) — parity must hold.
     low = np.array([[5.0]]); mid = np.array([[55.0]]); high = np.array([[40.0]])
     humidity = np.array([[60.0]])
     grid = score_grid(GridInputs(low, mid, high, humidity))
@@ -115,3 +116,20 @@ def test_output_shape_and_range():
     ))
     assert grid.shape == shape
     assert np.all((grid >= 0.0) & (grid <= 1.0))
+
+
+def test_heavy_local_aerosol_dims_but_does_not_zero_grid():
+    # FA-A3: perception aerosol is a modifier — an AOD in the "污烧" band drags
+    # quality down without zeroing the probability, and stays in lockstep with
+    # the scalar predictor.
+    low = np.array([[5.0]]); mid = np.array([[55.0]]); high = np.array([[40.0]])
+    humidity = np.array([[60.0]]); aod = np.array([[0.9]])
+    grid = score_grid(GridInputs(low, mid, high, humidity, aerosol_optical_depth=aod))
+
+    snap = WeatherSnapshot(
+        cloud_low_pct=5.0, cloud_mid_pct=55.0, cloud_high_pct=40.0, humidity_pct=60.0,
+        source_label="cell", retrieved_at=_T, aerosol_optical_depth=0.9, sunset_time=_T,
+    )
+    scalar = _scalar_predictor().score_snapshot(snap, 31.0, 121.0, _T).probability
+    assert grid[0, 0] > 0.0
+    assert abs(grid[0, 0] - scalar) < 1e-9

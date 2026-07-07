@@ -12,7 +12,7 @@ from predictor.fetch import FakeSource, WeatherSnapshot
 from predictor.ray_path import RayClearance
 from predictor.rules import (
     BoundaryConfidence,
-    CleanAirGate,
+    LocalAerosolPerception,
     HumidityFactor,
     LowCloudObstruction,
     MidHighCloudPresence,
@@ -136,16 +136,18 @@ def test_clean_air_prefers_aod_over_good_surface_visibility(base_features):
         visibility_m=30_000.0,
         aerosol_optical_depth=0.8,
     )
-    assert CleanAirGate().evaluate(f) == 0.0
+    assert LocalAerosolPerception().evaluate(f) == 0.0
 
 
-def test_clean_air_uses_worst_of_local_and_sunward_aod(base_features):
+def test_clean_air_ignores_sunward_path_aod(base_features):
+    # FA-A3: path extinction lives in the geometry channel (sunward gate /
+    # FA-A2 per-column veto); the perception score reads only the LOCAL AOD.
     f = replace(
         base_features,
         aerosol_optical_depth=0.1,
         sunward_aod_mean=0.5,
     )
-    assert abs(CleanAirGate().evaluate(f) - 0.4) < 1e-9
+    assert LocalAerosolPerception().evaluate(f) == 1.0
 
 
 def test_low_cloud_obstruction_uses_sunward_path_when_available(base_features):
@@ -563,50 +565,59 @@ def test_predictor_score_uses_gate_modifier_combiner_end_to_end():
 
 
 # ---------------------------------------------------------------------------
-# New rules: CleanAirGate, CloudAltitudePreference, CloudCoverSweetSpot
+# New rules: LocalAerosolPerception, CloudAltitudePreference, CloudCoverSweetSpot
 # ---------------------------------------------------------------------------
 
 from predictor.rules import (
-    CleanAirGate,
+    LocalAerosolPerception,
     CloudAltitudePreference,
     CloudCoverSweetSpot,
+    STANDARD_GATES,
     standard_predictor,
     gate_modifier_parts,
 )
 
 
-# --- CleanAirGate ---
+# --- LocalAerosolPerception (FA-A3: local aerosol perception, modifier layer) ---
 
-def test_clean_air_gate_visibility_none_is_permissive(base_features):
-    f = replace(base_features, visibility_m=None)
-    assert CleanAirGate().evaluate(f) == 1.0
+def test_clean_air_missing_both_signals_returns_none(base_features):
+    # Neither AOD nor visibility available: the component is omitted (None),
+    # not scored as perfect air — the ScoringRule missing-data contract.
+    f = replace(base_features, visibility_m=None, aerosol_optical_depth=None)
+    assert LocalAerosolPerception().evaluate(f) is None
+
+
+def test_clean_air_is_a_modifier_not_a_gate():
+    # FA-A3: local aerosol perception degrades quality (modifier layer); the
+    # probability role of aerosol lives in the geometric path channel.
+    assert "clean_air" not in STANDARD_GATES
 
 
 def test_clean_air_gate_high_visibility_passes(base_features):
     f = replace(base_features, visibility_m=25_000.0)
-    assert CleanAirGate().evaluate(f) == 1.0
+    assert LocalAerosolPerception().evaluate(f) == 1.0
 
 
 def test_clean_air_gate_low_visibility_blocks(base_features):
     # 3 km < 5 km threshold → score 0
     f = replace(base_features, visibility_m=3_000.0)
-    assert CleanAirGate().evaluate(f) == 0.0
+    assert LocalAerosolPerception().evaluate(f) == 0.0
 
 
 def test_clean_air_gate_at_5km_lower_bound_zero(base_features):
     f = replace(base_features, visibility_m=5_000.0)
-    assert CleanAirGate().evaluate(f) == 0.0
+    assert LocalAerosolPerception().evaluate(f) == 0.0
 
 
 def test_clean_air_gate_at_20km_upper_bound_one(base_features):
     f = replace(base_features, visibility_m=20_000.0)
-    assert CleanAirGate().evaluate(f) == 1.0
+    assert LocalAerosolPerception().evaluate(f) == 1.0
 
 
 def test_clean_air_gate_midpoint_half(base_features):
     # Midpoint of [5, 20] km = 12.5 km → score 0.5
     f = replace(base_features, visibility_m=12_500.0)
-    assert abs(CleanAirGate().evaluate(f) - 0.5) < 1e-9
+    assert abs(LocalAerosolPerception().evaluate(f) - 0.5) < 1e-9
 
 
 # --- CloudAltitudePreference ---

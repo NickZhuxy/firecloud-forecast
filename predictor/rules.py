@@ -103,23 +103,27 @@ class HumidityFactor:
         return _trapezoid(f.humidity_pct, low0=20, low1=40, high1=80, high0=95)
 
 
-class CleanAirGate:
-    """Gate: is the troposphere clean enough to deliver red light to the canvas?
+class LocalAerosolPerception:
+    """Modifier: does the LOCAL aerosol let the burn look bright and saturated?
 
-    Prefer 550 nm aerosol optical depth across the observer→sun transect, using
-    the manual's qualitative bands (≤0.1 excellent, 0.1–0.3 clean, 0.3–0.5
-    ordinary, 0.5–0.8 bad, >0.8 very bad). Surface visibility remains a
-    fallback only; it is sensitive to fog/humidity and does not describe the
-    whole aerosol column.
+    FA-A3 split (manual §2.4.1): local aerosol between the observer and the lit
+    canvas dims perceived brightness/saturation — a quality effect, so this is
+    a modifier, not a gate ("火烧云再怎么大烧也是污烧": the burn still happens).
+    Path extinction's probability role lives entirely in the geometry channel
+    (equivalent ground per column, FA-A2; 1-D sunward mean in the illumination
+    gate), so this rule reads only the local 550 nm AOD through the manual's
+    Table 2.3 perception bands (≤0.1 crystal, 0.1–0.3 clean, 0.3–0.5 ordinary,
+    0.5–0.8 hazy, >0.8 污烧) — monotonic, deliberately not Goldilocks (audit §5).
+    Surface visibility remains a local fallback only. With neither signal the
+    component is omitted (None), never assumed perfect.
+
+    The component key stays "clean_air" for weight/metadata continuity.
     """
     name = "clean_air"
 
-    def evaluate(self, f: Features) -> float:
-        aod_candidates = [
-            v for v in (f.aerosol_optical_depth, f.sunward_aod_mean) if v is not None
-        ]
-        if aod_candidates:
-            aod = max(aod_candidates)
+    def evaluate(self, f: Features) -> float | None:
+        aod = f.aerosol_optical_depth
+        if aod is not None:
             points = (
                 (0.00, 1.00),
                 (0.10, 1.00),
@@ -138,7 +142,7 @@ class CleanAirGate:
 
         vis = f.visibility_m
         if vis is None:
-            return 1.0
+            return None
         vis_km = vis / 1000.0
         if vis_km >= 20.0:
             return 1.0
@@ -360,11 +364,13 @@ STANDARD_WEIGHTS: dict[str, float] = {
     "sunward_illumination": 2.5,
     "boundary_confidence": 1.0,
 }
+# FA-A3: "clean_air" is deliberately NOT a gate — local aerosol perception is
+# a quality (modifier) effect; aerosol's probability role is the geometric
+# path-extinction channel inside sunward_illumination.
 STANDARD_GATES: set[str] = {
     "mid_high_cloud_presence",
     "low_cloud_obstruction",
     "solar_angle",
-    "clean_air",
     "sunward_illumination",
 }
 
@@ -448,17 +454,18 @@ class RuleBasedPredictor:
 def standard_predictor(source: WeatherSource) -> RuleBasedPredictor:
     """Build the full physics-motivated predictor (7 local + 2 spatial rules).
 
-    This is the canonical configuration consumed by the web app, notebook, and
-    figures: four local necessary-condition gates and three local modifiers.
-    Detailed point snapshots add the optional sunward-illumination gate and
-    boundary-confidence modifier; overview snapshots omit them cleanly.
+    This is the canonical configuration consumed by the CLI products, notebook,
+    and figures: three local necessary-condition gates and four local modifiers
+    (clean_air is a perception modifier since FA-A3). Detailed point snapshots
+    add the optional sunward-illumination gate and boundary-confidence
+    modifier; overview snapshots omit them cleanly.
     """
     return RuleBasedPredictor(
         rules=[
             MidHighCloudPresence(),
             LowCloudObstruction(),
             SolarAngleAtSunset(),
-            CleanAirGate(),
+            LocalAerosolPerception(),
             HumidityFactor(),
             CloudAltitudePreference(),
             CloudCoverSweetSpot(),
