@@ -305,3 +305,21 @@ def test_refine_tolerates_sources_without_release():
         threshold=0.5, distances_km=(0.0, 100.0, 200.0),
     )
     assert res.cells_refined == 4
+
+
+def test_refine_logs_stage_start_and_done(caplog):
+    # #106: the refine stage announces its start (workload) and completion so a
+    # multi-minute run is not silent from the CLI.
+    import logging as _logging
+
+    lats, lons, ev, sel = _grids()
+    screen = np.array([[0.9, 0.1], [0.1, 0.8]])
+    src = _FakeCubeSource(_cube())
+    with caplog.at_level(_logging.INFO, logger="predictor.national_refine"):
+        refine_field(
+            src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
+            threshold=0.5, distances_km=(0.0, 100.0, 200.0),
+        )
+    msgs = "\n".join(r.getMessage() for r in caplog.records)
+    assert "精修" in msgs and "候选格" in msgs      # start line names the workload
+    assert "精修完成" in msgs                        # done line closes the silent gap

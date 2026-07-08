@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import time
+import traceback
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from predictor.gfs import GFSSource, GFSUnavailable
 from predictor.local_product import generate_local_product
 from predictor.national_product import generate_product
 from predictor.solar_event import SolarEvent
@@ -106,7 +109,92 @@ def build_parser() -> argparse.ArgumentParser:
              "frames when generating within ~2 h of the event; missing data "
              "or dependencies are skipped safely either way)",
     )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="show full technical detail (DEBUG logs + tracebacks) on errors",
+    )
+    parser.add_argument(
+        "--quiet", action="store_true",
+        help="only show the plan/product/summary frame, hide per-stage progress",
+    )
     return parser
+
+
+# --- progress framing + humanized errors (#106) ---------------------------
+
+_EVENT_CN = {SolarEvent.SUNRISE: "日出", SolarEvent.SUNSET: "日落"}
+_EVENTS_CN = {"both": "日出+日落", "sunrise": "日出", "sunset": "日落"}
+
+
+def _product_label(product: PlannedProduct) -> str:
+    event_cn = _EVENT_CN[product.solar_event]
+    if product.scope == "national":
+        return f"国家{event_cn}图"
+    return f"本地{event_cn}图 ({product.lat}, {product.lon})"
+
+
+def _format_elapsed(seconds: float) -> str:
+    whole = int(round(seconds))
+    if whole < 60:
+        return f"{whole}s"
+    minutes, secs = divmod(whole, 60)
+    return f"{minutes}分{secs}s"
+
+
+def _cache_is_cold(target_date: date, cache_root: Path | str | None = None) -> bool:
+    """True when no pressure-cube subset for ``target_date`` is on disk yet.
+
+    A coarse cold/warm signal for the plan header: a warm cache means the slow
+    multi-hundred-MB downloads are already local and the run is seconds, not
+    minutes. Approximate (checks the target date's cycle dir, not the exact
+    fallback cycle) — good enough to set expectations.
+    """
+    root = Path(cache_root) if cache_root is not None else Path(GFSSource.DEFAULT_CACHE_DIR)
+    dated = root / "pressure" / "gfs" / target_date.strftime("%Y%m%d")
+    return not any(dated.glob("subset_*"))
+
+
+def _plan_header(
+    target_date: date, event: str, lat: float | None, n: int, cold: bool
+) -> str:
+    scope = "全国+本地" if lat is not None else "全国"
+    cache = "冷(需下载)" if cold else "热(已缓存)"
+    eta = "预计 ~10–20 分钟,取决于网速" if cold else "预计 1–3 分钟"
+    return (
+        f"firecloud · {target_date.isoformat()} · {_EVENTS_CN[event]} · {scope}\n"
+        f"计划:{n} 个产品  ·  缓存:{cache}  ·  {eta}"
+    )
+
+
+def _run_product(product: PlannedProduct, target_date: date, args) -> object:
+    if product.scope == "national":
+        return generate_product(
+            target_date, product.output_dir, dpi=args.dpi, source=None,
+            solar_event=product.solar_event, refine=not args.no_refine,
+            satellite=not args.no_satellite,
+        )
+    return generate_local_product(
+        target_date, product.output_dir, product.lat, product.lon,
+        dpi=args.dpi, solar_event=product.solar_event,
+        radius_km=args.radius, resolution_deg=args.resolution,
+        satellite=not args.no_satellite,
+    )
+
+
+def _print_data_failure(i: int, n: int, label: str) -> None:
+    print(f"[{i}/{n}] ✗ {label}失败:数据源连不上(NOAA/网络,已自动重试多次)")
+    print("  多半是网络或 NOAA 源临时问题,不是你的操作。")
+    print("  → 稍后重跑(已下载的分片会复用,不会重下)")
+    print("  → 或加 --no-refine 先出粗图(跳过气压立体数据下载)")
+
+
+def _print_unexpected_failure(i: int, n: int, label: str, verbose: bool) -> None:
+    print(f"[{i}/{n}] ✗ {label}出错了(通常不是你的操作问题)")
+    print("  常见原因是网络、NOAA 源或本地依赖临时异常。")
+    if verbose:
+        traceback.print_exc()
+    else:
+        print("  (加 --verbose 看完整技术细节)")
 
 
 def _national_product_mod():
@@ -128,27 +216,38 @@ def main(argv: list[str] | None = None) -> int:
     plan = plan_products(target_date, args.event, args.lat, args.lon, output_base=args.output)
 
     # Surface the GFS download progress so a slow multi-hour fetch reads as working.
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # --verbose lifts the veil (transient-retry detail, tracebacks); --quiet drops
+    # the per-stage INFO lines but keeps the plan/product/summary frame below.
+    level = logging.DEBUG if args.verbose else logging.WARNING if args.quiet else logging.INFO
+    logging.basicConfig(level=level, format="%(message)s")
 
-    for product in plan:
-        if product.scope == "national":
-            artifacts = generate_product(
-                target_date, product.output_dir, dpi=args.dpi, source=None,
-                solar_event=product.solar_event, refine=not args.no_refine,
-                satellite=not args.no_satellite,
-            )
-            print(f"image    : {artifacts.image_path}")
-            print(f"metadata : {artifacts.metadata_path}")
-        else:
-            artifacts = generate_local_product(
-                target_date, product.output_dir, product.lat, product.lon,
-                dpi=args.dpi, solar_event=product.solar_event,
-                radius_km=args.radius, resolution_deg=args.resolution,
-                satellite=not args.no_satellite,
-            )
-            print(f"image    : {artifacts.image_path}")
-            print(f"metadata : {artifacts.metadata_path}")
-    return 0
+    cold = _cache_is_cold(target_date)
+    print(_plan_header(target_date, args.event, args.lat, len(plan), cold))
+
+    n = len(plan)
+    succeeded = 0
+    run_started = time.perf_counter()
+    for i, product in enumerate(plan, start=1):
+        label = _product_label(product)
+        print(f"\n[{i}/{n}] {label}…")
+        started = time.perf_counter()
+        try:
+            artifacts = _run_product(product, target_date, args)
+        except GFSUnavailable:
+            _print_data_failure(i, n, label)
+            continue
+        except Exception:  # noqa: BLE001 — user-facing catch-all, one product only
+            _print_unexpected_failure(i, n, label, args.verbose)
+            continue
+        elapsed = _format_elapsed(time.perf_counter() - started)
+        print(f"[{i}/{n}] ✓ {artifacts.image_path}  ·  {elapsed}")
+        print(f"        metadata: {artifacts.metadata_path}")
+        succeeded += 1
+
+    total = _format_elapsed(time.perf_counter() - run_started)
+    tail = "" if succeeded == n else f"({n - succeeded} 失败)"
+    print(f"\n总结:{succeeded}/{n} 出图  ·  总耗时 {total}{tail}")
+    return 0 if succeeded == n else 1
 
 
 if __name__ == "__main__":

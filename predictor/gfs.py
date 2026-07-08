@@ -510,10 +510,14 @@ class GFSSource:
                 last_exc = exc
                 if attempt == self.SURFACE_DOWNLOAD_ATTEMPTS or not _is_transient_network_error(exc):
                     raise
+                # Human headline (#106): a raw exception repr in the console reads
+                # as a crash. Say what is happening in one line; keep the repr at
+                # DEBUG for anyone who passes --verbose to diagnose.
                 logger.warning(
-                    "GFS %s f%02d: transient error (attempt %d/%d): %s — retrying",
-                    what, fxx, attempt, self.SURFACE_DOWNLOAD_ATTEMPTS, exc,
+                    "GFS %s f%02d: 网络中断,自动重试 (%d/%d)…",
+                    what, fxx, attempt, self.SURFACE_DOWNLOAD_ATTEMPTS,
                 )
+                logger.debug("GFS %s f%02d transient detail: %r", what, fxx, exc)
                 time.sleep(self.SURFACE_RETRY_BACKOFF_S * attempt)
         raise last_exc  # pragma: no cover - loop returns or raises above
 
