@@ -577,6 +577,8 @@ def test_release_cube_pops_matching_datasets(monkeypatch, tmp_path):
 
     assert released == 2
     assert list(src._ds_cache) == [(run, 9)]
+
+
 # ---------------------------------------------------------------------------
 # #103: download heartbeat — a multi-minute blocking download must not be silent
 # ---------------------------------------------------------------------------
@@ -680,3 +682,65 @@ def test_transient_retry_log_is_human_and_hides_exception_repr(monkeypatch, capl
     line = warnings[0].message
     assert "重试" in line and "1/3" in line          # human: which attempt
     assert "HTTPSConnectionPool" not in line          # raw repr not in the headline
+
+
+# ---------------------------------------------------------------------------
+# #108 Story B: parallel pressure-cube prefetch (download parallel, parse serial)
+# ---------------------------------------------------------------------------
+
+
+def test_prefetch_cubes_downloads_each_distinct_hour_once(monkeypatch):
+    src = GFSSource(cache_dir="/tmp/gfs-test")
+    calls = []
+    monkeypatch.setattr(src, "_prefetch_dataset", lambda run, fxx: calls.append((run, fxx)))
+    vt = datetime(2026, 6, 23, 6, tzinfo=timezone.utc)
+    src.prefetch_cubes([vt, vt, vt])          # same hour requested three times
+    assert len(calls) == 1                     # deduped to one (run, fxx)
+
+
+def test_prefetch_cubes_is_best_effort_and_never_raises(monkeypatch):
+    src = GFSSource(cache_dir="/tmp/gfs-test")
+
+    def boom(run, fxx):
+        raise RuntimeError("Connection reset by peer")
+
+    monkeypatch.setattr(src, "_prefetch_dataset", boom)
+    # Two distinct hours → the parallel path; failures must be swallowed.
+    src.prefetch_cubes([
+        datetime(2026, 6, 23, 6, tzinfo=timezone.utc),
+        datetime(2026, 6, 24, 6, tzinfo=timezone.utc),
+    ])
+
+
+def test_prefetch_cubes_skips_already_decoded_hours(monkeypatch):
+    src = GFSSource(cache_dir="/tmp/gfs-test")
+    calls = []
+    monkeypatch.setattr(src, "_prefetch_dataset", lambda run, fxx: calls.append((run, fxx)))
+    vt = datetime(2026, 6, 23, 6, tzinfo=timezone.utc)
+    run, fxx = src._select_cycle(vt)
+    src._ds_cache[(run, fxx)] = object()       # pretend this hour is already decoded
+    src.prefetch_cubes([vt])
+    assert calls == []                          # nothing left to download
+
+
+def test_prefetch_cubes_bounds_concurrent_downloads(monkeypatch):
+    import predictor.gfs as gfs_mod
+
+    src = GFSSource(cache_dir="/tmp/gfs-test")
+    src.MAX_CUBE_WORKERS = 2
+    monkeypatch.setattr(src, "_prefetch_dataset", lambda run, fxx: None)
+    captured = {}
+    real_pool = gfs_mod.ThreadPoolExecutor
+
+    def spy(max_workers):
+        captured["workers"] = max_workers
+        return real_pool(max_workers=max_workers)
+
+    monkeypatch.setattr(gfs_mod, "ThreadPoolExecutor", spy)
+    vts = [datetime(2026, 6, d, 6, tzinfo=timezone.utc) for d in (23, 24, 25, 26)]
+    src.prefetch_cubes(vts)
+    assert captured["workers"] == 2             # min(distinct hours, cap) honoured
+
+
+def test_default_cube_worker_cap_is_four():
+    assert GFSSource.MAX_CUBE_WORKERS == 4

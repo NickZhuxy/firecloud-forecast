@@ -323,3 +323,44 @@ def test_refine_logs_stage_start_and_done(caplog):
     msgs = "\n".join(r.getMessage() for r in caplog.records)
     assert "精修" in msgs and "候选格" in msgs      # start line names the workload
     assert "精修完成" in msgs                        # done line closes the silent gap
+
+
+class _FakeCubeSourceWithPrefetch(_FakeCubeSource):
+    """A cube source that records the hours it was asked to prefetch (#108)."""
+
+    def __init__(self, cube):
+        super().__init__(cube)
+        self.prefetched = None
+
+    def prefetch_cubes(self, valid_times):
+        self.prefetched = list(valid_times)
+
+
+class _FakeCubeSourcePrefetchBoom(_FakeCubeSource):
+    """Prefetch raises — refine must still succeed (best-effort, #108)."""
+
+    def prefetch_cubes(self, valid_times):
+        raise RuntimeError("prefetch net down")
+
+
+def test_refine_prefetches_distinct_valid_hours(caplog):
+    lats, lons, ev, sel = _grids()
+    screen = np.array([[0.9, 0.1], [0.1, 0.8]])   # candidates at the one valid hour
+    src = _FakeCubeSourceWithPrefetch(_cube())
+    refine_field(
+        src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
+        threshold=0.5, distances_km=(0.0, 100.0, 200.0),
+    )
+    assert src.prefetched == [_VALID]             # warmed the disk before the loop
+
+
+def test_refine_survives_prefetch_failure():
+    lats, lons, ev, sel = _grids()
+    screen = np.array([[0.9, 0.1], [0.1, 0.8]])
+    src = _FakeCubeSourcePrefetchBoom(_cube())
+    # A raising prefetch is a best-effort optimization; the serial loop still runs.
+    res = refine_field(
+        src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
+        threshold=0.5, distances_km=(0.0, 100.0, 200.0),
+    )
+    assert res.cells_refined == 2

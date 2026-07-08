@@ -293,6 +293,10 @@ class GFSSource:
     # The national grid spans several sunset forecast hours; each is an
     # independent network read, so download cache-misses concurrently.
     MAX_SURFACE_WORKERS = 8
+    # Pressure cubes are ~89 MB each; the national refine needs only a few
+    # distinct forecast hours, so 4 parallel downloads is enough to overlap them
+    # without a swarm of large range requests fighting for one slow link (#108).
+    MAX_CUBE_WORKERS = 4
     # A transient S3 read timeout on one hour shouldn't fail the whole batch;
     # retry the individual download a few times before giving up to the cycle
     # fallback. (Genuinely-unpublished cycles fail fast — not retried.)
@@ -301,6 +305,9 @@ class GFSSource:
     # The surface subset (étage cover, 2 m RH, visibility). Shared by the parallel
     # prefetch (network) and the serial parse so both reference the same file.
     _SURFACE_SEARCH = r":(?:LCDC|MCDC|HCDC):|:RH:2 m above ground:|:VIS:surface:"
+    # The pressure-cube subset. Shared by the parallel prefetch (network only)
+    # and the serial download+parse so both reference the same on-disk file.
+    _PRESSURE_SEARCH = r":(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLMR|CLWMR|ICMR):\d+ mb:"
 
     def __init__(
         self,
@@ -465,6 +472,55 @@ class GFSSource:
         )
         self._ds_cache[key] = ds
         return ds
+
+    def _prefetch_dataset(self, run_dt: datetime, fxx: int) -> None:
+        """Download one pressure cube's GRIB subset to disk — network only, no parse."""
+        H = self._herbie(run_dt, fxx, cache_namespace="pressure")
+        self._verified_subset_download(H, self._PRESSURE_SEARCH, fxx, "pressure")
+
+    def prefetch_cubes(self, valid_times: Iterable[datetime]) -> None:
+        """Warm the disk cache for several forecast hours in parallel (#108).
+
+        The national refine decodes and scores one hour's cube at a time (bounded
+        peak memory, #59). On a slow link the dominant cost is the *serial*
+        download of each distinct hour's ~89 MB subset. Downloading them
+        concurrently — but still parsing serially, since eccodes/cfgrib is not
+        thread-safe — overlaps that wait without holding more than one decoded
+        dataset. Only the on-disk subsets accumulate (cheap, reused across runs).
+
+        Best-effort: a failed prefetch is logged and swallowed. The serial
+        ``fetch_cube`` path (retries + cycle fallback) stays the source of truth,
+        so the worst case is falling back to today's one-at-a-time behaviour.
+        """
+        pending: list[tuple[datetime, int]] = []
+        seen: set[tuple[datetime, int]] = set()
+        for valid_time in valid_times:
+            run_dt, fxx = self._select_cycle(_as_utc(valid_time))
+            key = (run_dt, fxx)
+            if key in seen or key in self._ds_cache:
+                continue  # duplicate hour, or already decoded → nothing to fetch
+            seen.add(key)
+            pending.append(key)
+
+        if len(pending) <= 1:
+            for run_dt, fxx in pending:
+                self._safe_prefetch_dataset(run_dt, fxx)
+            return
+
+        workers = min(len(pending), self.MAX_CUBE_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(self._safe_prefetch_dataset, run_dt, fxx)
+                for run_dt, fxx in pending
+            ]
+            for future in futures:
+                future.result()  # _safe_prefetch_dataset never raises
+
+    def _safe_prefetch_dataset(self, run_dt: datetime, fxx: int) -> None:
+        try:
+            self._prefetch_dataset(run_dt, fxx)
+        except Exception as exc:  # noqa: BLE001 — prefetch is a best-effort optimization
+            logger.debug("GFS pressure prefetch f%02d skipped: %r", fxx, exc)
 
     def release_cube(self, valid_time: datetime) -> int:
         """Drop decoded pressure datasets for one valid hour from memory.
@@ -667,7 +723,7 @@ class GFSSource:
     def _download_dataset(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         """Download + parse the GFS pressure-level subset via Herbie (network)."""
         H = self._herbie(run_dt, fxx, cache_namespace="pressure")
-        search = r":(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLMR|CLWMR|ICMR):\d+ mb:"
+        search = self._PRESSURE_SEARCH
         self._verified_subset_download(H, search, fxx, "pressure")
         # cfgrib may split into several datasets by step/type; merge into one
         # isobaric dataset. join="outer" is explicit (not the deprecated
