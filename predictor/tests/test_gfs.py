@@ -577,8 +577,6 @@ def test_release_cube_pops_matching_datasets(monkeypatch, tmp_path):
 
     assert released == 2
     assert list(src._ds_cache) == [(run, 9)]
-
-
 # ---------------------------------------------------------------------------
 # #103: download heartbeat — a multi-minute blocking download must not be silent
 # ---------------------------------------------------------------------------
@@ -658,3 +656,27 @@ def test_stalled_download_says_so(monkeypatch, tmp_path, caplog):
     with caplog.at_level(_logging.INFO, logger="predictor.gfs"):
         src._verified_subset_download(fake, "search", 19, "pressure")
     assert any("no progress" in r.message for r in caplog.records)
+
+
+def test_transient_retry_log_is_human_and_hides_exception_repr(monkeypatch, caplog):
+    import logging as _logging
+
+    src = GFSSource(cache_dir="/tmp/gfs-test")
+    src.SURFACE_RETRY_BACKOFF_S = 0.0
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise RuntimeError(
+                "HTTPSConnectionPool(host='noaa'): Read timed out"
+            )
+        return "ok"
+
+    with caplog.at_level(_logging.INFO, logger="predictor.gfs"):
+        assert src._retry_transient(flaky, 19, "pressure") == "ok"
+    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+    assert warnings, "a retry should log at WARNING"
+    line = warnings[0].message
+    assert "重试" in line and "1/3" in line          # human: which attempt
+    assert "HTTPSConnectionPool" not in line          # raw repr not in the headline

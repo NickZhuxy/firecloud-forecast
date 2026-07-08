@@ -188,6 +188,12 @@ def refine_field(
     predictor = standard_predictor(_PlaceholderSource())
     groups = _candidate_groups(candidate_mask, selected_time, lats, lons, tile_deg)
 
+    # Stage boundary (#106): refining thousands of cells is the last multi-minute
+    # step after the downloads, and was previously silent from the CLI.
+    n_to_refine = int(candidate_mask.sum())
+    if n_to_refine:
+        logger.info("精修 %d 个候选格(%d 个下载组)…", n_to_refine, len(groups))
+
     cubes_fetched = 0
     cells_refined = 0
     # Hour-major order: all of one valid hour's tile groups run back-to-back so
@@ -229,6 +235,11 @@ def refine_field(
 
     if release is not None and previous_hour is not None:
         release(valid_times[previous_hour])
+
+    if cells_refined:
+        logger.info(
+            "精修完成:%d 格 · %d 次立体数据下载", cells_refined, cubes_fetched
+        )
 
     spatial_tiles = {(tj, ti) for (_h, tj, ti) in groups}
     return RefineResult(
