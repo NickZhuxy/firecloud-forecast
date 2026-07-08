@@ -194,6 +194,18 @@ def refine_field(
     if n_to_refine:
         logger.info("精修 %d 个候选格(%d 个下载组)…", n_to_refine, len(groups))
 
+    # Story B (#108): warm every distinct hour's cube on disk in parallel before
+    # the serial decode/score loop, so the downloads overlap instead of queuing.
+    # Best-effort: a prefetch failure must never break refinement — the loop's
+    # own fetch_cube (retries + cycle fallback) is the source of truth.
+    prefetch = getattr(cube_source, "prefetch_cubes", None)
+    if prefetch is not None and groups:
+        hour_indices = sorted({hour_idx for (hour_idx, _tj, _ti) in groups})
+        try:
+            prefetch([valid_times[hour_idx] for hour_idx in hour_indices])
+        except Exception as exc:  # noqa: BLE001 — prefetch is an optimization, not required
+            logger.debug("cube prefetch skipped: %r", exc)
+
     cubes_fetched = 0
     cells_refined = 0
     # Hour-major order: all of one valid hour's tile groups run back-to-back so
