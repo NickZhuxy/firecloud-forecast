@@ -13,6 +13,7 @@ cropped in memory after parsing. A global cube over 20 levels × 8 variables is
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -116,6 +117,71 @@ def _subset_payload_bytes(herbie, search: str) -> int | None:
 # takes minutes and deserves progress lines; the ~0.6 MB surface hours of a
 # national run stay quiet.
 _PROGRESS_ANNOUNCE_BYTES = 50_000_000
+
+# Mid-download heartbeat period (#103). On a slow link one announced subset can
+# block for many minutes; without in-flight lines "downloading slowly" and
+# "hung" are indistinguishable from the CLI.
+_PROGRESS_HEARTBEAT_S = 15.0
+
+
+def _progress_line(
+    what: str, fxx: int, size: int, expected: int, rate_bytes_s: float, stalled: bool
+) -> str:
+    """One heartbeat line for an in-flight subset download."""
+    done_mb, total_mb = size / 1e6, expected / 1e6
+    if stalled:
+        return (
+            f"GFS {what} subset f{fxx:02d}: {done_mb:.0f}/{total_mb:.0f} MB — "
+            f"no progress in the last {_PROGRESS_HEARTBEAT_S:.0f} s "
+            "(server stall or slow link; transient drops retry automatically)"
+        )
+    eta = ""
+    if rate_bytes_s > 0:
+        eta = f", ~{(expected - size) / rate_bytes_s:.0f} s left"
+    return (
+        f"GFS {what} subset f{fxx:02d}: {done_mb:.0f}/{total_mb:.0f} MB "
+        f"({rate_bytes_s / 1e6:.1f} MB/s{eta})"
+    )
+
+
+def _download_with_heartbeat(download, local_path, what: str, fxx: int, expected: int):
+    """Run blocking ``download()`` while a daemon thread reports file growth.
+
+    Herbie writes the subset in place at ``local_path()`` (the truncation guard
+    relies on exactly that), so polling its size is an honest progress signal.
+    A tick with zero growth is called out explicitly — that is the "is it
+    stuck?" question this exists to answer.
+    """
+    stop = threading.Event()
+
+    def _size() -> int:
+        try:
+            return local_path().stat().st_size
+        except OSError:
+            return 0
+
+    def _beat() -> None:
+        started = time.perf_counter()
+        initial = _size()
+        previous = initial
+        while not stop.wait(_PROGRESS_HEARTBEAT_S):
+            size = _size()
+            elapsed = time.perf_counter() - started
+            rate = (size - initial) / elapsed if elapsed > 0 else 0.0
+            logger.info(
+                "%s", _progress_line(what, fxx, size, expected, rate, size <= previous)
+            )
+            previous = size
+
+    beater = threading.Thread(
+        target=_beat, name=f"gfs-heartbeat-{what}-f{fxx:02d}", daemon=True
+    )
+    beater.start()
+    try:
+        return download()
+    finally:
+        stop.set()
+        beater.join(timeout=1.0)
 
 
 def _dataset_download_bytes(ds: xr.Dataset) -> int | None:
@@ -564,7 +630,15 @@ class GFSSource:
                 what, fxx, expected / 1e6,
             )
         started = time.perf_counter()
-        herbie.download(search)
+        if announce:
+            # In-flight heartbeat (#103): report growth/stall while blocked.
+            _download_with_heartbeat(
+                lambda: herbie.download(search),
+                lambda: herbie.get_localFilePath(search),
+                what, fxx, expected,
+            )
+        else:
+            herbie.download(search)
         if expected is not None:
             local = herbie.get_localFilePath(search)
             actual = local.stat().st_size if local.exists() else None

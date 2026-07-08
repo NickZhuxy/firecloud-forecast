@@ -577,3 +577,84 @@ def test_release_cube_pops_matching_datasets(monkeypatch, tmp_path):
 
     assert released == 2
     assert list(src._ds_cache) == [(run, 9)]
+
+
+# ---------------------------------------------------------------------------
+# #103: download heartbeat — a multi-minute blocking download must not be silent
+# ---------------------------------------------------------------------------
+
+
+def test_progress_line_reports_rate_and_eta():
+    from predictor.gfs import _progress_line
+
+    line = _progress_line(
+        "pressure", 19, size=34_000_000, expected=89_000_000,
+        rate_bytes_s=2_266_667, stalled=False,
+    )
+    assert "f19" in line
+    assert "34/89 MB" in line
+    assert "2.3 MB/s" in line
+    assert "s left" in line
+
+
+def test_progress_line_flags_stall_explicitly():
+    from predictor.gfs import _progress_line
+
+    line = _progress_line(
+        "pressure", 19, size=34_000_000, expected=89_000_000,
+        rate_bytes_s=0.0, stalled=True,
+    )
+    assert "no progress" in line
+
+
+class _SlowHerbie(_SubsetHerbie):
+    """Subset download that trickles onto disk across several heartbeat ticks."""
+
+    def __init__(self, path, *, chunks, pause_s, write_bytes=True):
+        super().__init__(path, payload_sizes=[])
+        self.chunks = chunks
+        self.pause_s = pause_s
+        self.write_bytes = write_bytes
+
+    def download(self, search):
+        self.download_calls += 1
+        import time as _time
+
+        for i in range(1, self.chunks + 1):
+            _time.sleep(self.pause_s)
+            if self.write_bytes:
+                self.path.write_bytes(b"\0" * (100 * i))
+        if not self.write_bytes:
+            self.path.write_bytes(b"\0" * _SubsetHerbie.EXPECTED_BYTES)
+        return self.path
+
+
+def test_slow_subset_download_emits_heartbeat(monkeypatch, tmp_path, caplog):
+    import logging as _logging
+
+    import predictor.gfs as gfs_mod
+
+    monkeypatch.setattr(gfs_mod, "_PROGRESS_ANNOUNCE_BYTES", 100)
+    monkeypatch.setattr(gfs_mod, "_PROGRESS_HEARTBEAT_S", 0.03)
+    # 3 chunks of 100·i bytes end exactly at the 300-byte inventory total.
+    fake = _SlowHerbie(tmp_path / "subset", chunks=3, pause_s=0.05)
+    src = _patched_source(monkeypatch, tmp_path, fake)
+    with caplog.at_level(_logging.INFO, logger="predictor.gfs"):
+        src._verified_subset_download(fake, "search", 19, "pressure")
+    beats = [r.message for r in caplog.records if "f19" in r.message and "MB" in r.message]
+    # start line + at least one mid-download heartbeat + ready line
+    assert len(beats) >= 3
+
+
+def test_stalled_download_says_so(monkeypatch, tmp_path, caplog):
+    import logging as _logging
+
+    import predictor.gfs as gfs_mod
+
+    monkeypatch.setattr(gfs_mod, "_PROGRESS_ANNOUNCE_BYTES", 100)
+    monkeypatch.setattr(gfs_mod, "_PROGRESS_HEARTBEAT_S", 0.03)
+    fake = _SlowHerbie(tmp_path / "subset", chunks=4, pause_s=0.05, write_bytes=False)
+    src = _patched_source(monkeypatch, tmp_path, fake)
+    with caplog.at_level(_logging.INFO, logger="predictor.gfs"):
+        src._verified_subset_download(fake, "search", 19, "pressure")
+    assert any("no progress" in r.message for r in caplog.records)
