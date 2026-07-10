@@ -1,0 +1,85 @@
+name: Precompute Firecloud products
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: First forecast date in YYYY-MM-DD (Shanghai today when empty)
+        required: false
+        type: string
+      days:
+        description: Number of forecast dates to publish
+        required: false
+        default: 2
+        type: number
+  schedule:
+    # GFS runs at 00/06/12/18Z. Avoid the busy top of the hour and allow
+    # upstream products to finish publishing before starting the build.
+    - cron: "37 4,10,16,22 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: firecloud-pages-precompute
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      MPLBACKEND: Agg
+      START_DATE: ${{ inputs.start_date || '' }}
+      DAYS: ${{ inputs.days || 2 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Install runtime dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Build static forecast feed
+        shell: bash
+        run: |
+          args=(
+            --days "$DAYS"
+            --output _site
+            --algorithm-version "${GITHUB_SHA::12}"
+          )
+          if [[ -n "$START_DATE" ]]; then
+            args+=(--start-date "$START_DATE")
+          fi
+          uv run --no-sync python -m predictor.precompute "${args[@]}"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 15
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
