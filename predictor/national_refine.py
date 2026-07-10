@@ -136,6 +136,50 @@ def _bbox_cell_count(bbox, res_deg: float = GFS_GRID_RES_DEG) -> int:
     return ny * nx
 
 
+def _split_cells_to_fit_cube(
+    cells,
+    lats,
+    lons,
+    event_times,
+    azimuth_deg,
+    distances_km,
+    margin_deg,
+    max_cube_cells,
+) -> list[tuple[list[tuple[int, int]], tuple[float, float, float, float]]]:
+    """Split a candidate tile until every shared cube stays under the cell cap."""
+    pending = [list(cells)]
+    fitted: list[tuple[list[tuple[int, int]], tuple[float, float, float, float]]] = []
+    while pending:
+        part = pending.pop()
+        bbox = _group_bbox(
+            part, lats, lons, event_times, azimuth_deg, distances_km, margin_deg
+        )
+        if _bbox_cell_count(bbox) <= max_cube_cells:
+            fitted.append((part, bbox))
+            continue
+        if len(part) == 1:
+            raise ValueError(
+                f"refine cube bbox {bbox} exceeds max_cube_cells={max_cube_cells}; "
+                "reduce refine_distances_km or raise max_cube_cells"
+            )
+
+        lat_span = bbox[1] - bbox[0]
+        lon_span = bbox[3] - bbox[2]
+        if lon_span >= lat_span:
+            ordered = sorted(
+                part, key=lambda cell: (float(lons[cell[1]]), float(lats[cell[0]]))
+            )
+        else:
+            ordered = sorted(
+                part, key=lambda cell: (float(lats[cell[0]]), float(lons[cell[1]]))
+            )
+        mid = len(ordered) // 2
+        # LIFO stack; push right first so the deterministic left half runs first.
+        pending.append(ordered[mid:])
+        pending.append(ordered[:mid])
+    return fitted
+
+
 def refine_field(
     cube_source,
     lats,
@@ -188,8 +232,6 @@ def refine_field(
     predictor = standard_predictor(_PlaceholderSource())
     groups = _candidate_groups(candidate_mask, selected_time, lats, lons, tile_deg)
 
-    # Stage boundary (#106): refining thousands of cells is the last multi-minute
-    # step after the downloads, and was previously silent from the CLI.
     n_to_refine = int(candidate_mask.sum())
     if n_to_refine:
         logger.info("精修 %d 个候选格(%d 个下载组)…", n_to_refine, len(groups))
@@ -218,40 +260,49 @@ def refine_field(
         if release is not None and previous_hour is not None and hour_idx != previous_hour:
             release(valid_times[previous_hour])
         previous_hour = hour_idx
-        bbox = _group_bbox(cells, lats, lons, event_times, azimuth_deg, distances_km, margin_deg)
-        if _bbox_cell_count(bbox) > max_cube_cells:
-            raise ValueError(
-                f"refine cube bbox {bbox} exceeds max_cube_cells={max_cube_cells}; "
-                f"reduce tile_deg or tighten the candidate threshold"
+        split_groups = _split_cells_to_fit_cube(
+            cells,
+            lats,
+            lons,
+            event_times,
+            azimuth_deg,
+            distances_km,
+            margin_deg,
+            max_cube_cells,
+        )
+        if len(split_groups) > 1:
+            logger.info(
+                "national refine split %d-cell tile into %d cubes "
+                "(max_cube_cells=%d)",
+                len(cells), len(split_groups), max_cube_cells,
             )
-        cube = cube_source.fetch_cube(bbox, valid_times[hour_idx])
-        cubes_fetched += 1
-        for j, i in cells:
-            event_time = _event_datetime(event_times[j, i])
-            snapshot = _synthesize_snapshot(surface_fields, j, i, event_time)
-            forecast = score_point_with_cube(
-                predictor,
-                cube,
-                snapshot,
-                float(lats[j]),
-                float(lons[i]),
-                event_time,
-                distances_km=distances_km,
-                azimuth_deg=azimuth_deg,
-                config=config,
-                aod_fn=aod_fn,
-            )
-            refined[j, i] = forecast.probability
-            refined_mask[j, i] = True
-            cells_refined += 1
+        for subcells, bbox in split_groups:
+            cube = cube_source.fetch_cube(bbox, valid_times[hour_idx])
+            cubes_fetched += 1
+            for j, i in subcells:
+                event_time = _event_datetime(event_times[j, i])
+                snapshot = _synthesize_snapshot(surface_fields, j, i, event_time)
+                forecast = score_point_with_cube(
+                    predictor,
+                    cube,
+                    snapshot,
+                    float(lats[j]),
+                    float(lons[i]),
+                    event_time,
+                    distances_km=distances_km,
+                    azimuth_deg=azimuth_deg,
+                    config=config,
+                    aod_fn=aod_fn,
+                )
+                refined[j, i] = forecast.probability
+                refined_mask[j, i] = True
+                cells_refined += 1
 
     if release is not None and previous_hour is not None:
         release(valid_times[previous_hour])
 
     if cells_refined:
-        logger.info(
-            "精修完成:%d 格 · %d 次立体数据下载", cells_refined, cubes_fetched
-        )
+        logger.info("精修完成:%d 格 · %d 次立体数据读取", cells_refined, cubes_fetched)
 
     spatial_tiles = {(tj, ti) for (_h, tj, ti) in groups}
     return RefineResult(

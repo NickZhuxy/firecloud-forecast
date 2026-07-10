@@ -1,4 +1,5 @@
 """Unit tests for GFSSource (no network — synthetic xarray + monkeypatch)."""
+import re
 from datetime import datetime, timezone
 
 import numpy as np
@@ -40,6 +41,33 @@ def test_select_cycle_uses_06z_when_lagged_window_allows():
     run_dt, fxx = src._select_cycle(datetime(2026, 6, 23, 10, 30, tzinfo=timezone.utc))
     assert run_dt == datetime(2026, 6, 23, 6, 0, tzinfo=timezone.utc)
     assert fxx in (4, 5)
+
+
+def test_select_cycle_caps_future_forecast_at_latest_published_run(tmp_path):
+    """A tomorrow forecast must not probe model cycles that do not exist yet."""
+    src = GFSSource(
+        cache_dir=tmp_path,
+        as_of=datetime(2026, 7, 9, 6, 28, tzinfo=timezone.utc),
+    )
+
+    run_dt, fxx = src._select_cycle(
+        datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc)
+    )
+
+    # At 06:28Z, a four-hour publication lag makes 00Z the newest safe run.
+    assert run_dt == datetime(2026, 7, 9, 0, 0, tzinfo=timezone.utc)
+    assert fxx == 36
+
+
+def test_pressure_search_matches_only_configured_levels(tmp_path):
+    src = GFSSource(cache_dir=tmp_path, levels=(1000.0, 850.0, 150.0))
+    search = re.compile(src._pressure_search)
+
+    assert search.search(":TMP:1000 mb:")
+    assert search.search(":ICMR:150 mb:")
+    assert not search.search(":TMP:0.01 mb:")
+    assert not search.search(":TMP:100 mb:")
+    assert not search.search(":TMP:10 mb:")
 
 
 def test_cube_from_datasets_crops_bbox_and_maps_vars():
@@ -270,6 +298,134 @@ class _SubsetHerbie:
         return self.dataset if self.dataset is not None else _synthetic_gfs_ds()
 
 
+class _ResumableHerbie:
+    """Minimal Herbie shape for exercising prefix-resume without network IO."""
+
+    def __init__(self, remote_path, local_path):
+        self.grib = remote_path
+        self.local_path = local_path
+
+    def inventory(self, search):
+        import pandas as pd
+
+        return pd.DataFrame(
+            {
+                "grib_message": [1, 2, 4],
+                "start_byte": [0.0, 100.0, 300.0],
+                "end_byte": [99.0, 199.0, 399.0],
+            }
+        )
+
+    def get_localFilePath(self, search):
+        return self.local_path
+
+
+def test_resumable_subset_continues_inside_a_range_group(tmp_path):
+    from predictor.gfs import _download_resumable_subset
+
+    remote = tmp_path / "global.grib2"
+    remote_bytes = bytes(range(200)) + bytes(range(200))
+    remote.write_bytes(remote_bytes)
+    local = tmp_path / "subset.grib2"
+    # Complete first group (remote 0..199), plus half of group two (300..349).
+    local.write_bytes(remote_bytes[:200] + remote_bytes[300:350])
+    fake = _ResumableHerbie(remote, local)
+
+    transferred = _download_resumable_subset(fake, "pressure-search")
+
+    assert transferred == 50
+    assert local.read_bytes() == remote_bytes[:200] + remote_bytes[300:400]
+
+
+def test_resumable_http_subset_keeps_prefix_after_connection_drop(
+    monkeypatch, tmp_path
+):
+    import pandas as pd
+    import requests
+
+    from predictor import gfs as gfs_module
+
+    local = tmp_path / "subset.grib2"
+
+    class FakeHerbie:
+        grib = "https://example.test/gfs.grib2"
+
+        def inventory(self, search):
+            return pd.DataFrame(
+                {"grib_message": [1], "start_byte": [0.0], "end_byte": [99.0]}
+            )
+
+        def get_localFilePath(self, search):
+            return local
+
+    class FakeResponse:
+        status_code = 206
+
+        def __init__(self, chunks):
+            self.chunks = chunks
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            yield from self.chunks
+
+    requested = []
+
+    def first_get(url, *, headers, **kwargs):
+        requested.append(headers["Range"])
+
+        def interrupted():
+            yield b"a" * 40
+            raise requests.ConnectionError("connection reset by peer")
+
+        return FakeResponse(interrupted())
+
+    monkeypatch.setattr(gfs_module.requests, "get", first_get)
+    with pytest.raises(RuntimeError, match="connection reset"):
+        gfs_module._download_resumable_subset(FakeHerbie(), "pressure-search")
+    assert local.stat().st_size == 40
+
+    def second_get(url, *, headers, **kwargs):
+        requested.append(headers["Range"])
+        return FakeResponse([b"b" * 60])
+
+    monkeypatch.setattr(gfs_module.requests, "get", second_get)
+    transferred = gfs_module._download_resumable_subset(
+        FakeHerbie(), "pressure-search"
+    )
+
+    assert requested == ["bytes=0-99", "bytes=40-99"]
+    assert transferred == 60
+    assert local.read_bytes() == b"a" * 40 + b"b" * 60
+
+
+def test_complete_legacy_pressure_subset_is_reused(tmp_path):
+    src = GFSSource(cache_dir=tmp_path, levels=(1000.0, 850.0))
+    legacy_path = tmp_path / "legacy-subset"
+    exact_path = tmp_path / "exact-subset"
+
+    class FakeHerbie(_ResumableHerbie):
+        def get_localFilePath(self, search):
+            if search == src._LEGACY_PRESSURE_SEARCH:
+                return legacy_path
+            return exact_path
+
+    fake = FakeHerbie(tmp_path / "global.grib2", exact_path)
+    legacy_path.write_bytes(b"\0" * _SubsetHerbie.EXPECTED_BYTES)
+
+    assert src._select_pressure_search(fake) == src._LEGACY_PRESSURE_SEARCH
+
+    exact_path.write_bytes(b"\0" * _SubsetHerbie.EXPECTED_BYTES)
+    assert src._select_pressure_search(fake) == src._pressure_search
+
+
 def _patched_source(monkeypatch, tmp_path, fake):
     src = GFSSource(cache_dir=tmp_path)
     src.SURFACE_RETRY_BACKOFF_S = 0.0
@@ -400,10 +556,9 @@ def test_truncated_batch_prefetch_is_deleted_and_redownloaded(monkeypatch, tmp_p
     for fake in fakes.values():
         assert fake.path.stat().st_size == _SubsetHerbie.EXPECTED_BYTES
         assert fake.xarray_calls == 1
-    # f06: truncated prefetch + verified re-download + skip-existing at parse.
-    assert fakes[6].download_calls == 3
-    # f09: clean prefetch + skip-existing at parse.
-    assert fakes[9].download_calls == 2
+    # Parse recognizes the verified file directly; no redundant Herbie call.
+    assert fakes[6].download_calls == 2  # truncated prefetch + complete retry
+    assert fakes[9].download_calls == 1  # clean prefetch only
 
 
 def test_truncated_cover_subset_is_deleted_and_redownloaded(monkeypatch, tmp_path):
@@ -446,6 +601,7 @@ def test_herbie_handle_is_quiet_and_predates_date_dir(monkeypatch, tmp_path):
                 cache_namespace="pressure")
 
     assert captured["verbose"] is False
+    assert captured["priority"] == ["aws", "nomads", "google", "azure"]
     # The dated subdir herbie would otherwise create (with an ungated
     # "Created directory" print) must already exist.
     assert (tmp_path / "pressure" / "gfs" / "20260623").is_dir()
@@ -486,10 +642,22 @@ def test_gfssource_init_installs_chatter_filters(tmp_path):
 
 # ---- download progress logging (big transfers only) ----
 #
-# A pressure cube is a ~210 MB download that takes minutes; with herbie's
+# A default pressure cube is a ~130 MB download that takes minutes; with herbie's
 # chatter silenced the CLI would look hung. _verified_subset_download logs
 # meaningful progress at INFO — but only for payloads over the announce
 # threshold, so the six ~0.6 MB surface hours of a national run stay quiet.
+
+
+def test_progress_line_reports_rate_eta_and_stall():
+    from predictor.gfs import _progress_line
+
+    moving = _progress_line("pressure", 19, 50_000_000, 100_000_000, 2_000_000, False)
+    stalled = _progress_line("pressure", 19, 50_000_000, 100_000_000, 0.0, True)
+
+    assert "50/100 MB" in moving
+    assert "2.0 MB/s" in moving
+    assert "25 s left" in moving
+    assert "no progress" in stalled
 
 
 def test_big_subset_download_logs_progress(monkeypatch, tmp_path, caplog):
@@ -698,10 +866,13 @@ def test_prefetch_cubes_downloads_each_distinct_hour_once(monkeypatch):
     assert len(calls) == 1                     # deduped to one (run, fxx)
 
 
-def test_prefetch_cubes_is_best_effort_and_never_raises(monkeypatch):
+def test_prefetch_cubes_retries_but_remains_best_effort(monkeypatch):
     src = GFSSource(cache_dir="/tmp/gfs-test")
+    src.SURFACE_RETRY_BACKOFF_S = 0.0
+    calls = []
 
     def boom(run, fxx):
+        calls.append((run, fxx))
         raise RuntimeError("Connection reset by peer")
 
     monkeypatch.setattr(src, "_prefetch_dataset", boom)
@@ -710,6 +881,7 @@ def test_prefetch_cubes_is_best_effort_and_never_raises(monkeypatch):
         datetime(2026, 6, 23, 6, tzinfo=timezone.utc),
         datetime(2026, 6, 24, 6, tzinfo=timezone.utc),
     ])
+    assert len(calls) == 2 * src.SURFACE_DOWNLOAD_ATTEMPTS
 
 
 def test_prefetch_cubes_skips_already_decoded_hours(monkeypatch):

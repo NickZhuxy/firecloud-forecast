@@ -9,7 +9,8 @@ single-point detailed path, while the national field shares one cube per
 error on real data (crop windows come from the same decoded global dataset).
 
 Needs the on-disk GFS cache left by the #59 §2 live validation (2026-06-30
-pressure subsets, ~210 MB each). Skips cleanly when absent. Run with:
+pressure subsets, ~130 MB each with the default exact-level search). Skips
+cleanly when absent. Run with:
 
     PYTHONPATH=. UV_CACHE_DIR=.uv-cache MPLCONFIGDIR=.uv-cache/matplotlib \
         uv run --no-sync python -m pytest -m integration -k national_refine -q

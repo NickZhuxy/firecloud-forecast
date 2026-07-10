@@ -13,6 +13,7 @@ cropped in memory after parsing. A global cube over 20 levels × 8 variables is
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 from collections.abc import Iterable
@@ -21,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
+import requests
 import xarray as xr
 
 from dataclasses import dataclass
@@ -88,8 +90,8 @@ class SurfaceGrid:
 _DOWNLOAD_BYTES_ATTR = "firecloud_download_bytes"
 
 
-def _subset_payload_bytes(herbie, search: str) -> int | None:
-    """Logical GRIB bytes Herbie will request for a regex subset."""
+def _subset_byte_ranges(herbie, search: str) -> list[tuple[int, int]] | None:
+    """Contiguous source-byte ranges selected by a Herbie search."""
     try:
         inventory = herbie.inventory(search).sort_values("grib_message")
         messages = np.asarray(inventory["grib_message"], dtype=int)
@@ -107,27 +109,37 @@ def _subset_payload_bytes(herbie, search: str) -> int | None:
     # merely the sum of selected message bodies.
     group_starts = np.r_[0, np.where(np.diff(messages) != 1)[0] + 1]
     group_ends = np.r_[group_starts[1:], messages.size]
-    return sum(
-        int(ends[stop - 1]) - int(starts[start]) + 1
+    return [
+        (int(starts[start]), int(ends[stop - 1]))
         for start, stop in zip(group_starts, group_ends)
-    )
+    ]
 
 
-# Announce transfers at least this large at INFO. A pressure cube (~210 MB)
-# takes minutes and deserves progress lines; the ~0.6 MB surface hours of a
-# national run stay quiet.
+def _subset_payload_bytes(herbie, search: str) -> int | None:
+    """Logical GRIB bytes Herbie will request for a regex subset."""
+    ranges = _subset_byte_ranges(herbie, search)
+    if not ranges:
+        return None
+    return sum(end - start + 1 for start, end in ranges)
+
+
+# Announce transfers at least this large at INFO. A default exact-level pressure
+# subset is ~130 MB (legacy supersets are ~210 MB), while one surface hour is
+# ~0.6 MB and stays quiet.
 _PROGRESS_ANNOUNCE_BYTES = 50_000_000
 
-# Mid-download heartbeat period (#103). On a slow link one announced subset can
-# block for many minutes; without in-flight lines "downloading slowly" and
-# "hung" are indistinguishable from the CLI.
+# Slow pressure downloads need visible liveness and a generous per-read timeout.
+# Requests' tuple is (connect timeout, socket-read timeout), not total duration.
 _PROGRESS_HEARTBEAT_S = 15.0
+_RANGE_CONNECT_TIMEOUT_S = 10.0
+_RANGE_READ_TIMEOUT_S = 90.0
+_RANGE_CHUNK_BYTES = 1024 * 1024
 
 
 def _progress_line(
     what: str, fxx: int, size: int, expected: int, rate_bytes_s: float, stalled: bool
 ) -> str:
-    """One heartbeat line for an in-flight subset download."""
+    """Format one heartbeat for an in-flight subset download."""
     done_mb, total_mb = size / 1e6, expected / 1e6
     if stalled:
         return (
@@ -144,19 +156,13 @@ def _progress_line(
     )
 
 
-def _download_with_heartbeat(download, local_path, what: str, fxx: int, expected: int):
-    """Run blocking ``download()`` while a daemon thread reports file growth.
-
-    Herbie writes the subset in place at ``local_path()`` (the truncation guard
-    relies on exactly that), so polling its size is an honest progress signal.
-    A tick with zero growth is called out explicitly — that is the "is it
-    stuck?" question this exists to answer.
-    """
+def _download_with_heartbeat(download, local: Path, what: str, fxx: int, expected: int):
+    """Run a blocking download while a daemon thread reports file growth."""
     stop = threading.Event()
 
     def _size() -> int:
         try:
-            return local_path().stat().st_size
+            return local.stat().st_size
         except OSError:
             return 0
 
@@ -182,6 +188,101 @@ def _download_with_heartbeat(download, local_path, what: str, fxx: int, expected
     finally:
         stop.set()
         beater.join(timeout=1.0)
+
+
+def _resumable_source(herbie) -> str | Path | None:
+    """Return a byte-range-capable source, or None for test/stub handles."""
+    source = getattr(herbie, "grib", None)
+    if isinstance(source, Path):
+        return source if source.exists() else None
+    if isinstance(source, str):
+        if source.startswith(("http://", "https://")):
+            return source
+        path = Path(source)
+        return path if path.exists() else None
+    return None
+
+
+def _download_resumable_subset(herbie, search: str) -> int:
+    """Download selected GRIB ranges, resuming from any retained prefix.
+
+    Herbie writes each selected range group in order, so its interrupted subset
+    is a prefix of the final concatenated file. Mapping that prefix back onto
+    source ranges lets a retry continue inside the interrupted group instead of
+    deleting tens or hundreds of megabytes and starting over.
+    """
+    ranges = _subset_byte_ranges(herbie, search)
+    source = _resumable_source(herbie)
+    if not ranges or source is None:
+        raise ValueError("subset source does not support resumable byte ranges")
+
+    local = Path(herbie.get_localFilePath(search))
+    local.parent.mkdir(parents=True, exist_ok=True)
+    expected = sum(end - start + 1 for start, end in ranges)
+    actual = local.stat().st_size if local.exists() else 0
+    if actual > expected:
+        local.unlink()
+        actual = 0
+    if actual == expected:
+        return 0
+
+    offset = actual
+    transferred = 0
+    for start, end in ranges:
+        group_size = end - start + 1
+        if offset >= group_size:
+            offset -= group_size
+            continue
+
+        range_start = start + offset
+        remaining = end - range_start + 1
+        mode = "ab" if local.exists() else "wb"
+        if isinstance(source, Path):
+            with source.open("rb") as src, local.open(mode) as dst:
+                src.seek(range_start)
+                while remaining:
+                    chunk = src.read(min(_RANGE_CHUNK_BYTES, remaining))
+                    if not chunk:
+                        raise GFSUnavailable(
+                            f"GFS local subset truncated at source byte {src.tell()}"
+                        )
+                    dst.write(chunk)
+                    transferred += len(chunk)
+                    remaining -= len(chunk)
+        else:
+            headers = {"Range": f"bytes={range_start}-{end}"}
+            try:
+                with requests.get(
+                    source,
+                    headers=headers,
+                    stream=True,
+                    timeout=(_RANGE_CONNECT_TIMEOUT_S, _RANGE_READ_TIMEOUT_S),
+                ) as response:
+                    response.raise_for_status()
+                    if response.status_code != 206:
+                        raise RuntimeError(
+                            f"range server returned HTTP {response.status_code}"
+                        )
+                    with local.open(mode) as dst:
+                        for chunk in response.iter_content(chunk_size=_RANGE_CHUNK_BYTES):
+                            if not chunk:
+                                continue
+                            if len(chunk) > remaining:
+                                chunk = chunk[:remaining]
+                            dst.write(chunk)
+                            transferred += len(chunk)
+                            remaining -= len(chunk)
+                            if remaining == 0:
+                                break
+            except requests.RequestException as exc:
+                raise RuntimeError(f"Processing failed: {exc}") from exc
+            if remaining:
+                raise GFSUnavailable(
+                    f"GFS subset range truncated ({remaining} bytes still missing)"
+                )
+        offset = 0
+
+    return transferred
 
 
 def _dataset_download_bytes(ds: xr.Dataset) -> int | None:
@@ -220,6 +321,11 @@ GFS_VAR_MAP: dict[str, str] = {
 
 CYCLE_HOURS = 6   # GFS runs at 00/06/12/18Z
 LAG_HOURS = 4     # pgrb2.0p25 is typically published ~3.5–4 h after the cycle
+# Herbie's default GFS source list ends with NCAR RDA/UCAR. Its GRIB HEAD
+# check is not exception-safe, so an expired UCAR TLS certificate can abort a
+# current forecast even when earlier NOAA/open-data mirrors are simply missing.
+# Firecloud only needs recent GFS runs; these mirrors cover that path.
+HERBIE_GFS_PRIORITY = ["aws", "nomads", "google", "azure"]
 
 
 class GFSUnavailable(RuntimeError):
@@ -293,7 +399,7 @@ class GFSSource:
     # The national grid spans several sunset forecast hours; each is an
     # independent network read, so download cache-misses concurrently.
     MAX_SURFACE_WORKERS = 8
-    # Pressure cubes are ~89 MB each; the national refine needs only a few
+    # Pressure cubes are large; the national refine needs only a few
     # distinct forecast hours, so 4 parallel downloads is enough to overlap them
     # without a swarm of large range requests fighting for one slow link (#108).
     MAX_CUBE_WORKERS = 4
@@ -305,18 +411,23 @@ class GFSSource:
     # The surface subset (étage cover, 2 m RH, visibility). Shared by the parallel
     # prefetch (network) and the serial parse so both reference the same file.
     _SURFACE_SEARCH = r":(?:LCDC|MCDC|HCDC):|:RH:2 m above ground:|:VIS:surface:"
-    # The pressure-cube subset. Shared by the parallel prefetch (network only)
-    # and the serial download+parse so both reference the same on-disk file.
-    _PRESSURE_SEARCH = r":(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLMR|CLWMR|ICMR):\d+ mb:"
+    _PRESSURE_VARS = r"(?:TMP|RH|SPFH|HGT|UGRD|VGRD|VVEL|CLMR|CLWMR|ICMR)"
+    # Kept only to reuse complete caches produced before exact-level filtering.
+    # Its unanchored ``\d+`` also matches decimal levels such as ``0.01 mb``.
+    _LEGACY_PRESSURE_SEARCH = rf":{_PRESSURE_VARS}:\d+ mb:"
 
     def __init__(
         self,
         cache_dir: Path | str | None = None,
         levels: tuple[float, ...] | None = None,
+        as_of: datetime | None = None,
     ):
         self.cache_dir = Path(cache_dir or self.DEFAULT_CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.levels = tuple(levels) if levels else self.DEFAULT_LEVELS_HPA
+        # Freeze publication availability for one source/run. This prevents a
+        # long invocation crossing a cycle boundary halfway through its batch.
+        self.as_of = _as_utc(as_of or datetime.now(timezone.utc))
         # Install once per process, before any download threads exist
         # (warnings filters are global, mutating them from workers races).
         global _GRIB_CHATTER_SILENCED
@@ -332,6 +443,32 @@ class GFSSource:
         # ("pressure"/"surface"/"cover"). Disk-cache hits do not count, so the
         # national refine metadata can report the true cube download cost.
         self.network_bytes: dict[str, int] = {}
+
+    @property
+    def _pressure_search(self) -> str:
+        """Pressure variables at exactly the configured levels.
+
+        The old ``\\d+ mb`` expression accidentally matched every integer and
+        decimal pressure level in GFS, including ``0.01 mb``. The default 20
+        levels are the only ones later retained by ``_cube_from_datasets``.
+        """
+        labels = dict.fromkeys(re.escape(f"{float(level):g}") for level in self.levels)
+        return rf":{self._PRESSURE_VARS}:(?:{'|'.join(labels)}) mb:"
+
+    def _select_pressure_search(self, herbie) -> str:
+        """Prefer the lean search, but reuse a complete legacy superset cache."""
+        exact = self._pressure_search
+        for search in (exact, self._LEGACY_PRESSURE_SEARCH):
+            expected = _subset_payload_bytes(herbie, search)
+            if expected is None:
+                continue
+            local = Path(herbie.get_localFilePath(search))
+            try:
+                if local.stat().st_size == expected:
+                    return search
+            except OSError:
+                pass
+        return exact
 
     # ---- public API -----------------------------------------------------
 
@@ -433,11 +570,14 @@ class GFSSource:
 
     # ---- cycle selection / loading -------------------------------------
 
-    @staticmethod
-    def _select_cycle(valid_time: datetime) -> tuple[datetime, int]:
+    def _select_cycle(self, valid_time: datetime) -> tuple[datetime, int]:
         """Most recent published 6-hourly cycle and the nearest forecast hour."""
         valid_utc = _as_utc(valid_time)
-        available = valid_utc - timedelta(hours=LAG_HOURS)
+        # Publication lag is relative to wall-clock availability, not the
+        # forecast's future valid time. Without this cap, a tomorrow forecast
+        # probes future 12Z/18Z cycles and can fail only after older hours have
+        # already downloaded hundreds of megabytes.
+        available = min(valid_utc, self.as_of) - timedelta(hours=LAG_HOURS)
         run = available.replace(minute=0, second=0, microsecond=0)
         run -= timedelta(hours=run.hour % CYCLE_HOURS)
         fxx = max(0, round((valid_utc - run).total_seconds() / 3600.0))
@@ -476,14 +616,17 @@ class GFSSource:
     def _prefetch_dataset(self, run_dt: datetime, fxx: int) -> None:
         """Download one pressure cube's GRIB subset to disk — network only, no parse."""
         H = self._herbie(run_dt, fxx, cache_namespace="pressure")
-        self._verified_subset_download(H, self._PRESSURE_SEARCH, fxx, "pressure")
+        search = self._select_pressure_search(H)
+        self._verified_subset_download(
+            H, search, fxx, "pressure", resumable=True
+        )
 
     def prefetch_cubes(self, valid_times: Iterable[datetime]) -> None:
         """Warm the disk cache for several forecast hours in parallel (#108).
 
         The national refine decodes and scores one hour's cube at a time (bounded
         peak memory, #59). On a slow link the dominant cost is the *serial*
-        download of each distinct hour's ~89 MB subset. Downloading them
+        download of each distinct hour's ~130 MB subset. Downloading them
         concurrently — but still parsing serially, since eccodes/cfgrib is not
         thread-safe — overlaps that wait without holding more than one decoded
         dataset. Only the on-disk subsets accumulate (cheap, reused across runs).
@@ -502,6 +645,14 @@ class GFSSource:
             seen.add(key)
             pending.append(key)
 
+        if pending:
+            workers = min(len(pending), self.MAX_CUBE_WORKERS)
+            logger.info(
+                "GFS pressure: preparing %d forecast hours "
+                "(%d parallel, interrupted files resume)",
+                len(pending), workers,
+            )
+
         if len(pending) <= 1:
             for run_dt, fxx in pending:
                 self._safe_prefetch_dataset(run_dt, fxx)
@@ -516,11 +667,21 @@ class GFSSource:
             for future in futures:
                 future.result()  # _safe_prefetch_dataset never raises
 
-    def _safe_prefetch_dataset(self, run_dt: datetime, fxx: int) -> None:
+    def _safe_prefetch_dataset(self, run_dt: datetime, fxx: int) -> bool:
         try:
-            self._prefetch_dataset(run_dt, fxx)
+            self._retry_transient(
+                lambda: self._prefetch_dataset(run_dt, fxx),
+                fxx,
+                "pressure prefetch",
+            )
+            return True
         except Exception as exc:  # noqa: BLE001 — prefetch is a best-effort optimization
-            logger.debug("GFS pressure prefetch f%02d skipped: %r", fxx, exc)
+            logger.warning(
+                "GFS pressure prefetch f%02d unavailable: %s "
+                "— refinement will retry/fallback when needed",
+                fxx, exc,
+            )
+            return False
 
     def release_cube(self, valid_time: datetime) -> int:
         """Drop decoded pressure datasets for one valid hour from memory.
@@ -566,9 +727,6 @@ class GFSSource:
                 last_exc = exc
                 if attempt == self.SURFACE_DOWNLOAD_ATTEMPTS or not _is_transient_network_error(exc):
                     raise
-                # Human headline (#106): a raw exception repr in the console reads
-                # as a crash. Say what is happening in one line; keep the repr at
-                # DEBUG for anyone who passes --verbose to diagnose.
                 logger.warning(
                     "GFS %s f%02d: 网络中断,自动重试 (%d/%d)…",
                     what, fxx, attempt, self.SURFACE_DOWNLOAD_ATTEMPTS,
@@ -645,6 +803,7 @@ class GFSSource:
             product="pgrb2.0p25",
             fxx=fxx,
             save_dir=save_dir,
+            priority=HERBIE_GFS_PRIORITY,
             # Silence herbie's per-fetch chatter ("✅ Found …", subset download
             # rows, "Note: Returning a list of …") — a national run makes
             # dozens of fetches and each would print several lines into the
@@ -654,17 +813,20 @@ class GFSSource:
         )
 
     def _verified_subset_download(
-        self, herbie, search: str, fxx: int, what: str
+        self,
+        herbie,
+        search: str,
+        fxx: int,
+        what: str,
+        *,
+        resumable: bool = False,
     ) -> int | None:
         """Download a GRIB subset to disk, then verify it against the idx inventory.
 
-        Herbie fetches one HTTP range per message group and a dropped connection
-        leaves the partial file on disk; because both download() and xarray() treat
-        any existing file as cached, every later attempt would silently parse that
-        stub (whole fields/levels missing) forever. A mismatched file is deleted
-        and raised with a *transient* marker so _retry_transient re-downloads it
-        cleanly. Returns the expected payload bytes (None when no idx exists, in
-        which case verification is skipped).
+        Large pressure subsets use a range-aware downloader that keeps a partial
+        prefix and resumes it. Small subsets retain Herbie's original behavior;
+        a mismatched cache there is deleted before retry. No incomplete file is
+        ever parsed.
 
         Big transfers log progress at INFO (herbie's own chatter is silenced, so
         without this a multi-minute cube download looks hung from the CLI).
@@ -672,17 +834,30 @@ class GFSSource:
         disk-cache hits do not.
         """
         expected = _subset_payload_bytes(herbie, search)
+        local: Path | None = None
+        initial_size = 0
         was_complete = False
         if expected is not None:
-            local = herbie.get_localFilePath(search)
-            was_complete = local.exists() and local.stat().st_size == expected
+            local = Path(herbie.get_localFilePath(search))
+            initial_size = local.stat().st_size if local.exists() else 0
+            was_complete = initial_size == expected
+        can_resume = (
+            resumable
+            and expected is not None
+            and local is not None
+            and _resumable_source(herbie) is not None
+        )
         announce = expected is not None and expected >= _PROGRESS_ANNOUNCE_BYTES
         if announce and was_complete:
             logger.info(
                 "GFS %s subset f%02d: using cached %.0f MB",
                 what, fxx, expected / 1e6,
             )
-            announce = False
+        elif announce and can_resume and 0 < initial_size < expected:
+            logger.info(
+                "GFS %s subset f%02d: resuming %.0f/%.0f MB from disk…",
+                what, fxx, initial_size / 1e6, expected / 1e6,
+            )
         elif announce:
             logger.info(
                 "GFS %s subset f%02d: downloading %.0f MB (one-off per cycle, "
@@ -690,30 +865,36 @@ class GFSSource:
                 what, fxx, expected / 1e6,
             )
         started = time.perf_counter()
-        if announce:
-            # In-flight heartbeat (#103): report growth/stall while blocked.
-            _download_with_heartbeat(
-                lambda: herbie.download(search),
-                lambda: herbie.get_localFilePath(search),
-                what, fxx, expected,
-            )
-        else:
-            herbie.download(search)
+        if not was_complete:
+            if can_resume:
+                download = lambda: _download_resumable_subset(herbie, search)
+            else:
+                download = lambda: herbie.download(search)
+            if announce and local is not None:
+                _download_with_heartbeat(download, local, what, fxx, expected)
+            else:
+                download()
         if expected is not None:
-            local = herbie.get_localFilePath(search)
+            assert local is not None
             actual = local.stat().st_size if local.exists() else None
             if actual != expected:
-                if local.exists():
+                if local.exists() and not can_resume:
                     local.unlink()
+                disposition = (
+                    "kept for resume" if can_resume else "deleted for re-download"
+                )
                 raise GFSUnavailable(
                     f"GFS {what} subset f{fxx:02d} truncated "
-                    f"({actual}/{expected} bytes) — deleted for re-download"
+                    f"({actual}/{expected} bytes) — {disposition}"
                 )
             if not was_complete:
-                self.network_bytes[what] = (
-                    self.network_bytes.get(what, 0) + expected
+                credited = (
+                    expected - min(initial_size, expected) if can_resume else expected
                 )
-        if announce:
+                self.network_bytes[what] = (
+                    self.network_bytes.get(what, 0) + credited
+                )
+        if announce and not was_complete:
             logger.info(
                 "GFS %s subset f%02d: ready (%.0f MB in %.0f s)",
                 what, fxx, expected / 1e6, time.perf_counter() - started,
@@ -723,8 +904,10 @@ class GFSSource:
     def _download_dataset(self, run_dt: datetime, fxx: int) -> xr.Dataset:
         """Download + parse the GFS pressure-level subset via Herbie (network)."""
         H = self._herbie(run_dt, fxx, cache_namespace="pressure")
-        search = self._PRESSURE_SEARCH
-        self._verified_subset_download(H, search, fxx, "pressure")
+        search = self._select_pressure_search(H)
+        self._verified_subset_download(
+            H, search, fxx, "pressure", resumable=True
+        )
         # cfgrib may split into several datasets by step/type; merge into one
         # isobaric dataset. join="outer" is explicit (not the deprecated
         # default): GFS variables like CLWMR/ICMR are reported on fewer levels

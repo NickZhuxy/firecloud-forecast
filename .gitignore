@@ -18,6 +18,7 @@ research/data/cache/
 research/data/raw/
 products/
 output/
+_site/
 .uv-cache/
 .coverage
 .coverage.*
