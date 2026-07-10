@@ -26,7 +26,13 @@ from pathlib import Path
 from predictor.gfs import GFSSource, GFSUnavailable
 from predictor.local_product import generate_local_product
 from predictor.national_product import generate_product
+from predictor.remote_product import (
+    RemoteProductClient,
+    RemoteProductUnavailable,
+)
 from predictor.solar_event import SolarEvent
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -100,8 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-refine", action="store_true",
         help="skip Stage B ray-trace refinement for the national product "
-             "(first refined run downloads ~210 MB of pressure data per sunset "
-             "hour; later runs hit the disk cache)",
+             "(a cold run downloads pressure data for several forecast hours; "
+             "downloads are cached and resume after interruption)",
     )
     parser.add_argument(
         "--no-satellite", action="store_true",
@@ -116,6 +122,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--quiet", action="store_true",
         help="only show the plan/product/summary frame, hide per-stage progress",
+    )
+    parser.add_argument(
+        "--source",
+        choices=["auto", "remote", "local"],
+        default="auto",
+        help="national product source: remote-first, remote-only, or local compute",
+    )
+    parser.add_argument(
+        "--remote-base-url",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     return parser
 
@@ -155,19 +172,49 @@ def _cache_is_cold(target_date: date, cache_root: Path | str | None = None) -> b
 
 
 def _plan_header(
-    target_date: date, event: str, lat: float | None, n: int, cold: bool
+    target_date: date,
+    event: str,
+    lat: float | None,
+    n: int,
+    cold: bool,
+    source: str,
 ) -> str:
     scope = "全国+本地" if lat is not None else "全国"
     cache = "冷(需下载)" if cold else "热(已缓存)"
     eta = "预计 ~10–20 分钟,取决于网速" if cold else "预计 1–3 分钟"
+    if source == "remote":
+        source_status = "来源:仅远端 · 不启动本地下载"
+    elif source == "local":
+        source_status = f"来源:本地计算 · 缓存:{cache} · {eta}"
+    else:
+        source_status = f"来源:远端优先 · 本地回退缓存:{cache}"
     return (
         f"firecloud · {target_date.isoformat()} · {_EVENTS_CN[event]} · {scope}\n"
-        f"计划:{n} 个产品  ·  缓存:{cache}  ·  {eta}"
+        f"计划:{n} 个产品 · {source_status}"
     )
+
+
+def _fetch_remote_product(product: PlannedProduct, target_date: date, args):
+    result = RemoteProductClient(base_url=args.remote_base_url).fetch(
+        target_date,
+        product.solar_event,
+        product.output_dir,
+    )
+    origin = "本地远端缓存" if result.cached else "远端预计算"
+    model = ", ".join(result.model_runs) or "unknown model run"
+    logger.info("%s命中: %s · 生成于 %s", origin, model, result.generated_at.isoformat())
+    return result.artifacts
 
 
 def _run_product(product: PlannedProduct, target_date: date, args) -> object:
     if product.scope == "national":
+        if args.source != "local":
+            try:
+                return _fetch_remote_product(product, target_date, args)
+            except RemoteProductUnavailable as exc:
+                if args.source == "remote":
+                    raise
+                logger.warning("远端预计算产品不可用，转为本地计算: %s", exc)
         return generate_product(
             target_date, product.output_dir, dpi=args.dpi, source=None,
             solar_event=product.solar_event, refine=not args.no_refine,
@@ -197,6 +244,12 @@ def _print_unexpected_failure(i: int, n: int, label: str, verbose: bool) -> None
         print("  (加 --verbose 看完整技术细节)")
 
 
+def _print_remote_failure(i: int, n: int, label: str) -> None:
+    print(f"[{i}/{n}] ✗ {label}失败:远端预计算产品不可用")
+    print("  已按 --source remote 禁止本地大文件下载。")
+    print("  → 稍后重试，或使用 --source local 明确启动本地计算")
+
+
 def _national_product_mod():
     """Indirection so tests can reach ProductArtifacts without importing twice."""
     import predictor.national_product as mod
@@ -209,6 +262,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if (args.lat is None) != (args.lon is None):
         parser.error("--lat and --lon must be given together")
+    if args.source == "remote" and args.lat is not None:
+        parser.error("--source remote currently supports national products only")
     if args.dpi <= 0:
         parser.error("--dpi must be positive")
 
@@ -222,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=level, format="%(message)s")
 
     cold = _cache_is_cold(target_date)
-    print(_plan_header(target_date, args.event, args.lat, len(plan), cold))
+    print(_plan_header(target_date, args.event, args.lat, len(plan), cold, args.source))
 
     n = len(plan)
     succeeded = 0
@@ -233,6 +288,9 @@ def main(argv: list[str] | None = None) -> int:
         started = time.perf_counter()
         try:
             artifacts = _run_product(product, target_date, args)
+        except RemoteProductUnavailable:
+            _print_remote_failure(i, n, label)
+            continue
         except GFSUnavailable:
             _print_data_failure(i, n, label)
             continue

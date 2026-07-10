@@ -181,6 +181,35 @@ def test_refine_one_cube_per_group():
     assert res.cells_refined == 4
 
 
+def test_refine_splits_oversized_group_before_fetch():
+    lats, lons, ev, sel = _grids()
+    # One coarse tile, but its combined sunward-path bbox is too large.
+    screen = np.full((2, 2), 0.9)
+
+    class _RecordingSource(_FakeCubeSource):
+        def __init__(self, cube):
+            super().__init__(cube)
+            self.bboxes = []
+
+        def fetch_cube(self, bbox, time):
+            self.bboxes.append(bbox)
+            return super().fetch_cube(bbox, time)
+
+    src = _RecordingSource(_cube())
+    max_cube_cells = 120
+    res = refine_field(
+        src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
+        threshold=0.5,
+        tile_deg=50.0,
+        distances_km=(0.0, 100.0, 200.0),
+        max_cube_cells=max_cube_cells,
+    )
+
+    assert res.cells_refined == 4
+    assert res.cubes_fetched > 1
+    assert all(_bbox_cell_count(bbox) <= max_cube_cells for bbox in src.bboxes)
+
+
 def test_refined_cell_equals_standalone_score_point_with_cube():
     lats, lons, ev, sel = _grids()
     screen = np.array([[0.9, 0.1], [0.1, 0.1]])
@@ -344,14 +373,20 @@ class _FakeCubeSourcePrefetchBoom(_FakeCubeSource):
 
 
 def test_refine_prefetches_distinct_valid_hours(caplog):
+    import logging
+
     lats, lons, ev, sel = _grids()
     screen = np.array([[0.9, 0.1], [0.1, 0.8]])   # candidates at the one valid hour
     src = _FakeCubeSourceWithPrefetch(_cube())
-    refine_field(
-        src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
-        threshold=0.5, distances_km=(0.0, 100.0, 200.0),
-    )
+    with caplog.at_level(logging.INFO, logger="predictor.national_refine"):
+        refine_field(
+            src, lats, lons, screen, ev, sel, (_VALID,), _surface((2, 2)),
+            threshold=0.5, distances_km=(0.0, 100.0, 200.0),
+        )
     assert src.prefetched == [_VALID]             # warmed the disk before the loop
+    messages = [record.message for record in caplog.records]
+    assert any("精修 2 个候选格" in message for message in messages)
+    assert any("精修完成:2 格" in message for message in messages)
 
 
 def test_refine_survives_prefetch_failure():

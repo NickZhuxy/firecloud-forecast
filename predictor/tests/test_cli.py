@@ -7,10 +7,20 @@ import pytest
 
 import predictor.cli as cli_mod
 from predictor.cli import PlannedProduct, build_parser, main, plan_products
+from predictor.remote_product import RemoteProductUnavailable
 from predictor.solar_event import SolarEvent
 
 
 # --- argument parsing ---
+
+
+@pytest.fixture(autouse=True)
+def _remote_feed_is_offline_by_default(monkeypatch):
+    def unavailable(*args, **kwargs):
+        raise RemoteProductUnavailable("test feed offline")
+
+    monkeypatch.setattr(cli_mod, "_fetch_remote_product", unavailable)
+
 
 def test_defaults_national_both_events_today():
     args = build_parser().parse_args([])
@@ -18,6 +28,7 @@ def test_defaults_national_both_events_today():
     assert args.lat is None and args.lon is None
     assert args.date is None            # resolved to today in main()
     assert args.output == Path("output")
+    assert args.source == "auto"
 
 
 def test_event_choice_rejects_junk():
@@ -227,3 +238,61 @@ def test_cache_is_cold_when_no_pressure_subset(tmp_path):
     dated.mkdir(parents=True)
     (dated / "subset_abc__gfs.t00z.pgrb2.0p25.f019").write_bytes(b"\0" * 10)
     assert _cache_is_cold(date(2026, 6, 29), cache_root=root) is False
+
+
+# ---------------------------------------------------------------------------
+# Remote-first national product delivery
+# ---------------------------------------------------------------------------
+
+
+def test_auto_source_uses_remote_without_local_generation(monkeypatch, tmp_path):
+    remote = _fake_artifact(tmp_path, "remote-sunrise")
+    monkeypatch.setattr(cli_mod, "_fetch_remote_product", lambda *args: remote)
+
+    def local_should_not_run(*args, **kwargs):
+        raise AssertionError("local generation should not run on a remote hit")
+
+    monkeypatch.setattr(cli_mod, "generate_product", local_should_not_run)
+
+    rc = main([
+        "--date", "2026-06-29", "--event", "sunrise",
+        "--output", str(tmp_path),
+    ])
+
+    assert rc == 0
+
+
+def test_auto_source_falls_back_to_local_generation(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_generate(target_date, output_dir, **kwargs):
+        calls.append(kwargs["solar_event"])
+        return _fake_artifact(tmp_path, "local-sunrise")
+
+    monkeypatch.setattr(cli_mod, "generate_product", fake_generate)
+
+    rc = main([
+        "--date", "2026-06-29", "--event", "sunrise",
+        "--output", str(tmp_path),
+    ])
+
+    assert rc == 0
+    assert calls == [SolarEvent.SUNRISE]
+
+
+def test_remote_source_failure_never_starts_large_local_download(
+    monkeypatch, tmp_path, capsys
+):
+    def local_should_not_run(*args, **kwargs):
+        raise AssertionError("remote-only mode must not run locally")
+
+    monkeypatch.setattr(cli_mod, "generate_product", local_should_not_run)
+
+    rc = main([
+        "--date", "2026-06-29", "--event", "sunrise",
+        "--source", "remote", "--output", str(tmp_path),
+    ])
+    out = capsys.readouterr().out
+
+    assert rc == 1
+    assert "远端预计算产品不可用" in out

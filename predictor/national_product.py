@@ -595,7 +595,8 @@ def generate_product(
 
     Stage B refinement runs by default (#59): the ONE shared source doubles as
     ``cube_source`` so every same-cycle tile reuses a single decoded pressure
-    dataset (download ≈ 210 MB × distinct cycles, tile-independent). A source
+    dataset (default download ≈ 130 MB × distinct forecast hours,
+    tile-independent; complete legacy ≈ 210 MB caches are reused). A source
     without ``fetch_cube`` (test fakes) degrades to the screen-only
     zero-regression path.
 
