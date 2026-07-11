@@ -147,36 +147,52 @@ def build_national_field(
     t0 = time.perf_counter()
 
     try:
-        # The bbox mesh establishes the full time range before any weather read.
-        # It uses the same coarse interpolation as the final GFS axes.
+        # The bbox mesh estimates the event-hour range before any weather read.
+        # The final GFS axes can extend that estimate slightly, so we verify and
+        # fetch any missing hours after the first surface grid establishes them.
         range_lats = _range_axis(lat_min, lat_max)
         range_lons = _range_axis(lon_min, lon_max)
         bbox_sunsets = sunset_utc_grid(target_date, range_lats, range_lons, solar_event=solar_event)
         valid_times = hourly_valid_times(
             _active_sunsets(bbox_sunsets, range_lats, range_lons, domain_mask)
         )
-        if hasattr(gfs_source, "fetch_surface_grids"):
-            grids = gfs_source.fetch_surface_grids(bbox, valid_times)
-        else:
-            grids = [
-                gfs_source.fetch_surface_grid(bbox, valid_time)
-                for valid_time in valid_times
-            ]
 
-        ordered = [_ordered(grid) for grid in grids]
-        lats, lons, _ = ordered[0]
-        for other_lats, other_lons, _fields in ordered[1:]:
-            if not (
-                np.array_equal(other_lats, lats)
-                and np.array_equal(other_lons, lons)
-            ):
-                raise ValueError("GFS timestep grid coordinates do not match")
+        def fetch_grids(times: tuple[datetime, ...]):
+            if hasattr(gfs_source, "fetch_surface_grids"):
+                fetched = list(gfs_source.fetch_surface_grids(bbox, times))
+            else:
+                fetched = [
+                    gfs_source.fetch_surface_grid(bbox, valid_time)
+                    for valid_time in times
+                ]
+            if len(fetched) != len(times):
+                raise ValueError("GFS source must return one surface grid per valid time")
+            return list(zip(times, fetched))
+
+        def align_grids(fetched):
+            fetched = sorted(fetched, key=lambda pair: pair[0])
+            times = tuple(time for time, _grid in fetched)
+            grids = [grid for _time, grid in fetched]
+            ordered = [_ordered(grid) for grid in grids]
+            lats, lons, _ = ordered[0]
+            for other_lats, other_lons, _fields in ordered[1:]:
+                if not (
+                    np.array_equal(other_lats, lats)
+                    and np.array_equal(other_lons, lons)
+                ):
+                    raise ValueError("GFS timestep grid coordinates do not match")
+            return times, grids, ordered, lats, lons
+
+        fetched = fetch_grids(valid_times)
+        valid_times, grids, ordered, lats, lons = align_grids(fetched)
 
         sunsets = sunset_utc_grid(target_date, lats, lons, solar_event=solar_event)
         active_sunsets = _active_sunsets(sunsets, lats, lons, domain_mask)
         required_times = hourly_valid_times(active_sunsets)
-        if not set(required_times).issubset(valid_times):
-            raise ValueError("coarse sunset range did not cover the final grid")
+        missing_times = tuple(time for time in required_times if time not in valid_times)
+        if missing_times:
+            fetched.extend(fetch_grids(missing_times))
+            valid_times, grids, ordered, lats, lons = align_grids(fetched)
         selected_time = nearest_valid_time_indices(sunsets, valid_times)
 
         def select(name: str) -> np.ndarray:

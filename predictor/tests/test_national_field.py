@@ -304,12 +304,13 @@ def test_build_uses_batch_fetch_when_source_has_method():
     assert len(gfs.calls[0][1]) == len(field.valid_times)
 
 
-# ---------- coarse bbox miss (line 163) --------------------------------------
+# ---------- final grid extends coarse bbox event-hour estimate ----------------
 
-def test_build_raises_when_coarse_bbox_misses_fine_grid_sunsets(monkeypatch):
+def test_build_fetches_missing_hours_when_coarse_bbox_misses_fine_grid(monkeypatch):
     # Call 1 (coarse bbox): all 11:10 → valid_times = hours {11, 12}.
     # Call 2 (fine grid): one cell pushed to 13:50 → required_times adds {13, 14}.
-    # Neither 13 nor 14 is in valid_times → line 163 raises.
+    # The builder should fetch only the missing final-grid hours instead of
+    # crashing after the initial GFS read.
     call_count = [0]
 
     def narrow_then_wide(_date, lats, lons, **_kw):
@@ -321,8 +322,13 @@ def test_build_raises_when_coarse_bbox_misses_fine_grid_sunsets(monkeypatch):
         return result
 
     monkeypatch.setattr(national_field_mod, "sunset_utc_grid", narrow_then_wide)
-    with pytest.raises(ValueError, match="coarse sunset range"):
-        build_national_field(_FakeGFS(_grid()), _BBOX, _DATE)
+    gfs = _FakeGFS(_grid())
+
+    field = build_national_field(gfs, _BBOX, _DATE)
+
+    assert [time.hour for time in field.valid_times] == [11, 12, 13, 14]
+    assert [time.hour for _bbox, time in gfs.calls] == [11, 12, 13, 14]
+    assert field.surface_fetches == 4
 
 
 # ---------- download_bytes summation branch (lines 183-187) ------------------
