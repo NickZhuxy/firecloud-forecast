@@ -15,10 +15,12 @@ from predictor.national_field import NationalField
 from predictor.national_product import (
     DISPLAY_CONTOUR_LEVELS,
     DISPLAY_EDGE_FADE_WIDTH,
+    DISPLAY_FIELD_ALPHA,
     DISPLAY_INDEX_BOUNDS,
     DISPLAY_PROBABILITY_THRESHOLD,
     DISPLAY_SMOOTH_PASSES,
     DISPLAY_UPSAMPLE_FACTOR,
+    SCIENTIFIC_FONT_FAMILY,
     MapContext,
     display_candidate_alpha,
     display_candidates,
@@ -154,7 +156,9 @@ def test_save_product_writes_png_and_metadata(tmp_path):
         "favorable_threshold": DISPLAY_PROBABILITY_THRESHOLD,
         "class_bounds": list(DISPLAY_INDEX_BOUNDS),
         "contour_levels": list(DISPLAY_CONTOUR_LEVELS),
+        "field_alpha": DISPLAY_FIELD_ALPHA,
         "colormap": "firecloud_scientific_classes",
+        "font_family": SCIENTIFIC_FONT_FAMILY,
         "basemap": "white",
         "boundary_resolution": "Natural Earth 10m",
         "upsample_factor": DISPLAY_UPSAMPLE_FACTOR,
@@ -636,8 +640,34 @@ def test_plot_uses_classified_full_domain_raster_and_isolines():
     assert image.get_interpolation() == "nearest"
     assert image.cmap.name == "firecloud_scientific_classes"
     assert tuple(image.norm.boundaries) == DISPLAY_INDEX_BOUNDS
-    assert image.get_alpha() is None
+    assert image.get_alpha() == pytest.approx(DISPLAY_FIELD_ALPHA)
     assert any("Isolines" in text.get_text() for text in fig.texts)
+
+
+def test_plot_uses_publication_typography_and_legible_admin_lines():
+    context = MapContext(
+        country=box(73.0, 17.0, 136.0, 54.0),
+        surrounding=(),
+        admin1=(LineString([(80.0, 25.0), (125.0, 45.0)]),),
+    )
+
+    fig = plot_sunsetwx_product(
+        _field(), _DATE, context, generated_at=_GENERATED
+    )
+    ax = fig.axes[0]
+    title = next(
+        text for text in fig.texts if "Firecloud Condition Index" in text.get_text()
+    )
+    admin_line = next(line for line in ax.lines if line.get_zorder() == 5)
+
+    assert title.get_fontfamily() == [SCIENTIFIC_FONT_FAMILY]
+    assert all(
+        label.get_fontfamily() == [SCIENTIFIC_FONT_FAMILY]
+        for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]
+    )
+    assert admin_line.get_color() == "#30383f"
+    assert admin_line.get_linewidth() == pytest.approx(0.5)
+    assert admin_line.get_alpha() == pytest.approx(0.9)
 
 
 def test_metadata_probability_levels_three_cases():

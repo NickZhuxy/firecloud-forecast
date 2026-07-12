@@ -11,11 +11,15 @@ from predictor.local_field import LocalField
 from predictor.local_product import (
     _format_local_lat,
     _format_local_lon,
-    local_display_candidates,
     plot_local_product,
     save_local_product,
 )
-from predictor.national_product import DISPLAY_PROBABILITY_THRESHOLD, MapContext
+from predictor.national_product import (
+    DISPLAY_FIELD_ALPHA,
+    DISPLAY_INDEX_BOUNDS,
+    SCIENTIFIC_FONT_FAMILY,
+    MapContext,
+)
 from predictor.solar_event import SolarEvent
 
 _DATE = date(2026, 6, 29)
@@ -59,21 +63,21 @@ def _context() -> MapContext:
 
 def test_plot_local_product_returns_figure_with_event_title():
     fig = plot_local_product(_field(), _DATE, solar_event=SolarEvent.SUNRISE, generated_at=_GEN)
-    assert any("Sunrise" in t.get_text() for t in fig.texts)
+    assert any("sunrise" in t.get_text().lower() for t in fig.texts)
     # The generated timestamp is drawn (caption parity with the national figure).
-    assert any("Generated 2026-06-29" in t.get_text() for t in fig.texts)
+    assert any("generated 2026-06-29" in t.get_text() for t in fig.texts)
+    assert any("UNCALIBRATED DIAGNOSTIC" in t.get_text() for t in fig.texts)
 
 
-def test_local_display_keeps_candidate_threshold_semantics():
-    low = np.array([[0.0, 0.12], [0.18, 0.22]])
-    quality = local_display_candidates(low)
-    assert np.ma.getmaskarray(quality).all()
-
+def test_local_display_uses_the_full_scientific_condition_index():
     fig = plot_local_product(
         _field(), _DATE, solar_event=SolarEvent.SUNRISE, generated_at=_GEN
     )
     image = fig.axes[0].images[0]
-    assert image.get_clim() == (DISPLAY_PROBABILITY_THRESHOLD, 1.0)
+    assert image.cmap.name == "firecloud_scientific_classes"
+    assert tuple(image.norm.boundaries) == DISPLAY_INDEX_BOUNDS
+    assert image.get_alpha() == pytest.approx(DISPLAY_FIELD_ALPHA)
+    assert image.get_array().count() == image.get_array().size
 
 
 def test_plot_local_product_draws_map_context_and_center():
@@ -84,7 +88,8 @@ def test_plot_local_product_draws_map_context_and_center():
     ax = fig.axes[0]
     assert len(ax.patches) >= 2  # land/context polygons under the forecast layer
     assert len(ax.lines) >= 3    # admin line + crosshair halo + crosshair
-    assert ax.get_facecolor()[2] > ax.get_facecolor()[0]  # pale blue water background
+    assert ax.get_facecolor()[:3] == pytest.approx((1.0, 1.0, 1.0))
+    assert next(line for line in ax.lines if line.get_zorder() == 5)
 
 
 def test_local_axis_labels_show_decimal_degrees():
@@ -106,6 +111,10 @@ def test_save_local_product_names_by_coords_and_event(tmp_path):
     assert md["center"] == [31.2, 121.5]
     assert md["radius_km"] == 40.0
     assert "probability_range" in md
+    assert md["condition_index"]["calibrated_probability"] is False
+    assert md["condition_index"]["favorable_threshold"] == 0.5
+    assert md["display"]["class_bounds"] == list(DISPLAY_INDEX_BOUNDS)
+    assert md["display"]["font_family"] == SCIENTIFIC_FONT_FAMILY
 
 
 def test_save_local_product_sunrise_filename(tmp_path):
@@ -113,6 +122,25 @@ def test_save_local_product_sunrise_filename(tmp_path):
         _field(), _DATE, tmp_path, solar_event=SolarEvent.SUNRISE, generated_at=_GEN, dpi=70,
     )
     assert art.image_path.name == "point-30_120-sunrise.png"
+
+
+def test_local_metadata_serializes_missing_center_index_as_null():
+    import dataclasses
+    import predictor.local_product as mod
+
+    field = _field()
+    probability = field.probability.copy()
+    probability[2, 2] = np.nan
+    metadata = mod._metadata(
+        dataclasses.replace(field, probability=probability),
+        _DATE,
+        "point.png",
+        _GEN,
+        SolarEvent.SUNSET,
+    )
+
+    assert metadata["condition_index"]["center_value"] is None
+    json.dumps(metadata, allow_nan=False)
 
 
 # ---- Stage C: satellite nowcast wiring (#84) ----

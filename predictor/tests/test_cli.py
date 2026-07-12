@@ -280,6 +280,58 @@ def test_auto_source_falls_back_to_local_generation(monkeypatch, tmp_path):
     assert calls == [SolarEvent.SUNRISE]
 
 
+def test_auto_source_uses_remote_for_published_point_product(monkeypatch, tmp_path):
+    scopes = []
+
+    def remote_hit(product, *args):
+        scopes.append(product.scope)
+        return _fake_artifact(tmp_path, f"remote-{product.scope}")
+
+    monkeypatch.setattr(cli_mod, "_fetch_remote_product", remote_hit)
+
+    def local_should_not_run(*args, **kwargs):
+        raise AssertionError("local generation should not run on a remote point hit")
+
+    monkeypatch.setattr(cli_mod, "generate_product", local_should_not_run)
+    monkeypatch.setattr(cli_mod, "generate_local_product", local_should_not_run)
+
+    rc = main([
+        "--date", "2026-06-29",
+        "--event", "sunset",
+        "--lat", "31.23",
+        "--lon", "121.47",
+        "--output", str(tmp_path),
+    ])
+
+    assert rc == 0
+    assert scopes == ["national", "point"]
+
+
+def test_remote_only_supports_published_point_product(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        cli_mod,
+        "_fetch_remote_product",
+        lambda product, *args: _fake_artifact(tmp_path, f"remote-{product.scope}"),
+    )
+
+    def local_should_not_run(*args, **kwargs):
+        raise AssertionError("remote-only mode must not run local point physics")
+
+    monkeypatch.setattr(cli_mod, "generate_product", local_should_not_run)
+    monkeypatch.setattr(cli_mod, "generate_local_product", local_should_not_run)
+
+    rc = main([
+        "--date", "2026-06-29",
+        "--event", "sunset",
+        "--lat", "31.23",
+        "--lon", "121.47",
+        "--source", "remote",
+        "--output", str(tmp_path),
+    ])
+
+    assert rc == 0
+
+
 def test_remote_source_failure_never_starts_large_local_download(
     monkeypatch, tmp_path, capsys
 ):

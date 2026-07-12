@@ -1,4 +1,4 @@
-"""Build the static national-product feed deployed by GitHub Pages."""
+"""Build the static national and configured local-product feed for GitHub Pages."""
 from __future__ import annotations
 
 import argparse
@@ -9,17 +9,32 @@ import posixpath
 import re
 import shutil
 import tempfile
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from predictor.gfs import GFSSource
+from predictor.local_product import generate_local_product
 from predictor.national_product import ProductArtifacts, generate_product
-from predictor.remote_product import REMOTE_SCHEMA_VERSION
+from predictor.remote_product import REMOTE_SCHEMA_VERSION, point_key
 from predictor.solar_event import SolarEvent
 
 _PUBLISH_VALID_HOURS = 18
 _MODEL_RUN_RE = re.compile(r"gfs@(\d{4}-\d{2}-\d{2})T(\d{2})Z")
+
+
+@dataclass(frozen=True)
+class PrecomputeLocation:
+    name: str
+    lat: float
+    lon: float
+    radius_km: float = 150.0
+    resolution_deg: float = 0.1
+
+    @property
+    def slug(self) -> str:
+        return _safe_version(self.name).lower()
 
 
 def _iso_z(value: datetime) -> str:
@@ -72,6 +87,36 @@ def _artifact_entry(path: Path, manifest_path: Path) -> dict:
     }
 
 
+def parse_location(
+    value: str,
+    *,
+    radius_km: float = 150.0,
+    resolution_deg: float = 0.1,
+) -> PrecomputeLocation:
+    """Parse ``NAME:LAT:LON`` used by repeatable CLI/workflow inputs."""
+    try:
+        name, lat_text, lon_text = value.split(":", 2)
+        lat = float(lat_text)
+        lon = float(lon_text)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(
+            "location must be NAME:LAT:LON, for example shanghai:31.23:121.47"
+        ) from exc
+    if not name.strip():
+        raise argparse.ArgumentTypeError("location name must not be empty")
+    if not -90.0 <= lat <= 90.0 or not -180.0 <= lon <= 180.0:
+        raise argparse.ArgumentTypeError("location coordinates are out of range")
+    if radius_km <= 0 or resolution_deg <= 0:
+        raise argparse.ArgumentTypeError("local radius and resolution must be positive")
+    return PrecomputeLocation(
+        name=name.strip(),
+        lat=lat,
+        lon=lon,
+        radius_km=float(radius_km),
+        resolution_deg=float(resolution_deg),
+    )
+
+
 def build_site(
     output_dir: str | Path,
     *,
@@ -84,7 +129,9 @@ def build_site(
     refine: bool = True,
     satellite: bool = True,
     events: tuple[SolarEvent, ...] = (SolarEvent.SUNRISE, SolarEvent.SUNSET),
+    locations: tuple[PrecomputeLocation, ...] = (),
     generate=generate_product,
+    local_generate=generate_local_product,
 ) -> list[Path]:
     """Generate a complete static Pages snapshot and return latest manifests."""
     if days <= 0:
@@ -144,6 +191,7 @@ def build_site(
                 )
                 manifest = {
                     "schema_version": REMOTE_SCHEMA_VERSION,
+                    "scope": "national",
                     "algorithm_version": version,
                     "model_runs": model_runs,
                     "target_date": target_date.isoformat(),
@@ -159,6 +207,80 @@ def build_site(
                 }
                 _write_json(manifest_path, manifest)
                 manifests.append(manifest_path)
+
+                for location in locations:
+                    local_artifacts: ProductArtifacts = local_generate(
+                        target_date,
+                        work_root / target_date.isoformat(),
+                        location.lat,
+                        location.lon,
+                        dpi=dpi,
+                        cube_source=shared_source,
+                        solar_event=event,
+                        radius_km=location.radius_km,
+                        resolution_deg=location.resolution_deg,
+                        satellite=satellite,
+                        now=generated_at,
+                    )
+                    local_metadata = json.loads(
+                        local_artifacts.metadata_path.read_text(encoding="utf-8")
+                    )
+                    local_model_runs = _model_runs(local_metadata)
+                    local_run_slug = _model_run_slug(local_model_runs)
+                    key = point_key(location.lat, location.lon)
+                    local_publish_dir = (
+                        root
+                        / "products"
+                        / "runs"
+                        / version
+                        / local_run_slug
+                        / target_date.isoformat()
+                        / event.value
+                        / "points"
+                        / key
+                    )
+                    local_publish_dir.mkdir(parents=True, exist_ok=True)
+                    local_image_path = local_publish_dir / "point.png"
+                    local_metadata_path = local_publish_dir / "point.json"
+                    shutil.copyfile(local_artifacts.image_path, local_image_path)
+                    shutil.copyfile(local_artifacts.metadata_path, local_metadata_path)
+
+                    local_manifest_path = (
+                        root
+                        / "products"
+                        / "latest"
+                        / target_date.isoformat()
+                        / event.value
+                        / "points"
+                        / f"{key}.json"
+                    )
+                    local_manifest = {
+                        "schema_version": REMOTE_SCHEMA_VERSION,
+                        "scope": "point",
+                        "algorithm_version": version,
+                        "model_runs": local_model_runs,
+                        "target_date": target_date.isoformat(),
+                        "event": event.value,
+                        "generated_at": _iso_z(generated_at),
+                        "valid_until": _iso_z(
+                            generated_at + timedelta(hours=_PUBLISH_VALID_HOURS)
+                        ),
+                        "location_name": location.name,
+                        "location_slug": location.slug,
+                        "center": [location.lat, location.lon],
+                        "radius_km": location.radius_km,
+                        "resolution_deg": location.resolution_deg,
+                        "artifacts": {
+                            "image": _artifact_entry(
+                                local_image_path, local_manifest_path
+                            ),
+                            "metadata": _artifact_entry(
+                                local_metadata_path, local_manifest_path
+                            ),
+                        },
+                    }
+                    _write_json(local_manifest_path, local_manifest)
+                    manifests.append(local_manifest_path)
 
     latest_root = root / "products" / "latest"
     _write_json(
@@ -186,6 +308,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-refine", action="store_true")
     parser.add_argument("--no-satellite", action="store_true")
     parser.add_argument("--algorithm-version", default=None)
+    parser.add_argument(
+        "--location",
+        action="append",
+        default=[],
+        metavar="NAME:LAT:LON",
+        help="precompute an exact local point; repeat for multiple locations",
+    )
+    parser.add_argument("--local-radius", type=float, default=150.0)
+    parser.add_argument("--local-resolution", type=float, default=0.1)
     return parser
 
 
@@ -201,6 +332,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.event == "both"
         else (SolarEvent(args.event),)
     )
+    locations = tuple(
+        parse_location(
+            value,
+            radius_km=args.local_radius,
+            resolution_deg=args.local_resolution,
+        )
+        for value in args.location
+    )
     manifests = build_site(
         args.output,
         start_date=start_date,
@@ -211,6 +350,7 @@ def main(argv: list[str] | None = None) -> int:
         refine=not args.no_refine,
         satellite=not args.no_satellite,
         events=events,
+        locations=locations,
     )
     for manifest in manifests:
         print(manifest)

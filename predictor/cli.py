@@ -127,7 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--source",
         choices=["auto", "remote", "local"],
         default="auto",
-        help="national product source: remote-first, remote-only, or local compute",
+        help="product source: remote-first, remote-only, or local compute",
     )
     parser.add_argument(
         "--remote-base-url",
@@ -195,11 +195,23 @@ def _plan_header(
 
 
 def _fetch_remote_product(product: PlannedProduct, target_date: date, args):
-    result = RemoteProductClient(base_url=args.remote_base_url).fetch(
-        target_date,
-        product.solar_event,
-        product.output_dir,
-    )
+    client = RemoteProductClient(base_url=args.remote_base_url)
+    if product.scope == "point":
+        result = client.fetch_point(
+            target_date,
+            product.solar_event,
+            product.output_dir,
+            product.lat,
+            product.lon,
+            radius_km=args.radius,
+            resolution_deg=args.resolution,
+        )
+    else:
+        result = client.fetch(
+            target_date,
+            product.solar_event,
+            product.output_dir,
+        )
     origin = "本地远端缓存" if result.cached else "远端预计算"
     model = ", ".join(result.model_runs) or "unknown model run"
     logger.info("%s命中: %s · 生成于 %s", origin, model, result.generated_at.isoformat())
@@ -207,14 +219,14 @@ def _fetch_remote_product(product: PlannedProduct, target_date: date, args):
 
 
 def _run_product(product: PlannedProduct, target_date: date, args) -> object:
+    if args.source != "local":
+        try:
+            return _fetch_remote_product(product, target_date, args)
+        except RemoteProductUnavailable as exc:
+            if args.source == "remote":
+                raise
+            logger.warning("远端预计算产品不可用，转为本地计算: %s", exc)
     if product.scope == "national":
-        if args.source != "local":
-            try:
-                return _fetch_remote_product(product, target_date, args)
-            except RemoteProductUnavailable as exc:
-                if args.source == "remote":
-                    raise
-                logger.warning("远端预计算产品不可用，转为本地计算: %s", exc)
         return generate_product(
             target_date, product.output_dir, dpi=args.dpi, source=None,
             solar_event=product.solar_event, refine=not args.no_refine,
@@ -262,8 +274,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if (args.lat is None) != (args.lon is None):
         parser.error("--lat and --lon must be given together")
-    if args.source == "remote" and args.lat is not None:
-        parser.error("--source remote currently supports national products only")
     if args.dpi <= 0:
         parser.error("--dpi must be positive")
 

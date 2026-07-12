@@ -12,6 +12,21 @@ on:
         required: false
         default: 2
         type: number
+      locations:
+        description: Comma-separated NAME:LAT:LON local products
+        required: false
+        default: shanghai:31.23:121.47
+        type: string
+      local_radius:
+        description: Local product radius in km
+        required: false
+        default: 150
+        type: number
+      local_resolution:
+        description: Local product evaluation-grid spacing in degrees
+        required: false
+        default: 0.1
+        type: number
   schedule:
     # GFS runs at 00/06/12/18Z. Avoid the busy top of the hour and allow
     # upstream products to finish publishing before starting the build.
@@ -34,6 +49,9 @@ jobs:
       MPLBACKEND: Agg
       START_DATE: ${{ inputs.start_date || '' }}
       DAYS: ${{ inputs.days || 2 }}
+      LOCATIONS: ${{ inputs.locations || 'shanghai:31.23:121.47' }}
+      LOCAL_RADIUS: ${{ inputs.local_radius || 150 }}
+      LOCAL_RESOLUTION: ${{ inputs.local_resolution || 0.1 }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -58,10 +76,18 @@ jobs:
             --days "$DAYS"
             --output _site
             --algorithm-version "${GITHUB_SHA::12}"
+            --local-radius "$LOCAL_RADIUS"
+            --local-resolution "$LOCAL_RESOLUTION"
           )
           if [[ -n "$START_DATE" ]]; then
             args+=(--start-date "$START_DATE")
           fi
+          IFS=',' read -ra location_specs <<< "$LOCATIONS"
+          for location in "${location_specs[@]}"; do
+            if [[ -n "$location" ]]; then
+              args+=(--location "$location")
+            fi
+          done
           uv run --no-sync python -m predictor.precompute "${args[@]}"
 
       - name: Configure GitHub Pages
