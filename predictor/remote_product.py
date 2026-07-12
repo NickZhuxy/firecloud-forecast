@@ -1,9 +1,10 @@
-"""Fetch precomputed national products from the static Firecloud product feed."""
+"""Fetch precomputed national and exact-center local products from Pages."""
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 REMOTE_SCHEMA_VERSION = "v1"
 DEFAULT_REMOTE_BASE_URL = "https://nickzhuxy.github.io/firecloud-forecast/"
 _REMOTE_MANIFEST_STEM = ".remote-manifest"
+POINT_COORDINATE_PRECISION = 4
 
 
 class RemoteProductUnavailable(RuntimeError):
@@ -53,6 +55,19 @@ def _atomic_write(path: Path, payload: bytes) -> None:
     temporary = path.with_name(f".{path.name}.tmp")
     temporary.write_bytes(payload)
     temporary.replace(path)
+
+
+def point_key(lat: float, lon: float) -> str:
+    """Stable path key for an exact precomputed local-product center."""
+    return (
+        f"{float(lat):.{POINT_COORDINATE_PRECISION}f}_"
+        f"{float(lon):.{POINT_COORDINATE_PRECISION}f}"
+    )
+
+
+def point_stem(lat: float, lon: float, event: SolarEvent | str) -> str:
+    """Local filename matching the locally generated point product."""
+    return f"point-{float(lat):g}_{float(lon):g}-{SolarEvent(event).value}"
 
 
 class RemoteProductClient:
@@ -102,6 +117,58 @@ class RemoteProductClient:
                 raise remote_error
             raise RemoteProductUnavailable(
                 f"remote product unavailable: {remote_error}"
+            ) from remote_error
+
+    def fetch_point(
+        self,
+        target_date: date,
+        event: SolarEvent | str,
+        output_dir: str | Path,
+        lat: float,
+        lon: float,
+        *,
+        radius_km: float,
+        resolution_deg: float,
+    ) -> RemoteProductResult:
+        """Fetch one exact precomputed local product, with a verified cache fallback."""
+        event_value = SolarEvent(event).value
+        key = point_key(lat, lon)
+        directory = Path(output_dir)
+        manifest_url = urljoin(
+            self.base_url,
+            f"products/latest/{target_date.isoformat()}/{event_value}/points/{key}.json",
+        )
+        remote_error: Exception | None = None
+        try:
+            return self._fetch_remote_point(
+                manifest_url,
+                target_date,
+                event_value,
+                directory,
+                lat,
+                lon,
+                radius_km,
+                resolution_deg,
+            )
+        except Exception as exc:  # noqa: BLE001 - cache fallback is intentional
+            remote_error = exc
+            logger.warning("remote point product fetch failed: %s", exc)
+
+        try:
+            return self._load_cached_point(
+                target_date,
+                event_value,
+                directory,
+                lat,
+                lon,
+                radius_km,
+                resolution_deg,
+            )
+        except Exception:
+            if isinstance(remote_error, RemoteProductUnavailable):
+                raise remote_error
+            raise RemoteProductUnavailable(
+                f"remote point product unavailable: {remote_error}"
             ) from remote_error
 
     def _fetch_remote(
@@ -159,6 +226,90 @@ class RemoteProductClient:
         self._verify_file(metadata_path, validated["artifacts"]["metadata"])
         return self._result(validated, image_path, metadata_path, cached=True)
 
+    def _fetch_remote_point(
+        self,
+        manifest_url: str,
+        target_date: date,
+        event: str,
+        output_dir: Path,
+        lat: float,
+        lon: float,
+        radius_km: float,
+        resolution_deg: float,
+    ) -> RemoteProductResult:
+        response = self.session.get(
+            manifest_url,
+            timeout=self.timeout,
+            headers={"User-Agent": "firecloud-forecast/remote-product-v1"},
+        )
+        response.raise_for_status()
+        try:
+            manifest = response.json()
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RemoteProductUnavailable("invalid remote point manifest JSON") from exc
+        validated = self._validate_point_manifest(
+            manifest,
+            target_date,
+            event,
+            lat,
+            lon,
+            radius_km,
+            resolution_deg,
+        )
+
+        image = self._download_artifact(
+            manifest_url, validated["artifacts"]["image"]
+        )
+        metadata = self._download_artifact(
+            manifest_url, validated["artifacts"]["metadata"]
+        )
+        try:
+            json.loads(metadata)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RemoteProductUnavailable("invalid remote point metadata") from exc
+
+        stem = point_stem(lat, lon, event)
+        image_path = output_dir / f"{stem}.png"
+        metadata_path = output_dir / f"{stem}.json"
+        _atomic_write(image_path, image)
+        _atomic_write(metadata_path, metadata)
+        _atomic_write(
+            self._cache_point_manifest_path(output_dir, event, lat, lon),
+            (json.dumps(validated, ensure_ascii=False, indent=2) + "\n").encode(),
+        )
+        return self._result(validated, image_path, metadata_path, cached=False)
+
+    def _load_cached_point(
+        self,
+        target_date: date,
+        event: str,
+        output_dir: Path,
+        lat: float,
+        lon: float,
+        radius_km: float,
+        resolution_deg: float,
+    ) -> RemoteProductResult:
+        cache_path = self._cache_point_manifest_path(output_dir, event, lat, lon)
+        try:
+            manifest = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RemoteProductUnavailable("no cached remote point product") from exc
+        validated = self._validate_point_manifest(
+            manifest,
+            target_date,
+            event,
+            lat,
+            lon,
+            radius_km,
+            resolution_deg,
+        )
+        stem = point_stem(lat, lon, event)
+        image_path = output_dir / f"{stem}.png"
+        metadata_path = output_dir / f"{stem}.json"
+        self._verify_file(image_path, validated["artifacts"]["image"])
+        self._verify_file(metadata_path, validated["artifacts"]["metadata"])
+        return self._result(validated, image_path, metadata_path, cached=True)
+
     def _validate_manifest(self, manifest, target_date: date, event: str) -> dict:
         if not isinstance(manifest, dict):
             raise RemoteProductUnavailable("invalid remote manifest")
@@ -186,6 +337,43 @@ class RemoteProductClient:
         validated = dict(manifest)
         validated["generated_at"] = generated.isoformat().replace("+00:00", "Z")
         validated["valid_until"] = valid_until.isoformat().replace("+00:00", "Z")
+        return validated
+
+    def _validate_point_manifest(
+        self,
+        manifest,
+        target_date: date,
+        event: str,
+        lat: float,
+        lon: float,
+        radius_km: float,
+        resolution_deg: float,
+    ) -> dict:
+        validated = self._validate_manifest(manifest, target_date, event)
+        if validated.get("scope") != "point":
+            raise RemoteProductUnavailable("remote product scope mismatch")
+        center = validated.get("center")
+        if not (
+            isinstance(center, list)
+            and len(center) == 2
+            and all(isinstance(value, (int, float)) for value in center)
+        ):
+            raise RemoteProductUnavailable("invalid remote point center")
+        tolerance = 10 ** (-POINT_COORDINATE_PRECISION)
+        if not (
+            math.isclose(float(center[0]), float(lat), abs_tol=tolerance)
+            and math.isclose(float(center[1]), float(lon), abs_tol=tolerance)
+        ):
+            raise RemoteProductUnavailable("remote point center mismatch")
+        try:
+            remote_radius = float(validated["radius_km"])
+            remote_resolution = float(validated["resolution_deg"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RemoteProductUnavailable("invalid remote point grid") from exc
+        if not math.isclose(remote_radius, float(radius_km), abs_tol=1e-9):
+            raise RemoteProductUnavailable("remote point radius mismatch")
+        if not math.isclose(remote_resolution, float(resolution_deg), abs_tol=1e-9):
+            raise RemoteProductUnavailable("remote point resolution mismatch")
         return validated
 
     @staticmethod
@@ -236,6 +424,12 @@ class RemoteProductClient:
     @staticmethod
     def _cache_manifest_path(output_dir: Path, event: str) -> Path:
         return output_dir / f"{_REMOTE_MANIFEST_STEM}-{event}.json"
+
+    @staticmethod
+    def _cache_point_manifest_path(
+        output_dir: Path, event: str, lat: float, lon: float
+    ) -> Path:
+        return output_dir / f"{_REMOTE_MANIFEST_STEM}-point-{point_key(lat, lon)}-{event}.json"
 
     @staticmethod
     def _result(

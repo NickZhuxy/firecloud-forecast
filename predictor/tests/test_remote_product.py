@@ -64,6 +64,21 @@ def _manifest(now, image, metadata, *, expires_delta=timedelta(hours=6)):
     }
 
 
+def _point_manifest(now, image, metadata):
+    manifest = _manifest(now, image, metadata)
+    manifest.update({
+        "scope": "point",
+        "center": [31.23, 121.47],
+        "radius_km": 150.0,
+        "resolution_deg": 0.1,
+        "location_name": "Shanghai",
+    })
+    root = "../../../../runs/abc123/gfs-20260710T00Z/2026-07-10/sunrise/points/31.2300_121.4700"
+    manifest["artifacts"]["image"]["path"] = f"{root}/point.png"
+    manifest["artifacts"]["metadata"]["path"] = f"{root}/point.json"
+    return manifest
+
+
 def test_remote_fetch_validates_and_materializes_product(tmp_path):
     now = datetime(2026, 7, 10, 9, tzinfo=timezone.utc)
     base = "https://example.test/firecloud/"
@@ -151,3 +166,66 @@ def test_remote_fetch_rejects_checksum_mismatch_without_writing(tmp_path):
             date(2026, 7, 10), "sunrise", tmp_path
         )
     assert not (tmp_path / "national-sunrise.png").exists()
+
+
+def test_remote_point_fetch_validates_grid_and_materializes_local_filename(tmp_path):
+    now = datetime(2026, 7, 10, 9, tzinfo=timezone.utc)
+    base = "https://example.test/firecloud/"
+    key = "31.2300_121.4700"
+    manifest_url = base + f"products/latest/2026-07-10/sunrise/points/{key}.json"
+    artifact_root = (
+        base
+        + f"products/runs/abc123/gfs-20260710T00Z/2026-07-10/sunrise/points/{key}"
+    )
+    image = b"point-png"
+    metadata = b'{"product":"china_firecloud_local"}\n'
+    manifest = _point_manifest(now, image, metadata)
+    session = _Session({
+        manifest_url: _Response(payload=manifest),
+        f"{artifact_root}/point.png": _Response(content=image),
+        f"{artifact_root}/point.json": _Response(content=metadata),
+    })
+
+    result = RemoteProductClient(
+        base_url=base, session=session, now_fn=lambda: now
+    ).fetch_point(
+        date(2026, 7, 10),
+        "sunrise",
+        tmp_path,
+        31.23,
+        121.47,
+        radius_km=150.0,
+        resolution_deg=0.1,
+    )
+
+    assert result.cached is False
+    assert result.artifacts.image_path.name == "point-31.23_121.47-sunrise.png"
+    assert result.artifacts.image_path.read_bytes() == image
+    assert (
+        tmp_path / ".remote-manifest-point-31.2300_121.4700-sunrise.json"
+    ).is_file()
+
+
+def test_remote_point_fetch_rejects_a_different_requested_grid(tmp_path):
+    now = datetime(2026, 7, 10, 9, tzinfo=timezone.utc)
+    base = "https://example.test/firecloud/"
+    manifest_url = (
+        base
+        + "products/latest/2026-07-10/sunrise/points/31.2300_121.4700.json"
+    )
+    manifest = _point_manifest(now, b"point-png", b"{}")
+    session = _Session({manifest_url: _Response(payload=manifest)})
+
+    with pytest.raises(RemoteProductUnavailable, match="resolution mismatch"):
+        RemoteProductClient(
+            base_url=base, session=session, now_fn=lambda: now
+        ).fetch_point(
+            date(2026, 7, 10),
+            "sunrise",
+            tmp_path,
+            31.23,
+            121.47,
+            radius_km=150.0,
+            resolution_deg=0.05,
+        )
+    assert not (tmp_path / "point-31.23_121.47-sunrise.png").exists()

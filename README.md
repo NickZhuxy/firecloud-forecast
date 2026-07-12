@@ -37,27 +37,30 @@ firecloud --date 2026-06-29
 firecloud --event sunrise              # 只出朝霞
 firecloud --source remote              # 只取远端成品，失败时绝不启动大下载
 firecloud --source local               # 明确在本机下载 GFS 并完整计算
-firecloud --lat 31.2 --lon 121.5       # + 局部精细产品（坐标周边跑完整单点物理）
-firecloud --lat 31.2 --lon 121.5 --radius 120 --resolution 0.2
+firecloud --lat 31.23 --lon 121.47     # + 上海局部精细产品（远端优先）
+firecloud --lat 31.23 --lon 121.47 --source remote  # 只取已发布的全国+局部图
+firecloud --lat 31.2 --lon 121.5 --radius 120 --resolution 0.2  # 未发布网格会本地计算
 ```
 
-全国图默认使用 `--source auto`：先获取远端预计算的 PNG/JSON，远端尚未发布、已过期或
-校验失败时才回退到本地完整计算。已经下载且仍在有效期内的远端成品可在短暂断网时复用。
-局部精细产品没有远端版本，给出 `--lat/--lon` 后仍会在本机计算；因此
-`--source remote` 目前只支持全国图。
+全国图和已发布点位默认使用 `--source auto`：先获取远端预计算的 PNG/JSON，远端尚未发布、
+已过期、坐标/半径/分辨率不匹配或校验失败时才回退到本地完整计算。已经下载且仍在有效期内
+的远端成品可在短暂断网时复用。定时 Pages 任务默认发布上海 `31.23,121.47`、150 km、0.1°；
+Actions 的 `locations` 输入可用逗号分隔的 `NAME:LAT:LON` 扩展地点。`--source remote` 不做
+本地回退，因此只有请求与已发布点位及网格参数完全一致时才成功。
 
 输出按日期建文件夹，文件名带事件（朝霞/晚霞同日不再互相覆盖）；给坐标再加局部图：
 
 ```text
 output/2026-06-29/national-sunrise.png
 output/2026-06-29/national-sunset.png
-output/2026-06-29/point-31.2_121.5-sunrise.png    # 给 --lat/--lon 时
-output/2026-06-29/point-31.2_121.5-sunset.png
+output/2026-06-29/point-31.23_121.47-sunrise.png  # 给 --lat/--lon 时
+output/2026-06-29/point-31.23_121.47-sunset.png
 ```
 
 局部图在坐标周边小网格上逐格跑**完整单点物理**（FA-G5 截面光追 + 云诊断），共享一次 GFS cube、
 快照按 Open-Meteo 批量取——国家级省掉的真保真，而非密插值。`--radius`（km）/`--resolution`（度）
-控制范围与精度（默认 150km / 0.1°，全国域内自动控量）。
+控制范围与评估网格（默认 150km / 0.1°，全国域内自动控量）。远端和本地局部图使用同一套
+全域条件指数、0.3/0.5/0.7/0.9 等值线、STIX 科研字体和非校准指标声明。
 
 PNG 是唯一标准版式，包含模型初始化时间、逐格事件有效时段、行政边界、经纬度与
 “暖色更优”色标；JSON 保存相同的数据来源、时间、算法和性能元数据（含 `solar_event`、
