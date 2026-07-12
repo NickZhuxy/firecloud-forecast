@@ -1,6 +1,12 @@
 name: Precompute Firecloud products
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "predictor/**"
+      - "uv.lock"
+      - ".github/workflows/precompute-pages.yml"
   workflow_dispatch:
     inputs:
       start_date:
