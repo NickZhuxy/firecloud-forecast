@@ -19,7 +19,7 @@ import matplotlib
 matplotlib.use("Agg")
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.figure import Figure
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path as MplPath
@@ -32,16 +32,19 @@ from predictor.nowcast import apply_nowcast, stage_block
 from predictor.solar_event import SolarEvent, spec_for
 from predictor.sunset_grid import sunset_utc_grid
 
-PRODUCT_SCHEMA_VERSION = "v3"
+PRODUCT_SCHEMA_VERSION = "v4"
 CN_BBOX = (17.0, 73.0, 54.0, 136.0)  # south, west, north, east
 DISPLAY_PROBABILITY_THRESHOLD = 0.50
 DISPLAY_EDGE_FADE_WIDTH = 0.06
 DISPLAY_UPSAMPLE_FACTOR = 8
-_QUALITY_CMAP = LinearSegmentedColormap.from_list(
-    "firecloud_orange_red",
-    ["#f97316", "#fb6a13", "#ef4444", "#dc2626", "#991b1b", "#7f1d1d"],
+DISPLAY_INDEX_BOUNDS = (0.0, 0.2, 0.4, 0.5, 0.7, 0.85, 1.0)
+DISPLAY_CONTOUR_LEVELS = (0.3, 0.5, 0.7, 0.9)
+_QUALITY_CMAP = ListedColormap(
+    ["#f1f3f5", "#c7dce5", "#7fb6c5", "#f2ce62", "#e8783e", "#8f2145"],
+    name="firecloud_scientific_classes",
 )
 _QUALITY_CMAP.set_bad(alpha=0.0)
+_QUALITY_NORM = BoundaryNorm(DISPLAY_INDEX_BOUNDS, _QUALITY_CMAP.N, clip=True)
 # Rendering-only smoothing: the scored 0.25° grid can be speckled because many
 # gates are intentionally local. The product should read as a coherent weather
 # field, so the figure uses a tiny nan-aware binomial blur while metadata and
@@ -62,6 +65,28 @@ class MapContext:
 class ProductArtifacts:
     image_path: Path
     metadata_path: Path
+
+
+@dataclass(frozen=True)
+class ReferenceLocation:
+    code: str
+    name: str
+    lat: float
+    lon: float
+
+
+REFERENCE_LOCATIONS = (
+    ReferenceLocation("UR", "Urumqi", 43.82, 87.62),
+    ReferenceLocation("LS", "Lhasa", 29.65, 91.12),
+    ReferenceLocation("CD", "Chengdu", 30.67, 104.07),
+    ReferenceLocation("XA", "Xi'an", 34.34, 108.94),
+    ReferenceLocation("KM", "Kunming", 25.04, 102.71),
+    ReferenceLocation("WH", "Wuhan", 30.59, 114.30),
+    ReferenceLocation("BJ", "Beijing", 39.90, 116.40),
+    ReferenceLocation("SH", "Shanghai", 31.23, 121.47),
+    ReferenceLocation("GZ", "Guangzhou", 23.13, 113.26),
+    ReferenceLocation("HE", "Harbin", 45.80, 126.53),
+)
 
 
 def _geom_to_path(geom) -> MplPath:
@@ -239,6 +264,20 @@ def upsample_display_quality(
     return np.clip(upsampled, 0.0, 1.0)
 
 
+def display_index_field(
+    probability,
+    *,
+    passes: int = DISPLAY_SMOOTH_PASSES,
+    upscale: int = DISPLAY_UPSAMPLE_FACTOR,
+) -> np.ma.MaskedArray:
+    """Full diagnostic index field used by the scientific national product."""
+    quality = upsample_display_quality(
+        display_quality(probability, passes=passes),
+        factor=upscale,
+    )
+    return np.ma.masked_invalid(quality)
+
+
 def display_candidates(
     probability,
     *,
@@ -277,6 +316,30 @@ def display_candidate_alpha(
     return alpha
 
 
+def reference_location_values(field: NationalField) -> list[dict]:
+    """Sample representative cities from the nearest scored model grid cell."""
+    lats = np.asarray(field.lats, dtype=float)
+    lons = np.asarray(field.lons, dtype=float)
+    values = np.asarray(field.probability, dtype=float)
+    rows: list[dict] = []
+    for location in REFERENCE_LOCATIONS:
+        j = int(np.argmin(np.abs(lats - location.lat)))
+        i = int(np.argmin(np.abs(lons - location.lon)))
+        value = float(values[j, i]) if np.isfinite(values[j, i]) else None
+        rows.append(
+            {
+                "code": location.code,
+                "name": location.name,
+                "lat": location.lat,
+                "lon": location.lon,
+                "grid_lat": float(lats[j]),
+                "grid_lon": float(lons[i]),
+                "condition_index": value,
+            }
+        )
+    return rows
+
+
 def plot_sunsetwx_product(
     field: NationalField,
     target_date: date,
@@ -286,13 +349,13 @@ def plot_sunsetwx_product(
     figure: Figure | None = None,
     solar_event: SolarEvent | str = SolarEvent.SUNSET,
 ) -> Figure:
-    """Build one complete, opaque SunsetWx-style scientific forecast figure."""
+    """Build one complete, opaque scientific forecast figure."""
     generated = _utc(generated_at or datetime.now(timezone.utc))
-    fig = figure or Figure(figsize=(14, 10.8), facecolor="white")
+    fig = figure or Figure(figsize=(14, 9.6), facecolor="white")
     FigureCanvasAgg(fig)
     fig.patch.set_alpha(1.0)
 
-    ax = fig.add_axes([0.045, 0.14, 0.875, 0.66])
+    ax = fig.add_axes([0.045, 0.14, 0.75, 0.68])
     ax.set_facecolor("white")
     ax.set_xlim(float(field.lons[0]), float(field.lons[-1]))
     ax.set_ylim(float(field.lats[0]), float(field.lats[-1]))
@@ -307,10 +370,17 @@ def plot_sunsetwx_product(
     for geometry in context.surrounding:
         _draw_polygon_boundary(ax, geometry, color="#777777", linewidth=0.45)
 
-    probability = display_candidates(field.probability)
-    probability_alpha = display_candidate_alpha(probability)
+    country_path = PathPatch(
+        _geom_to_path(context.country),
+        transform=ax.transData,
+        facecolor="none",
+        edgecolor="none",
+    )
+    ax.add_patch(country_path)
+
+    index_field = display_index_field(field.probability)
     image = ax.imshow(
-        probability,
+        index_field,
         extent=(
             float(field.lons[0]),
             float(field.lons[-1]),
@@ -319,46 +389,82 @@ def plot_sunsetwx_product(
         ),
         origin="lower",
         cmap=_QUALITY_CMAP,
-        vmin=DISPLAY_PROBABILITY_THRESHOLD,
-        vmax=1.0,
-        interpolation="bicubic",
-        alpha=probability_alpha,
+        norm=_QUALITY_NORM,
+        interpolation="nearest",
         zorder=2,
     )
-    country_path = PathPatch(
-        _geom_to_path(context.country),
-        transform=ax.transData,
-        facecolor="none",
-        edgecolor="none",
-    )
-    ax.add_patch(country_path)
     image.set_clip_path(country_path)
-    if field.refined_mask is not None and field.refined_mask.any():
-        jj, ii = np.nonzero(field.refined_mask)
-        refined_dots = ax.scatter(
-            np.asarray(field.lons)[ii],
-            np.asarray(field.lats)[jj],
-            s=2.5,
-            marker=".",
-            color="#1a1a1a",
-            alpha=0.55,
-            linewidths=0,
+
+    display_lats = np.linspace(field.lats[0], field.lats[-1], index_field.shape[0])
+    display_lons = np.linspace(field.lons[0], field.lons[-1], index_field.shape[1])
+    finite = index_field.compressed()
+    contour_levels = [
+        level
+        for level in DISPLAY_CONTOUR_LEVELS
+        if finite.size and float(finite.min()) < level < float(finite.max())
+    ]
+    if contour_levels:
+        contours = ax.contour(
+            display_lons,
+            display_lats,
+            index_field,
+            levels=contour_levels,
+            colors="#343a40",
+            linewidths=[
+                1.6 if level == DISPLAY_PROBABILITY_THRESHOLD else 0.75
+                for level in contour_levels
+            ],
+            linestyles=[
+                "solid" if level >= DISPLAY_PROBABILITY_THRESHOLD else "dashed"
+                for level in contour_levels
+            ],
             zorder=3,
         )
-        refined_dots.set_clip_path(country_path)
+        if hasattr(contours, "set_clip_path"):
+            contours.set_clip_path(country_path)
+        else:  # pragma: no cover - matplotlib < 3.8 compatibility
+            for collection in contours.collections:
+                collection.set_clip_path(country_path)
+        ax.clabel(contours, fmt="%.1f", fontsize=6.5, inline=True, inline_spacing=2)
+
     _draw_admin_lines(ax, context.admin1)
     _draw_polygon_boundary(ax, context.country, color="#151515", linewidth=1.0)
 
+    location_rows = reference_location_values(field)
+    for row in location_rows:
+        ax.scatter(
+            row["lon"],
+            row["lat"],
+            s=12,
+            marker="o",
+            facecolor="#111111",
+            edgecolor="white",
+            linewidth=0.45,
+            zorder=6,
+        )
+        ax.annotate(
+            row["code"],
+            (row["lon"], row["lat"]),
+            xytext=(3, 3),
+            textcoords="offset points",
+            fontsize=6.5,
+            fontweight="bold",
+            color="#111111",
+            zorder=6,
+        )
+
+    colorbar_ax = fig.add_axes([0.82, 0.54, 0.024, 0.25])
     colorbar = fig.colorbar(
         image,
-        ax=ax,
+        cax=colorbar_ax,
         orientation="vertical",
-        fraction=0.026,
-        pad=0.012,
-        ticks=[DISPLAY_PROBABILITY_THRESHOLD, 0.6, 0.8, 1.0],
+        boundaries=DISPLAY_INDEX_BOUNDS,
+        ticks=DISPLAY_INDEX_BOUNDS,
+        spacing="proportional",
     )
-    colorbar.ax.tick_params(labelsize=8)
-    colorbar.set_label("Firecloud probability", fontsize=9)
+    colorbar.ax.tick_params(labelsize=7.5, length=3)
+    colorbar.ax.set_yticklabels(["0", "0.2", "0.4", "0.5", "0.7", "0.85", "1.0"])
+    colorbar.set_label("Condition index", fontsize=9)
 
     # The caption reflects the true per-cell event window, not the (wider)
     # snapped GFS hourly bracket in field.valid_times.
@@ -367,31 +473,97 @@ def plot_sunsetwx_product(
     valid_label = f"{event_start:%H:%M}–{event_end:%H:%M} UTC"
     fig.text(
         0.045,
-        0.91,
-        "Firecloud Potential — China GFS 0.25°",
+        0.925,
+        "Firecloud Condition Index — China",
         ha="left",
         va="center",
-        fontsize=19,
+        fontsize=18,
         color="#101010",
     )
     fig.text(
         0.955,
-        0.91,
-        "Orange/Red = Firecloud Potential | firecloud-forecast",
+        0.925,
+        "UNCALIBRATED DIAGNOSTIC  |  FAVORABLE ≥ 0.50",
         ha="right",
         va="center",
-        fontsize=10,
-        color="#202020",
+        fontsize=9,
+        color="#444444",
     )
     fig.text(
         0.045,
-        0.865,
-        f"Initialized: {_initialized_label(field.source_label)}  →  "
-        f"Per-cell {event_label} Valid: {target_date:%d %b %Y} | {valid_label}",
+        0.875,
+        f"GFS 0.25° initialized {_initialized_label(field.source_label)}  →  "
+        f"per-cell {event_label.lower()} {target_date:%d %b %Y} | {valid_label}",
         ha="left",
         va="center",
         fontsize=10,
         color="#202020",
+    )
+
+    fig.text(
+        0.82,
+        0.815,
+        "CLASSIFIED SCALE",
+        ha="left",
+        va="bottom",
+        fontsize=8,
+        fontweight="bold",
+        color="#303030",
+    )
+    fig.text(
+        0.82,
+        0.49,
+        "REFERENCE LOCATIONS",
+        ha="left",
+        va="bottom",
+        fontsize=8,
+        fontweight="bold",
+        color="#303030",
+    )
+    fig.text(
+        0.82,
+        0.47,
+        "nearest 0.25° grid cell",
+        ha="left",
+        va="bottom",
+        fontsize=7,
+        color="#666666",
+    )
+    for row_index, row in enumerate(location_rows):
+        y = 0.445 - row_index * 0.027
+        value = (
+            "—"
+            if row["condition_index"] is None
+            else f"{row['condition_index']:.2f}"
+        )
+        fig.text(
+            0.82,
+            y,
+            f"{row['code']}  {row['name']}",
+            ha="left",
+            va="center",
+            fontsize=7.4,
+            color="#303030",
+        )
+        fig.text(
+            0.955,
+            y,
+            value,
+            ha="right",
+            va="center",
+            fontsize=7.4,
+            family="monospace",
+            color="#111111",
+        )
+    fig.text(
+        0.82,
+        0.145,
+        "Isolines  0.3 · 0.5 · 0.7 · 0.9\nBold 0.5 = favorable threshold",
+        ha="left",
+        va="top",
+        fontsize=7,
+        color="#555555",
+        linespacing=1.35,
     )
     refined_note = (
         f" · {int(field.refined_mask.sum()):,} cells ray-trace refined"
@@ -406,13 +578,23 @@ def plot_sunsetwx_product(
         )
     fig.text(
         0.045,
-        0.07,
+        0.068,
         f"{field.n_points:,} grid cells · gate × modifier algorithm{refined_note}{nowcast_note} · "
-        f"generated {generated.isoformat()}",
+        "display-only smoothing/interpolation; scored grid remains 0.25°",
         ha="left",
         va="center",
         fontsize=8,
         color="#555555",
+    )
+    fig.text(
+        0.045,
+        0.038,
+        "Relative diagnostic index, not a calibrated occurrence probability · "
+        f"generated {generated.isoformat()}",
+        ha="left",
+        va="center",
+        fontsize=7.5,
+        color="#666666",
     )
     return fig
 
@@ -455,7 +637,15 @@ def _metadata(
         # Event-generic key (#60): holds the sunrise OR sunset window per solar_event.
         "event_range_utc": [value.isoformat() for value in field.sunset_range_utc],
         "n_points": field.n_points,
+        # Kept for backward compatibility; the public figure labels this score
+        # honestly as an uncalibrated diagnostic condition index.
         "probability_range": {"min": prob_min, "max": prob_max},
+        "condition_index": {
+            "calibrated_probability": False,
+            "range": {"min": prob_min, "max": prob_max},
+            "favorable_threshold": DISPLAY_PROBABILITY_THRESHOLD,
+            "reference_locations": reference_location_values(field),
+        },
         # Which pipeline produced each finite cell's probability: raw overview
         # rules ("model"), the Stage A sunward screen ("screen"), or the Stage B
         # shared-cube ray trace ("refined"). Physics on → every cell is at
@@ -472,12 +662,15 @@ def _metadata(
             "peak_mem_mb": field.peak_mem_mb,
         },
         "display": {
-            "probability_threshold": DISPLAY_PROBABILITY_THRESHOLD,
-            "edge_fade_width": DISPLAY_EDGE_FADE_WIDTH,
-            "colormap": "firecloud_orange_red",
+            "metric": "uncalibrated_condition_index",
+            "favorable_threshold": DISPLAY_PROBABILITY_THRESHOLD,
+            "class_bounds": list(DISPLAY_INDEX_BOUNDS),
+            "contour_levels": list(DISPLAY_CONTOUR_LEVELS),
+            "colormap": "firecloud_scientific_classes",
             "basemap": "white",
             "boundary_resolution": "Natural Earth 10m",
             "upsample_factor": DISPLAY_UPSAMPLE_FACTOR,
+            "smoothing_passes": DISPLAY_SMOOTH_PASSES,
         },
     }
     if field.physics is not None:

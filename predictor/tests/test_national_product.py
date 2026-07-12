@@ -13,14 +13,19 @@ from shapely.geometry import box, LineString, MultiLineString, Point
 import predictor.national_product as product_mod
 from predictor.national_field import NationalField
 from predictor.national_product import (
+    DISPLAY_CONTOUR_LEVELS,
     DISPLAY_EDGE_FADE_WIDTH,
+    DISPLAY_INDEX_BOUNDS,
     DISPLAY_PROBABILITY_THRESHOLD,
+    DISPLAY_SMOOTH_PASSES,
     DISPLAY_UPSAMPLE_FACTOR,
     MapContext,
     display_candidate_alpha,
     display_candidates,
+    display_index_field,
     display_quality,
     plot_sunsetwx_product,
+    reference_location_values,
     save_product,
     upsample_display_quality,
 )
@@ -94,13 +99,14 @@ def test_plot_is_complete_sunsetwx_scientific_product():
     )
 
     text = " ".join(item.get_text() for item in fig.texts)
-    assert "Firecloud Potential" in text
+    assert "Firecloud Condition Index" in text
     assert "GFS 0.25" in text
-    assert "Initialized" in text
+    assert "initialized" in text
     # Caption shows the true per-cell sunset range (sunset_range_utc), not the
     # wider snapped GFS hourly bracket (valid_times 10:00–15:00).
     assert "10:53–14:36 UTC" in text
-    assert "Orange/Red" in text
+    assert "UNCALIBRATED DIAGNOSTIC" in text
+    assert "not a calibrated occurrence probability" in text
     assert len(fig.axes) == 2  # map + vertical colorbar
     assert fig.get_facecolor()[-1] == 1.0
 
@@ -126,7 +132,7 @@ def test_save_product_writes_png_and_metadata(tmp_path):
     assert np.allclose(image[..., 3], 1.0)  # complete opaque product, not overlay
 
     metadata = json.loads(artifacts.metadata_path.read_text())
-    assert metadata["schema_version"] == "v3"
+    assert metadata["schema_version"] == "v4"
     assert metadata["product"] == "china_firecloud_potential"
     assert metadata["solar_event"] == "sunset"
     assert "event_range_utc" in metadata and "sunset_range_utc" not in metadata
@@ -138,14 +144,21 @@ def test_save_product_writes_png_and_metadata(tmp_path):
     assert metadata["source_label"].startswith("gfs@2026-06-24T00Z")
     assert metadata["n_points"] == 12
     assert metadata["probability_range"] == {"min": 0.0, "max": 1.0}
+    assert metadata["condition_index"]["calibrated_probability"] is False
+    assert metadata["condition_index"]["range"] == {"min": 0.0, "max": 1.0}
+    assert metadata["condition_index"]["favorable_threshold"] == 0.5
+    assert len(metadata["condition_index"]["reference_locations"]) == 10
     assert metadata["performance"]["download_bytes"] == 35_191_577
     assert metadata["display"] == {
-        "probability_threshold": DISPLAY_PROBABILITY_THRESHOLD,
-        "edge_fade_width": DISPLAY_EDGE_FADE_WIDTH,
-        "colormap": "firecloud_orange_red",
+        "metric": "uncalibrated_condition_index",
+        "favorable_threshold": DISPLAY_PROBABILITY_THRESHOLD,
+        "class_bounds": list(DISPLAY_INDEX_BOUNDS),
+        "contour_levels": list(DISPLAY_CONTOUR_LEVELS),
+        "colormap": "firecloud_scientific_classes",
         "basemap": "white",
         "boundary_resolution": "Natural Earth 10m",
         "upsample_factor": DISPLAY_UPSAMPLE_FACTOR,
+        "smoothing_passes": DISPLAY_SMOOTH_PASSES,
     }
 
 
@@ -192,7 +205,7 @@ def test_plot_caption_reflects_event():
     fig = plot_sunsetwx_product(
         _field(), _DATE, _context(), generated_at=_GENERATED, solar_event=SolarEvent.SUNRISE
     )
-    assert any("Sunrise" in t.get_text() for t in fig.texts)
+    assert any("sunrise" in t.get_text().lower() for t in fig.texts)
     assert not any("Sunset Valid" in t.get_text() for t in fig.texts)
 
 
@@ -523,16 +536,26 @@ def test_positive_int_rejects_non_positive():
 # Smooth SunsetWx-style colour field
 # ---------------------------------------------------------------------------
 
-def test_quality_colormap_uses_firecloud_orange_red_ramp():
+def test_quality_colormap_uses_scientific_classified_scale():
     cmap = product_mod._QUALITY_CMAP
-    assert cmap.name == "firecloud_orange_red"
-    assert cmap.N >= 256
+    assert cmap.name == "firecloud_scientific_classes"
+    assert cmap.N == len(DISPLAY_INDEX_BOUNDS) - 1
+    assert np.asarray(cmap(0))[3] == 1.0
+    assert np.asarray(cmap(cmap.N - 1))[3] == 1.0
+    assert not np.allclose(cmap(0), cmap(cmap.N - 1))
 
-    for value in np.linspace(0.0, 1.0, 5):
-        red, green, blue, alpha = np.asarray(cmap(value))
-        assert alpha == 1.0
-        assert red >= green >= blue
-        assert red > blue
+
+def test_display_index_field_keeps_full_finite_domain_visible():
+    raw = np.array([
+        [0.05, DISPLAY_PROBABILITY_THRESHOLD - 0.01, np.nan],
+        [DISPLAY_PROBABILITY_THRESHOLD, 0.90, 1.00],
+    ])
+
+    index_field = display_index_field(raw, passes=0, upscale=1)
+
+    assert index_field.mask.tolist() == [[False, False, True], [False, False, False]]
+    assert index_field[0, 0] == pytest.approx(0.05)
+    assert index_field[0, 1] == pytest.approx(0.49)
 
 
 def test_display_candidates_hides_non_firecloud_probability():
@@ -601,7 +624,7 @@ def test_display_quality_ignores_nan_without_filling_all_nan_cells():
     assert np.isnan(all_nan).all()
 
 
-def test_plot_uses_one_continuous_raster_not_discrete_contour_bands():
+def test_plot_uses_classified_full_domain_raster_and_isolines():
     fig = plot_sunsetwx_product(
         _field(), _DATE, _context(), generated_at=_GENERATED
     )
@@ -610,12 +633,11 @@ def test_plot_uses_one_continuous_raster_not_discrete_contour_bands():
     image = ax.images[0]
     assert image.get_array().shape[0] > _field().probability.shape[0]
     assert image.get_array().shape[1] > _field().probability.shape[1]
-    assert image.get_interpolation() == "bicubic"
-    assert image.get_clim() == (DISPLAY_PROBABILITY_THRESHOLD, 1.0)
-    assert image.cmap.name == "firecloud_orange_red"
-    alpha = np.asarray(image.get_alpha())
-    assert alpha.shape == image.get_array().shape
-    assert float(np.nanmax(alpha)) <= 0.96
+    assert image.get_interpolation() == "nearest"
+    assert image.cmap.name == "firecloud_scientific_classes"
+    assert tuple(image.norm.boundaries) == DISPLAY_INDEX_BOUNDS
+    assert image.get_alpha() is None
+    assert any("Isolines" in text.get_text() for text in fig.texts)
 
 
 def test_metadata_probability_levels_three_cases():
@@ -637,7 +659,7 @@ def test_metadata_probability_levels_three_cases():
     assert meta["probability_levels"] == {"model": 0, "screen": finite - 1, "refined": 1}
 
 
-def test_plot_marks_refined_cells_and_caption():
+def test_plot_reports_refined_cells_without_speckle_markers():
     from dataclasses import replace
 
     field = _field()
@@ -651,8 +673,8 @@ def test_plot_marks_refined_cells_and_caption():
     sizes = [
         len(c.get_offsets()) for c in ax.collections if hasattr(c, "get_offsets")
     ]
-    assert 2 in sizes                                   # one dot per refined cell
-    assert any("ray-trace refined" in t.get_text() for t in fig.texts)
+    assert 2 not in sizes
+    assert any("2 cells ray-trace refined" in t.get_text() for t in fig.texts)
 
 
 def test_plot_without_mask_adds_no_refined_markers():
@@ -664,6 +686,18 @@ def test_plot_without_mask_adds_no_refined_markers():
     ]
     assert 2 not in sizes
     assert not any("ray-trace refined" in t.get_text() for t in fig.texts)
+
+
+def test_reference_location_values_use_nearest_grid_cell():
+    rows = reference_location_values(_field())
+
+    assert [row["code"] for row in rows] == [
+        "UR", "LS", "CD", "XA", "KM", "WH", "BJ", "SH", "GZ", "HE"
+    ]
+    urumqi = rows[0]
+    assert urumqi["grid_lat"] == pytest.approx(35.5)
+    assert urumqi["grid_lon"] == pytest.approx(94.0)
+    assert urumqi["condition_index"] == pytest.approx(0.35)
 
 
 def _capture_build(monkeypatch, calls):
