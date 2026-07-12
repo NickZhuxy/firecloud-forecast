@@ -39,6 +39,9 @@ DISPLAY_EDGE_FADE_WIDTH = 0.06
 DISPLAY_UPSAMPLE_FACTOR = 8
 DISPLAY_INDEX_BOUNDS = (0.0, 0.2, 0.4, 0.5, 0.7, 0.85, 1.0)
 DISPLAY_CONTOUR_LEVELS = (0.3, 0.5, 0.7, 0.9)
+DISPLAY_FIELD_ALPHA = 0.88
+SCIENTIFIC_FONT_FAMILY = "STIXGeneral"
+SCIENTIFIC_MONO_FONT_FAMILY = "DejaVu Sans Mono"
 _QUALITY_CMAP = ListedColormap(
     ["#f1f3f5", "#c7dce5", "#7fb6c5", "#f2ce62", "#e8783e", "#8f2145"],
     name="firecloud_scientific_classes",
@@ -142,10 +145,10 @@ def _draw_admin_lines(ax, geometries: tuple[object, ...]) -> None:
                 ax.plot(
                     xy[:, 0],
                     xy[:, 1],
-                    color="#5a5a5a",
-                    linewidth=0.35,
-                    alpha=0.75,
-                    zorder=4,
+                    color="#30383f",
+                    linewidth=0.5,
+                    alpha=0.9,
+                    zorder=5,
                 )
 
 
@@ -365,6 +368,8 @@ def plot_sunsetwx_product(
     ax.set_xticks(np.arange(np.ceil(field.lons[0] / 10) * 10, field.lons[-1] + 1, 10))
     ax.set_yticks(np.arange(np.ceil(field.lats[0] / 5) * 5, field.lats[-1] + 1, 5))
     ax.tick_params(labelsize=9)
+    for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
+        label.set_fontfamily(SCIENTIFIC_FONT_FAMILY)
     ax.grid(color="#8d8d8d", linewidth=0.35, alpha=0.35, zorder=1)
 
     for geometry in context.surrounding:
@@ -390,6 +395,7 @@ def plot_sunsetwx_product(
         origin="lower",
         cmap=_QUALITY_CMAP,
         norm=_QUALITY_NORM,
+        alpha=DISPLAY_FIELD_ALPHA,
         interpolation="nearest",
         zorder=2,
     )
@@ -425,7 +431,15 @@ def plot_sunsetwx_product(
         else:  # pragma: no cover - matplotlib < 3.8 compatibility
             for collection in contours.collections:
                 collection.set_clip_path(country_path)
-        ax.clabel(contours, fmt="%.1f", fontsize=6.5, inline=True, inline_spacing=2)
+        contour_labels = ax.clabel(
+            contours,
+            fmt="%.1f",
+            fontsize=6.5,
+            inline=True,
+            inline_spacing=2,
+        )
+        for label in contour_labels:
+            label.set_fontfamily(SCIENTIFIC_FONT_FAMILY)
 
     _draw_admin_lines(ax, context.admin1)
     _draw_polygon_boundary(ax, context.country, color="#151515", linewidth=1.0)
@@ -449,6 +463,7 @@ def plot_sunsetwx_product(
             textcoords="offset points",
             fontsize=6.5,
             fontweight="bold",
+            fontfamily=SCIENTIFIC_FONT_FAMILY,
             color="#111111",
             zorder=6,
         )
@@ -464,7 +479,13 @@ def plot_sunsetwx_product(
     )
     colorbar.ax.tick_params(labelsize=7.5, length=3)
     colorbar.ax.set_yticklabels(["0", "0.2", "0.4", "0.5", "0.7", "0.85", "1.0"])
-    colorbar.set_label("Condition index", fontsize=9)
+    for label in colorbar.ax.get_yticklabels():
+        label.set_fontfamily(SCIENTIFIC_FONT_FAMILY)
+    colorbar.set_label(
+        "Condition index",
+        fontsize=9,
+        fontfamily=SCIENTIFIC_FONT_FAMILY,
+    )
 
     # The caption reflects the true per-cell event window, not the (wider)
     # snapped GFS hourly bracket in field.valid_times.
@@ -477,7 +498,9 @@ def plot_sunsetwx_product(
         "Firecloud Condition Index — China",
         ha="left",
         va="center",
-        fontsize=18,
+        fontsize=20,
+        fontfamily=SCIENTIFIC_FONT_FAMILY,
+        fontweight="semibold",
         color="#101010",
     )
     fig.text(
@@ -487,6 +510,7 @@ def plot_sunsetwx_product(
         ha="right",
         va="center",
         fontsize=9,
+        fontfamily=SCIENTIFIC_FONT_FAMILY,
         color="#444444",
     )
     fig.text(
@@ -497,6 +521,7 @@ def plot_sunsetwx_product(
         ha="left",
         va="center",
         fontsize=10,
+        fontfamily=SCIENTIFIC_FONT_FAMILY,
         color="#202020",
     )
 
@@ -508,6 +533,7 @@ def plot_sunsetwx_product(
         va="bottom",
         fontsize=8,
         fontweight="bold",
+        fontfamily=SCIENTIFIC_FONT_FAMILY,
         color="#303030",
     )
     fig.text(
@@ -518,6 +544,7 @@ def plot_sunsetwx_product(
         va="bottom",
         fontsize=8,
         fontweight="bold",
+        fontfamily=SCIENTIFIC_FONT_FAMILY,
         color="#303030",
     )
     fig.text(
@@ -527,6 +554,7 @@ def plot_sunsetwx_product(
         ha="left",
         va="bottom",
         fontsize=7,
+        fontfamily=SCIENTIFIC_FONT_FAMILY,
         color="#666666",
     )
     for row_index, row in enumerate(location_rows):
@@ -543,6 +571,7 @@ def plot_sunsetwx_product(
             ha="left",
             va="center",
             fontsize=7.4,
+            fontfamily=SCIENTIFIC_FONT_FAMILY,
             color="#303030",
         )
         fig.text(
@@ -552,7 +581,7 @@ def plot_sunsetwx_product(
             ha="right",
             va="center",
             fontsize=7.4,
-            family="monospace",
+            fontfamily=SCIENTIFIC_MONO_FONT_FAMILY,
             color="#111111",
         )
     fig.text(
@@ -562,6 +591,7 @@ def plot_sunsetwx_product(
         ha="left",
         va="top",
         fontsize=7,
+        fontfamily=SCIENTIFIC_FONT_FAMILY,
         color="#555555",
         linespacing=1.35,
     )
@@ -584,6 +614,7 @@ def plot_sunsetwx_product(
         ha="left",
         va="center",
         fontsize=8,
+        fontfamily=SCIENTIFIC_FONT_FAMILY,
         color="#555555",
     )
     fig.text(
@@ -594,6 +625,7 @@ def plot_sunsetwx_product(
         ha="left",
         va="center",
         fontsize=7.5,
+        fontfamily=SCIENTIFIC_FONT_FAMILY,
         color="#666666",
     )
     return fig
@@ -666,7 +698,9 @@ def _metadata(
             "favorable_threshold": DISPLAY_PROBABILITY_THRESHOLD,
             "class_bounds": list(DISPLAY_INDEX_BOUNDS),
             "contour_levels": list(DISPLAY_CONTOUR_LEVELS),
+            "field_alpha": DISPLAY_FIELD_ALPHA,
             "colormap": "firecloud_scientific_classes",
+            "font_family": SCIENTIFIC_FONT_FAMILY,
             "basemap": "white",
             "boundary_resolution": "Natural Earth 10m",
             "upsample_factor": DISPLAY_UPSAMPLE_FACTOR,
