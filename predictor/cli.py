@@ -20,8 +20,9 @@ import logging
 import time
 import traceback
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from predictor.gfs import GFSSource, GFSUnavailable
 from predictor.local_product import generate_local_product
@@ -141,6 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 _EVENT_CN = {SolarEvent.SUNRISE: "日出", SolarEvent.SUNSET: "日落"}
 _EVENTS_CN = {"both": "日出+日落", "sunrise": "日出", "sunset": "日落"}
+_BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _product_label(product: PlannedProduct) -> str:
@@ -156,6 +158,35 @@ def _format_elapsed(seconds: float) -> str:
         return f"{whole}s"
     minutes, secs = divmod(whole, 60)
     return f"{minutes}分{secs}s"
+
+
+def _format_beijing_time(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(_BEIJING_TZ).strftime("%Y-%m-%d %H:%M 北京时间")
+
+
+def _format_model_run(value: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    utc = parsed.astimezone(timezone.utc)
+    return f"{_format_beijing_time(utc)} ({utc:%m-%d %HZ})"
+
+
+def _remote_hit_message(result) -> str:
+    origin = "本地缓存的远端产品" if result.cached else "远端预计算产品"
+    runs = "、".join(_format_model_run(run) for run in result.model_runs)
+    if not runs:
+        runs = "未提供"
+    return (
+        f"{origin}已命中\n"
+        f"  模型起报: {runs}\n"
+        f"  产品生成: {_format_beijing_time(result.generated_at)}"
+    )
 
 
 def _cache_is_cold(target_date: date, cache_root: Path | str | None = None) -> bool:
@@ -212,9 +243,7 @@ def _fetch_remote_product(product: PlannedProduct, target_date: date, args):
             product.solar_event,
             product.output_dir,
         )
-    origin = "本地远端缓存" if result.cached else "远端预计算"
-    model = ", ".join(result.model_runs) or "unknown model run"
-    logger.info("%s命中: %s · 生成于 %s", origin, model, result.generated_at.isoformat())
+    logger.info(_remote_hit_message(result))
     return result.artifacts
 
 

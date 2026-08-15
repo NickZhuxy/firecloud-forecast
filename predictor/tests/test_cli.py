@@ -1,13 +1,13 @@
 # predictor/tests/test_cli.py
 """Tests for the unified ``firecloud`` CLI entry (#61), offline."""
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
 
 import predictor.cli as cli_mod
 from predictor.cli import PlannedProduct, build_parser, main, plan_products
-from predictor.remote_product import RemoteProductUnavailable
+from predictor.remote_product import RemoteProductResult, RemoteProductUnavailable
 from predictor.solar_event import SolarEvent
 
 
@@ -330,6 +330,27 @@ def test_remote_only_supports_published_point_product(monkeypatch, tmp_path):
     ])
 
     assert rc == 0
+
+
+@pytest.mark.parametrize(
+    ("cached", "heading"),
+    [(False, "远端预计算产品已命中"), (True, "本地缓存的远端产品已命中")],
+)
+def test_remote_hit_message_labels_times_in_beijing_time(tmp_path, cached, heading):
+    result = RemoteProductResult(
+        artifacts=_fake_artifact(tmp_path, "remote-sunset"),
+        model_runs=("2026-07-12T18:00:00Z",),
+        generated_at=datetime(2026, 7, 12, 23, 32, 28, tzinfo=timezone.utc),
+        cached=cached,
+    )
+
+    message = cli_mod._remote_hit_message(result)
+
+    assert message.splitlines() == [
+        heading,
+        "  模型起报: 2026-07-13 02:00 北京时间 (07-12 18Z)",
+        "  产品生成: 2026-07-13 07:32 北京时间",
+    ]
 
 
 def test_remote_source_failure_never_starts_large_local_download(
