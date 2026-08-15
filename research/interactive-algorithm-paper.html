@@ -1,0 +1,1449 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src 'unsafe-inline' blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Firecloud Algorithm Paper</title>
+<style>:root{color-scheme:light dark;background:light-dark(rgb(255 255 255), rgb(24 24 24))}html,body{margin:0}body{box-sizing:border-box;padding:1rem;background:inherit}iframe{display:block;width:100%;max-width:736px;height:calc(100vh - 2rem);margin:0 auto;border:0}</style>
+</head>
+<body>
+<iframe sandbox="allow-scripts" referrerpolicy="no-referrer" title="Firecloud Algorithm Paper" srcdoc="&lt;!doctype html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+&lt;head&gt;
+&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
+&lt;meta name=&quot;referrer&quot; content=&quot;no-referrer&quot;&gt;
+&lt;meta http-equiv=&quot;Content-Security-Policy&quot; content=&quot;default-src &#x27;none&#x27;; script-src &#x27;unsafe-inline&#x27; &#x27;unsafe-eval&#x27; &#x27;wasm-unsafe-eval&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; style-src &#x27;unsafe-inline&#x27; blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; img-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; font-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; media-src blob: data: https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://esm.sh https://fonts.bunny.net https://fonts.googleapis.com https://fonts.gstatic.com https://unpkg.com; worker-src blob:; connect-src blob: data:; frame-src &#x27;none&#x27;; object-src &#x27;none&#x27;; base-uri &#x27;none&#x27;; form-action &#x27;none&#x27;&quot;&gt;
+&lt;title&gt;Firecloud Algorithm Paper&lt;/title&gt;
+&lt;style&gt;:root {
+  color-scheme: light dark;
+  background-color: var(--background) !important;
+
+  /* Agent-facing contract; keep in sync with SKILL.md. */
+  --background: light-dark(rgb(255 255 255), rgb(24 24 24));
+  --foreground: light-dark(rgb(26 28 31), rgb(255 255 255));
+  --card: color-mix(in oklab, var(--foreground) 5%, transparent);
+  --card-foreground: var(--foreground);
+  --popover: light-dark(rgb(255 255 255), rgb(45 45 45));
+  --popover-foreground: var(--foreground);
+  --primary: light-dark(rgb(51 156 255), rgb(131 195 255));
+  --primary-foreground: light-dark(rgb(255 255 255), rgb(13 13 13));
+  --secondary: light-dark(rgb(255 255 255 / 96%), rgb(54 54 54 / 96%));
+  --secondary-foreground: var(--foreground);
+  --muted: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --muted-foreground: light-dark(
+    rgb(26 28 31 / 49.4%),
+    rgb(255 255 255 / 49.8%)
+  );
+  --accent: light-dark(rgb(229 242 255), rgb(13 39 63));
+  --accent-foreground: var(--primary);
+  --destructive: light-dark(rgb(226 85 7), rgb(255 133 73));
+  --border: light-dark(rgb(26 28 31 / 8%), rgb(255 255 255 / 8.2%));
+  --input: light-dark(
+    rgb(26 28 31 / 11.8%),
+    color-mix(in oklab, rgb(0 0 0) 10%, transparent)
+  );
+  --ring: light-dark(rgb(51 156 255), rgb(131 195 255 / 76%));
+  --font-size-base: 14px;
+  --viz-series-1: var(--primary);
+  --viz-series-2: light-dark(rgb(243 136 59), rgb(245 154 86));
+  --viz-series-3: light-dark(rgb(93 201 119), rgb(116 213 139));
+  --viz-series-4: light-dark(rgb(235 119 177), rgb(240 143 192));
+  --viz-series-5: light-dark(rgb(155 121 236), rgb(170 145 239));
+  --viz-series-6: light-dark(rgb(58 185 177), rgb(90 203 194));
+
+  /* Internal implementation variables; not part of the agent contract. */
+  --font-sans: -apple-system, system-ui, &quot;Segoe UI&quot;, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, &quot;SF Mono&quot;, Menlo, Consolas, &quot;Liberation Mono&quot;,
+    monospace;
+  --font-size-normal: max(11px, var(--font-size-base));
+  --font-size-tooltip: calc(var(--font-size-base) - 1px);
+  --font-size-small: max(11px, calc(var(--font-size-base) - 2px));
+  --font-size-h1: calc(var(--font-size-normal) * 1.7142857143);
+  --font-size-h2: calc(var(--font-size-normal) * 1.4285714286);
+  --font-size-h3: calc(var(--font-size-normal) * 1.2857142857);
+  --font-weight-normal: 430;
+  --font-weight-medium: 500;
+  --line-height-normal: calc(var(--font-size-normal) * 1.5);
+  --line-height-tooltip: calc(var(--font-size-tooltip) * 1.4285714286);
+  --line-height-small: calc(var(--font-size-small) + 4px);
+  --radius: 12.5px;
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-2xl: calc(var(--radius) * 1.6);
+  --radius-full: 9999px;
+  --shadow-sm: 0 1px 2px -1px rgb(0 0 0 / 8%);
+  --checkmark-image: url(&quot;data:image/svg+xml,%3Csvg xmlns=&#x27;http://www.w3.org/2000/svg&#x27; viewBox=&#x27;0 0 17 17&#x27;%3E%3Cpath d=&#x27;M12.8961 3.64101C13.1297 3.41418 13.4984 3.37523 13.7779 3.56581C14.0571 3.75635 14.1554 4.11331 14.0299 4.41347L13.9615 4.53847L7.71151 13.7045C7.59411 13.8767 7.4063 13.9877 7.19881 14.0072C6.99136 14.0267 6.78564 13.9533 6.63826 13.806L2.88826 10.056L2.79842 9.9457C2.6192 9.67407 2.64927 9.30496 2.88826 9.06581C3.12738 8.82669 3.49647 8.79676 3.76815 8.97597L3.8785 9.06581L7.03084 12.2182L12.8053 3.74941L12.8961 3.64101Z&#x27;/%3E%3C/svg%3E&quot;);
+
+  /* Legacy aliases; not part of the current agent contract. */
+  --viz-bg: transparent;
+  --viz-panel: var(--card);
+  --viz-border: var(--border);
+  --viz-text: var(--foreground);
+  --viz-muted: var(--muted-foreground);
+  --viz-accent: var(--primary);
+  --viz-accent-text: var(--primary-foreground);
+  --viz-accent-bg: var(--accent);
+  --viz-font-size: var(--font-size-base);
+  --viz-warning: var(--destructive);
+  --color-background-primary: var(--background);
+  --color-text-primary: var(--foreground);
+  --color-border-secondary: var(--border);
+}
+
+:root[data-theme=&quot;light&quot;] {
+  color-scheme: light;
+}
+
+:root[data-theme=&quot;dark&quot;] {
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html &gt; body {
+  margin: 0;
+  padding: 5px;
+  color: var(--foreground);
+  background: transparent !important;
+  font-family: var(--font-sans);
+  font-size: var(--font-size-normal);
+  font-weight: var(--font-weight-normal);
+  line-height: var(--line-height-normal);
+}
+
+a {
+  color: color-mix(in srgb, var(--viz-accent) 80%, var(--viz-text) 20%);
+  cursor: pointer;
+  font-weight: var(--viz-font-weight-medium);
+  text-decoration: none;
+  text-underline-offset: 2px;
+}
+
+a:is(:hover, :focus-visible) {
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 0.5px;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  margin-block: 0;
+}
+
+h1 {
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+h3,
+h4,
+h5,
+h6 {
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.3;
+}
+
+b,
+strong,
+th {
+  font-weight: var(--font-weight-medium);
+}
+
+code:not(pre code) {
+  display: inline;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  word-break: break-word;
+}
+
+#widget {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+
+.card {
+  min-width: 0;
+  padding: 12px;
+  overflow: hidden;
+  overflow-wrap: break-word;
+  border-radius: var(--radius-2xl);
+  corner-shape: superellipse(1.5);
+  color: var(--card-foreground);
+  background: var(--card);
+}
+
+#widget &gt; :not(.card) {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 50;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: min(
+    20rem,
+    var(--tooltip-available-width, calc(100vw - 10px)),
+    calc(100vw - 10px)
+  );
+  max-height: min(
+    var(--tooltip-available-height, calc(100vh - 10px)),
+    calc(100vh - 10px)
+  );
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--popover-foreground);
+  background: var(--popover);
+  box-shadow: none;
+  font-size: var(--font-size-tooltip);
+  line-height: var(--line-height-tooltip);
+  overflow-wrap: break-word;
+  white-space: normal;
+  pointer-events: none;
+  user-select: none;
+}
+
+.viz-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(max(180px, 24%), 1fr));
+  gap: 10px;
+}
+
+.viz-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viz-stat-value {
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+}
+
+.viz-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.viz-badge {
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  color: var(--accent-foreground);
+  background: var(--accent);
+  font-weight: var(--font-weight-medium);
+}
+
+small,
+.text-small,
+.viz-badge {
+  font-size: var(--font-size-small);
+  line-height: var(--line-height-small);
+}
+
+.text-muted {
+  color: var(--muted-foreground);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.viz-controls &gt; .form-label {
+  display: grid;
+  min-width: min(100%, 260px);
+  flex: 1 1 280px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-bottom: 0;
+}
+
+.viz-controls &gt; .form-label &gt; :is(.form-control, .form-range, .form-select) {
+  grid-column: 1 / -1;
+}
+
+.btn,
+.form-check-input,
+.form-control,
+.form-range,
+.form-select {
+  font: inherit;
+}
+
+.btn {
+  appearance: button;
+  display: inline-flex;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0 8px;
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: var(--cursor-interaction, pointer);
+  text-align: center;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:is(.btn-block, .viz-tile) {
+  inline-size: 100%;
+}
+
+.btn.viz-tile {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+a.btn {
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn-primary {
+  border-color: transparent;
+  color: var(--primary-foreground);
+  background: var(--foreground);
+  background-clip: padding-box;
+}
+
+.btn-primary .text-muted {
+  color: color-mix(in srgb, var(--primary-foreground) 50%, transparent);
+}
+
+.btn-primary:not(:disabled):hover {
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  background-clip: padding-box;
+}
+
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted-foreground);
+  background: transparent;
+}
+
+.btn-ghost:not(:disabled):hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+[data-lucide] {
+  stroke-width: 1.6;
+}
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--foreground);
+}
+
+.form-control {
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  padding: 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.form-control::placeholder {
+  color: var(--muted-foreground);
+}
+
+.form-control[type=&quot;file&quot;] {
+  padding: 0;
+  overflow: hidden;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control[type=&quot;file&quot;]::file-selector-button {
+  min-height: 26px;
+  margin-right: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--input);
+  color: var(--secondary-foreground);
+  background: var(--secondary);
+  cursor: inherit;
+  font: inherit;
+}
+
+.form-control[type=&quot;file&quot;]:not(:disabled):hover::file-selector-button {
+  background: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-control-color[type=&quot;color&quot;] {
+  width: 40px;
+  height: 28px;
+  padding: 3px;
+  cursor: var(--cursor-interaction, pointer);
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.form-control-color[type=&quot;color&quot;]::-webkit-color-swatch {
+  border: 0;
+  border-radius: calc(var(--radius-lg) - 4px);
+  corner-shape: superellipse(1.5);
+}
+
+textarea.form-control {
+  height: auto;
+  min-height: 72px;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.form-control:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-control:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.form-select {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-height: 28px;
+  margin: 0;
+  padding: 0 32px 0 8px;
+  outline: none;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-lg);
+  corner-shape: superellipse(1.5);
+  color: var(--foreground);
+  background-color: var(--secondary);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted-foreground) 50%),
+    linear-gradient(135deg, var(--muted-foreground) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 50%,
+    calc(100% - 10px) 50%;
+  background-repeat: no-repeat;
+  background-size: 4px 4px;
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-select:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--foreground) 6%, var(--secondary));
+}
+
+.form-select:focus-visible {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-check {
+  display: flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 6px;
+}
+
+.form-check-input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 1px solid var(--input);
+  color: var(--primary-foreground);
+  background-color: transparent;
+  cursor: var(--cursor-interaction, default);
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    box-shadow 150ms;
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;] {
+  border-color: var(--input);
+  border-radius: var(--radius-sm);
+  corner-shape: superellipse(1.5);
+  background-color: var(--secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input:not(:disabled):not(:checked):hover {
+  background-color: var(--card);
+}
+
+.form-check:not(.form-switch) .form-check-input[type=&quot;checkbox&quot;]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+
+.form-check:not(.form-switch)
+  .form-check-input[type=&quot;checkbox&quot;]:checked::before {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--primary-foreground);
+  content: &quot;&quot;;
+  mask: var(--checkmark-image) center / 12px 12px no-repeat;
+}
+
+.form-check-input[type=&quot;radio&quot;] {
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-full);
+}
+
+.form-check-input[type=&quot;radio&quot;]:checked {
+  border: 2px solid var(--primary);
+  background:
+    radial-gradient(circle, var(--primary-foreground) 0 2.5px, transparent 3px),
+    var(--primary);
+}
+
+.form-check:not(.form-switch) .form-check-input:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.form-check:not(.form-switch) .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+}
+
+.form-switch .form-check-input:disabled,
+.form-switch .form-check-input:disabled + .form-check-label {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.form-check-label {
+  color: var(--foreground);
+  cursor: var(--cursor-interaction, default);
+}
+
+.form-switch .form-check-input {
+  position: relative;
+  width: 32px;
+  height: 20px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--muted);
+  box-shadow: none;
+  transition: background-color 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border: 1px solid light-dark(var(--primary-foreground), var(--foreground));
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+  box-shadow: var(--shadow-sm);
+  content: &quot;&quot;;
+  transform: translate(2px, -50%);
+  transition: transform 200ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+.form-switch .form-check-input:checked {
+  background: var(--primary);
+}
+
+.form-switch .form-check-input:checked::before {
+  transform: translate(14px, -50%);
+}
+
+.form-switch .form-check-input:focus-visible {
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.form-range {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 28px;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  outline: none;
+  border: 0;
+  accent-color: var(--primary);
+  background: linear-gradient(
+      color-mix(in srgb, var(--foreground) 7%, transparent),
+      color-mix(in srgb, var(--foreground) 7%, transparent)
+    )
+    center / 100% 2px no-repeat;
+}
+
+.form-range::-webkit-slider-runnable-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-webkit-slider-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range::-moz-range-track {
+  height: 28px;
+  background: transparent;
+}
+
+.form-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: light-dark(var(--primary-foreground), var(--foreground));
+}
+
+.form-range:focus-visible::-moz-range-thumb {
+  border-color: var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
+}
+
+.form-range:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.btn:not(.btn-primary, .viz-tile):is(
+    [aria-pressed=&quot;true&quot;],
+    [aria-selected=&quot;true&quot;],
+    .is-selected
+  ) {
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+.btn.viz-tile:is([aria-pressed=&quot;true&quot;], [aria-selected=&quot;true&quot;], .is-selected) {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#widget &gt; svg {
+  width: 100%;
+}
+
+.text-warning,
+.text-destructive {
+  color: var(--destructive);
+}
+
+html&gt;body{padding:0}&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div id=&quot;firecloud-paper&quot;&gt;
+  &lt;style&gt;
+    #firecloud-paper {
+      --ink: #17202a;
+      --muted-ink: #56616d;
+      --paper: #f7f9fb;
+      --surface: #ffffff;
+      --line: #cbd3dc;
+      --blue: #1769aa;
+      --cyan: #168c93;
+      --red: #c23b32;
+      --amber: #b36b00;
+      --green: #2c7a4b;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: &quot;Noto Sans SC&quot;, &quot;Source Han Sans SC&quot;, system-ui, sans-serif;
+      letter-spacing: 0;
+      max-width: 100%;
+    }
+    #firecloud-paper * { box-sizing: border-box; }
+    #firecloud-paper button, #firecloud-paper input { font: inherit; letter-spacing: 0; }
+    #firecloud-paper .paper-shell { max-width: 1180px; margin: 0 auto; background: var(--surface); }
+    #firecloud-paper .masthead { padding: 54px 7% 42px; border-top: 8px solid var(--ink); border-bottom: 1px solid var(--line); }
+    #firecloud-paper .kicker { color: var(--red); font: 500 13px/1.4 &quot;IBM Plex Mono&quot;, monospace; text-transform: uppercase; }
+    #firecloud-paper h1 { max-width: 900px; margin: 14px 0 18px; font-family: Georgia, &quot;Noto Serif SC&quot;, serif; font-size: clamp(34px, 5vw, 67px); line-height: 1.08; font-weight: 500; }
+    #firecloud-paper .dek { max-width: 790px; margin: 0; color: var(--muted-ink); font-size: 18px; line-height: 1.75; }
+    #firecloud-paper .meta { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 28px; font: 400 12px/1.5 &quot;IBM Plex Mono&quot;, monospace; color: var(--muted-ink); }
+    #firecloud-paper .status-strip { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
+    #firecloud-paper .status-strip &gt; div { padding: 18px 24px; border-right: 1px solid var(--line); }
+    #firecloud-paper .status-strip &gt; div:last-child { border-right: 0; }
+    #firecloud-paper .status-strip strong { display: block; font: 500 19px/1.3 &quot;IBM Plex Mono&quot;, monospace; }
+    #firecloud-paper .status-strip span { display: block; margin-top: 5px; color: var(--muted-ink); font-size: 13px; }
+    #firecloud-paper .toc { padding: 16px 7%; border-bottom: 1px solid var(--line); background: #eef3f7; display: flex; gap: 7px; flex-wrap: wrap; }
+    #firecloud-paper .toc a { color: var(--ink); text-decoration: none; border: 1px solid var(--line); background: var(--surface); padding: 7px 10px; border-radius: 4px; font-size: 13px; }
+    #firecloud-paper .chapter { padding: 58px 7%; border-bottom: 1px solid var(--line); }
+    #firecloud-paper .chapter-head { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 22px; margin-bottom: 30px; }
+    #firecloud-paper .chapter-no { color: var(--red); font: 500 18px/1.4 &quot;IBM Plex Mono&quot;, monospace; }
+    #firecloud-paper h2 { margin: 0; font-family: Georgia, &quot;Noto Serif SC&quot;, serif; font-size: clamp(27px, 3vw, 40px); line-height: 1.18; font-weight: 500; }
+    #firecloud-paper h3 { margin: 0 0 10px; font-size: 18px; font-weight: 500; }
+    #firecloud-paper p { margin: 0 0 15px; line-height: 1.8; }
+    #firecloud-paper .lead { color: var(--muted-ink); font-size: 17px; max-width: 850px; }
+    #firecloud-paper .thesis { border-left: 5px solid var(--red); padding: 4px 0 4px 22px; margin: 28px 0; font: 500 21px/1.65 Georgia, &quot;Noto Serif SC&quot;, serif; }
+    #firecloud-paper .two-col { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr); gap: 34px; align-items: start; }
+    #firecloud-paper .three-col { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+    #firecloud-paper .three-col &gt; div { background: var(--surface); padding: 20px; }
+    #firecloud-paper .figure { border: 1px solid var(--line); background: #fbfcfd; padding: 18px; border-radius: 5px; }
+    #firecloud-paper .figure canvas { display: block; width: 100%; height: auto; background: #fff; border: 1px solid #dde3e9; }
+    #firecloud-paper .caption { margin-top: 12px; color: var(--muted-ink); font-size: 12px; line-height: 1.6; }
+    #firecloud-paper .formula { padding: 17px 18px; border: 1px solid var(--line); background: #f4f7f9; font: 400 15px/1.7 &quot;IBM Plex Mono&quot;, monospace; overflow-wrap: anywhere; }
+    #firecloud-paper .controls { display: grid; gap: 13px; }
+    #firecloud-paper .control label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; font-size: 13px; }
+    #firecloud-paper .control output { font-family: &quot;IBM Plex Mono&quot;, monospace; color: var(--blue); }
+    #firecloud-paper input[type=&quot;range&quot;] { width: 100%; accent-color: var(--blue); }
+    #firecloud-paper .segmented { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+    #firecloud-paper .segmented button, #firecloud-paper .pipeline button { border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 8px 11px; border-radius: 4px; cursor: pointer; }
+    #firecloud-paper button[aria-pressed=&quot;true&quot;] { background: var(--ink); color: #fff; border-color: var(--ink); }
+    #firecloud-paper .pipeline { display: grid; grid-template-columns: repeat(8, minmax(95px, 1fr)); gap: 0; overflow: hidden; border: 1px solid var(--line); }
+    #firecloud-paper .pipeline button { min-height: 72px; border: 0; border-right: 1px solid var(--line); border-radius: 0; text-align: left; }
+    #firecloud-paper .pipeline button:last-child { border-right: 0; }
+    #firecloud-paper .pipeline-detail { display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(210px, .6fr); gap: 24px; padding: 24px; border: 1px solid var(--line); border-top: 0; }
+    #firecloud-paper .pipeline-code { font: 400 12px/1.65 &quot;IBM Plex Mono&quot;, monospace; color: var(--blue); overflow-wrap: anywhere; }
+    #firecloud-paper .badge { display: inline-block; padding: 3px 7px; border-radius: 3px; font: 500 11px/1.4 &quot;IBM Plex Mono&quot;, monospace; color: #fff; background: var(--blue); }
+    #firecloud-paper .badge.physics { background: var(--red); }
+    #firecloud-paper .badge.approx { background: var(--amber); }
+    #firecloud-paper .badge.output { background: var(--green); }
+    #firecloud-paper .score-readout { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-bottom: 18px; }
+    #firecloud-paper .score-readout div { background: var(--surface); padding: 15px; }
+    #firecloud-paper .score-readout small { display: block; color: var(--muted-ink); }
+    #firecloud-paper .score-readout strong { font: 500 27px/1.3 &quot;IBM Plex Mono&quot;, monospace; }
+    #firecloud-paper .score-bars { display: grid; gap: 8px; }
+    #firecloud-paper .bar-row { display: grid; grid-template-columns: 180px minmax(0, 1fr) 48px; align-items: center; gap: 10px; font-size: 12px; }
+    #firecloud-paper .bar-track { height: 10px; background: #e5eaf0; }
+    #firecloud-paper .bar-fill { height: 100%; background: var(--blue); }
+    #firecloud-paper .bar-row.gate .bar-fill { background: var(--red); }
+    #firecloud-paper .bar-row code { font-family: &quot;IBM Plex Mono&quot;, monospace; }
+    #firecloud-paper table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    #firecloud-paper th, #firecloud-paper td { text-align: left; vertical-align: top; padding: 11px 10px; border-bottom: 1px solid var(--line); }
+    #firecloud-paper th { color: var(--muted-ink); font-weight: 500; }
+    #firecloud-paper code { font-family: &quot;IBM Plex Mono&quot;, monospace; font-size: .92em; }
+    #firecloud-paper .truth-table td:first-child { font-weight: 500; }
+    #firecloud-paper .callout { padding: 18px 20px; border: 1px solid var(--line); border-left: 5px solid var(--amber); background: #fffaf0; }
+    #firecloud-paper .callout.red { border-left-color: var(--red); background: #fff7f6; }
+    #firecloud-paper .callout.green { border-left-color: var(--green); background: #f4fbf6; }
+    #firecloud-paper .stage-explain { min-height: 164px; padding: 18px 0 0; }
+    #firecloud-paper .stage-explain ul, #firecloud-paper .limitations { margin: 0; padding-left: 20px; line-height: 1.75; }
+    #firecloud-paper .implementation-map { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 30px; }
+    #firecloud-paper .implementation-map div { border-top: 2px solid var(--ink); padding-top: 12px; }
+    #firecloud-paper .implementation-map p { color: var(--muted-ink); font-size: 13px; }
+    #firecloud-paper .ref-list { columns: 2; column-gap: 40px; color: var(--muted-ink); font-size: 12px; }
+    #firecloud-paper .ref-list li { break-inside: avoid; margin-bottom: 10px; }
+    #firecloud-paper .footer { padding: 35px 7%; background: var(--ink); color: #e9eef3; }
+    #firecloud-paper .footer p { color: #bac5cf; max-width: 800px; }
+    @media (max-width: 900px) {
+      #firecloud-paper .two-col, #firecloud-paper .implementation-map { grid-template-columns: 1fr; }
+      #firecloud-paper .pipeline { grid-template-columns: repeat(4, 1fr); }
+      #firecloud-paper .pipeline-detail { grid-template-columns: 1fr; }
+      #firecloud-paper .three-col { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 620px) {
+      #firecloud-paper .masthead, #firecloud-paper .chapter { padding-left: 20px; padding-right: 20px; }
+      #firecloud-paper .chapter-head { grid-template-columns: 1fr; gap: 7px; }
+      #firecloud-paper .status-strip { grid-template-columns: 1fr; }
+      #firecloud-paper .status-strip &gt; div { border-right: 0; border-bottom: 1px solid var(--line); }
+      #firecloud-paper .pipeline { grid-template-columns: repeat(2, 1fr); }
+      #firecloud-paper .score-readout { grid-template-columns: 1fr; }
+      #firecloud-paper .bar-row { grid-template-columns: 125px minmax(0, 1fr) 38px; }
+      #firecloud-paper .ref-list { columns: 1; }
+    }
+  &lt;/style&gt;
+
+  &lt;article class=&quot;paper-shell&quot;&gt;
+    &lt;header class=&quot;masthead&quot;&gt;
+      &lt;div class=&quot;kicker&quot;&gt;FIRECLOUD FORECAST · INTERACTIVE TECHNICAL PAPER · 2026&lt;/div&gt;
+      &lt;h1&gt;从一束擦过地球的光，到一张全国晚霞图&lt;/h1&gt;
+      &lt;p class=&quot;dek&quot;&gt;一份面向技术人员、但从零开始的算法说明：每个分数从哪里来，哪些地方用了真实物理，哪些地方只是工程近似，以及代码如何把气象场变成可复核的火烧云条件指数。&lt;/p&gt;
+      &lt;div class=&quot;meta&quot;&gt;&lt;span&gt;算法对象：日出 / 日落火烧云&lt;/span&gt;&lt;span&gt;当前实现：GFS + Open-Meteo + Himawari-9&lt;/span&gt;&lt;span&gt;核心语义：必要条件门控 × 质量修饰&lt;/span&gt;&lt;/div&gt;
+    &lt;/header&gt;
+
+    &lt;div class=&quot;status-strip&quot; aria-label=&quot;论文核心结论&quot;&gt;
+      &lt;div&gt;&lt;strong&gt;0.25°&lt;/strong&gt;&lt;span&gt;全国基础评分网格，约 25 km&lt;/span&gt;&lt;/div&gt;
+      &lt;div&gt;&lt;strong&gt;800 km&lt;/strong&gt;&lt;span&gt;单点向日方向大气剖面长度&lt;/span&gt;&lt;/div&gt;
+      &lt;div&gt;&lt;strong&gt;非校准概率&lt;/strong&gt;&lt;span&gt;输出是相对条件指数，不是“发生率”&lt;/span&gt;&lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;nav class=&quot;toc&quot; aria-label=&quot;章节目录&quot;&gt;
+      &lt;a href=&quot;#paper-abstract&quot;&gt;摘要&lt;/a&gt;&lt;a href=&quot;#paper-phenomenon&quot;&gt;光为什么变红&lt;/a&gt;&lt;a href=&quot;#paper-pipeline&quot;&gt;完整流水线&lt;/a&gt;&lt;a href=&quot;#paper-cloud&quot;&gt;云层诊断&lt;/a&gt;&lt;a href=&quot;#paper-ray&quot;&gt;光路追踪&lt;/a&gt;&lt;a href=&quot;#paper-score&quot;&gt;评分器&lt;/a&gt;&lt;a href=&quot;#paper-national&quot;&gt;全国化&lt;/a&gt;&lt;a href=&quot;#paper-code&quot;&gt;代码实现&lt;/a&gt;&lt;a href=&quot;#paper-limits&quot;&gt;边界与局限&lt;/a&gt;
+    &lt;/nav&gt;
+
+    &lt;section class=&quot;chapter&quot; id=&quot;paper-abstract&quot;&gt;
+      &lt;div class=&quot;chapter-head&quot;&gt;&lt;div class=&quot;chapter-no&quot;&gt;摘要&lt;/div&gt;&lt;div&gt;&lt;h2&gt;这套算法到底在判断什么&lt;/h2&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;p class=&quot;lead&quot;&gt;火烧云不是“云多就好看”。它要求红化后的低角度太阳光，沿着接近地平线的长路径穿过大气，找到一条没有被低云、山脊或浓气溶胶截断的通道，最终照到合适的中高云底面。&lt;/p&gt;
+      &lt;div class=&quot;thesis&quot;&gt;算法的核心问题不是“这里有多少云”，而是“在这个地点的日出或日落时刻，光能否从太阳方向进入这片云，并且剩下多少可见质量”。&lt;/div&gt;
+      &lt;div class=&quot;three-col&quot;&gt;
+        &lt;div&gt;&lt;h3&gt;必要条件 Gate&lt;/h3&gt;&lt;p&gt;画布存在、低云不封死、时间在事件窗口、向日光路可达。任何一项为零，结果必须归零。&lt;/p&gt;&lt;/div&gt;
+        &lt;div&gt;&lt;h3&gt;质量条件 Modifier&lt;/h3&gt;&lt;p&gt;湿度、云高、覆盖率甜点区、本地气溶胶观感。它们决定“烧得多好”，不能补偿缺失的必要条件。&lt;/p&gt;&lt;/div&gt;
+        &lt;div&gt;&lt;h3&gt;条件指数 P&lt;/h3&gt;&lt;p&gt;&lt;code&gt;P = G × M&lt;/code&gt;。地图上的 0.7 比 0.4 更有利，但它尚未由大规模实况校准为 70% 与 40% 的发生率。&lt;/p&gt;&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;chapter&quot; id=&quot;paper-phenomenon&quot;&gt;
+      &lt;div class=&quot;chapter-head&quot;&gt;&lt;div class=&quot;chapter-no&quot;&gt;01&lt;/div&gt;&lt;div&gt;&lt;h2&gt;光为什么会变红，但算法为什么还不能预测“有多红”&lt;/h2&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;div class=&quot;two-col&quot;&gt;
+        &lt;div&gt;
+          &lt;p&gt;接近日落时，太阳光在大气中的相对光程可达到正午的几十倍。短波蓝光更容易被瑞利散射移出直射光束；气溶胶的米氏散射更接近灰色衰减；臭氧 Chappuis 带还会吸收部分橙黄波段。最终抵达云底的直射光更偏红。&lt;/p&gt;
+          &lt;div class=&quot;formula&quot;&gt;I(λ) / I₀(λ) = exp[−(τRayleigh + τMie + τOzone)]&lt;/div&gt;
+          &lt;p style=&quot;margin-top:15px&quot;&gt;右侧实验是原理演示：太阳越低，蓝光衰减越快；AOD 越高，所有波段都更暗。它帮助理解颜色来源，但&lt;strong&gt;当前生产评分没有做逐波长辐射传输，也不预测 RGB 色彩&lt;/strong&gt;。&lt;/p&gt;
+          &lt;div class=&quot;controls&quot;&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;solar-elevation&quot;&gt;太阳高度角 &lt;output id=&quot;solar-elevation-out&quot;&gt;1.0°&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;solar-elevation&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;12&quot; step=&quot;0.5&quot; value=&quot;1&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;spectral-aod&quot;&gt;对流层 AOD（演示） &lt;output id=&quot;spectral-aod-out&quot;&gt;0.15&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;spectral-aod&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;0.8&quot; step=&quot;0.01&quot; value=&quot;0.15&quot;&gt;&lt;/div&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+        &lt;figure class=&quot;figure&quot;&gt;
+          &lt;canvas id=&quot;spectrum-canvas&quot; width=&quot;640&quot; height=&quot;350&quot; aria-label=&quot;可见光谱透过率随太阳高度角和气溶胶变化&quot;&gt;&lt;/canvas&gt;
+          &lt;figcaption class=&quot;caption&quot;&gt;图 1 · 教学性光谱模型。横轴为 400–700 nm，纵轴为相对透过率；蓝、绿、红标记用于观察不同波段的幸存比例。生产代码目前只把 550 nm AOD 当作灰度消光代理。&lt;/figcaption&gt;
+        &lt;/figure&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;chapter&quot; id=&quot;paper-pipeline&quot;&gt;
+      &lt;div class=&quot;chapter-head&quot;&gt;&lt;div class=&quot;chapter-no&quot;&gt;02&lt;/div&gt;&lt;div&gt;&lt;h2&gt;端到端流水线：从模式数据到 PNG&lt;/h2&gt;&lt;p class=&quot;lead&quot;&gt;选择任一阶段可查看它消费什么、产生什么，以及真正执行它的模块。&lt;/p&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;div class=&quot;pipeline&quot; id=&quot;pipeline-buttons&quot;&gt;&lt;/div&gt;
+      &lt;div class=&quot;pipeline-detail&quot;&gt;
+        &lt;div&gt;&lt;span class=&quot;badge&quot; id=&quot;pipeline-badge&quot;&gt;DATA&lt;/span&gt;&lt;h3 id=&quot;pipeline-title&quot; style=&quot;margin-top:12px&quot;&gt;&lt;/h3&gt;&lt;/div&gt;
+        &lt;div&gt;&lt;p id=&quot;pipeline-body&quot;&gt;&lt;/p&gt;&lt;/div&gt;
+        &lt;div class=&quot;pipeline-code&quot; id=&quot;pipeline-code&quot;&gt;&lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;chapter&quot; id=&quot;paper-cloud&quot;&gt;
+      &lt;div class=&quot;chapter-head&quot;&gt;&lt;div class=&quot;chapter-no&quot;&gt;03&lt;/div&gt;&lt;div&gt;&lt;h2&gt;先把“大气柱”变成可解释的云层&lt;/h2&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;div class=&quot;two-col&quot;&gt;
+        &lt;div&gt;
+          &lt;p&gt;GFS 压力层数据不是“云底 4200 m”这种结论，而是一列离散的温度、湿度、云水、云冰和位势高度。代码先把位势高度转换为几何高度，按高度排序，再用云凝结物或 RH 阈值找连续云段。&lt;/p&gt;
+          &lt;table&gt;
+            &lt;thead&gt;&lt;tr&gt;&lt;th&gt;诊断量&lt;/th&gt;&lt;th&gt;当前实现&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+            &lt;tbody&gt;
+              &lt;tr&gt;&lt;td&gt;云存在&lt;/td&gt;&lt;td&gt;优先 &lt;code&gt;cloud_water + cloud_ice ≥ 1e−6 kg/kg&lt;/code&gt;；缺凝结物时回退 &lt;code&gt;RH ≥ 90%&lt;/code&gt;&lt;/td&gt;&lt;/tr&gt;
+              &lt;tr&gt;&lt;td&gt;云底 / 云顶&lt;/td&gt;&lt;td&gt;阈值交叉处插值；相隔不足 300 m 的云段合并&lt;/td&gt;&lt;/tr&gt;
+              &lt;tr&gt;&lt;td&gt;相态&lt;/td&gt;&lt;td&gt;云水、云冰和温度共同给出 liquid / mixed / ice&lt;/td&gt;&lt;/tr&gt;
+              &lt;tr&gt;&lt;td&gt;光学厚度&lt;/td&gt;&lt;td&gt;&lt;code&gt;τ = 1.5·WP/(ρ·rₑ)&lt;/code&gt;，水和冰分别积分&lt;/td&gt;&lt;/tr&gt;
+              &lt;tr&gt;&lt;td&gt;虚幡&lt;/td&gt;&lt;td&gt;冷而有光学厚度的云，在连续湿润次云层中向下延伸，压低有效云底&lt;/td&gt;&lt;/tr&gt;
+            &lt;/tbody&gt;
+          &lt;/table&gt;
+          &lt;div class=&quot;controls&quot; style=&quot;margin-top:20px&quot;&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;cloud-base&quot;&gt;画布云底 &lt;output id=&quot;cloud-base-out&quot;&gt;4.5 km&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;cloud-base&quot; type=&quot;range&quot; min=&quot;0.5&quot; max=&quot;11&quot; step=&quot;0.1&quot; value=&quot;4.5&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;cloud-thickness&quot;&gt;画布厚度 &lt;output id=&quot;cloud-thickness-out&quot;&gt;1.8 km&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;cloud-thickness&quot; type=&quot;range&quot; min=&quot;0.2&quot; max=&quot;4&quot; step=&quot;0.1&quot; value=&quot;1.8&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;lower-cloud&quot;&gt;低云遮挡 &lt;output id=&quot;lower-cloud-out&quot;&gt;25%&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;lower-cloud&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;100&quot; step=&quot;1&quot; value=&quot;25&quot;&gt;&lt;/div&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+        &lt;figure class=&quot;figure&quot;&gt;
+          &lt;canvas id=&quot;cloud-canvas&quot; width=&quot;580&quot; height=&quot;480&quot; aria-label=&quot;垂直大气柱和云层诊断示意&quot;&gt;&lt;/canvas&gt;
+          &lt;figcaption class=&quot;caption&quot;&gt;图 2 · 诊断后的垂直结构。红色边框标记被选为反光“画布”的云层；低层云进入遮挡通道，而不是被错误当成高云的一部分。&lt;/figcaption&gt;
+        &lt;/figure&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;chapter&quot; id=&quot;paper-ray&quot;&gt;
+      &lt;div class=&quot;chapter-head&quot;&gt;&lt;div class=&quot;chapter-no&quot;&gt;04&lt;/div&gt;&lt;div&gt;&lt;h2&gt;最关键的一步：沿太阳方向真的画一条光线&lt;/h2&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;p class=&quot;lead&quot;&gt;在把弯曲地球“压平”的坐标里，贴着地球传播的直线光线变成抛物线。算法从观察者向日出/日落方向取最多 800 km 的剖面，并检查光线是否穿过不透明云、山脊或额外浓的气溶胶层。&lt;/p&gt;
+      &lt;div class=&quot;formula&quot;&gt;h&lt;sub&gt;ray&lt;/sub&gt;(l) = (l − lᵥ)² / (2R)　　lᵥ = √(2Rh&lt;sub&gt;effective&lt;/sub&gt;)　　最大可达距离 = 2lᵥ&lt;/div&gt;
+      &lt;div class=&quot;two-col&quot; style=&quot;margin-top:24px&quot;&gt;
+        &lt;div class=&quot;controls&quot;&gt;
+          &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;ray-base&quot;&gt;原始云底 &lt;output id=&quot;ray-base-out&quot;&gt;7000 m&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;ray-base&quot; type=&quot;range&quot; min=&quot;1000&quot; max=&quot;11000&quot; step=&quot;100&quot; value=&quot;7000&quot;&gt;&lt;/div&gt;
+          &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;ray-aod&quot;&gt;观察者 AOD &lt;output id=&quot;ray-aod-out&quot;&gt;0.18&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;ray-aod&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;0.8&quot; step=&quot;0.01&quot; value=&quot;0.18&quot;&gt;&lt;/div&gt;
+          &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;ray-rh&quot;&gt;近地 RH &lt;output id=&quot;ray-rh-out&quot;&gt;60%&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;ray-rh&quot; type=&quot;range&quot; min=&quot;20&quot; max=&quot;90&quot; step=&quot;1&quot; value=&quot;60&quot;&gt;&lt;/div&gt;
+          &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;ray-blocker&quot;&gt;上游低云位置 &lt;output id=&quot;ray-blocker-out&quot;&gt;330 km&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;ray-blocker&quot; type=&quot;range&quot; min=&quot;30&quot; max=&quot;760&quot; step=&quot;10&quot; value=&quot;330&quot;&gt;&lt;/div&gt;
+          &lt;div class=&quot;callout&quot; id=&quot;ray-verdict&quot; aria-live=&quot;polite&quot;&gt;&lt;/div&gt;
+        &lt;/div&gt;
+        &lt;figure class=&quot;figure&quot;&gt;
+          &lt;canvas id=&quot;ray-canvas&quot; width=&quot;720&quot; height=&quot;400&quot; aria-label=&quot;向日方向抛物线光路与云层遮挡实验&quot;&gt;&lt;/canvas&gt;
+          &lt;figcaption class=&quot;caption&quot;&gt;图 3 · 蓝线是到达观察者云底的掠射光路；灰红块是上游低云。光线穿入云体时，&lt;code&gt;sunward_illumination&lt;/code&gt; gate 被否决。半透明云则累计 &lt;code&gt;Π(1−opacity)&lt;/code&gt;，形成“闷烧”衰减。&lt;/figcaption&gt;
+        &lt;/figure&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;chapter&quot; id=&quot;paper-score&quot;&gt;
+      &lt;div class=&quot;chapter-head&quot;&gt;&lt;div class=&quot;chapter-no&quot;&gt;05&lt;/div&gt;&lt;div&gt;&lt;h2&gt;评分器：为什么不能把所有因素直接加起来&lt;/h2&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;p&gt;假设没有中高云，其他条件却都很好。普通加权平均仍可能给出一个中等分数；但物理上没有画布就不可能出现火烧云。因此当前算法把必要条件放进加权几何平均，把质量因素放进加权算术平均。&lt;/p&gt;
+      &lt;div class=&quot;formula&quot;&gt;G = ∏ sᵢ^(wᵢ / Σw&lt;sub&gt;gate&lt;/sub&gt;)　　M = Σ(wⱼsⱼ) / Σw&lt;sub&gt;modifier&lt;/sub&gt;　　P = G × M&lt;/div&gt;
+      &lt;div class=&quot;two-col&quot; style=&quot;margin-top:24px&quot;&gt;
+        &lt;div&gt;
+          &lt;div class=&quot;segmented&quot; id=&quot;score-presets&quot; aria-label=&quot;评分场景&quot;&gt;
+            &lt;button type=&quot;button&quot; data-preset=&quot;good&quot; aria-pressed=&quot;true&quot;&gt;通透高云&lt;/button&gt;
+            &lt;button type=&quot;button&quot; data-preset=&quot;nocanvas&quot; aria-pressed=&quot;false&quot;&gt;没有画布&lt;/button&gt;
+            &lt;button type=&quot;button&quot; data-preset=&quot;overcast&quot; aria-pressed=&quot;false&quot;&gt;低云封死&lt;/button&gt;
+            &lt;button type=&quot;button&quot; data-preset=&quot;haze&quot; aria-pressed=&quot;false&quot;&gt;潮湿霾&lt;/button&gt;
+          &lt;/div&gt;
+          &lt;div class=&quot;controls&quot;&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;score-mid&quot;&gt;中云 &lt;output id=&quot;score-mid-out&quot;&gt;&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;score-mid&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;100&quot; step=&quot;1&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;score-high&quot;&gt;高云 &lt;output id=&quot;score-high-out&quot;&gt;&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;score-high&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;100&quot; step=&quot;1&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;score-low&quot;&gt;低云 &lt;output id=&quot;score-low-out&quot;&gt;&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;score-low&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;100&quot; step=&quot;1&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;score-humidity&quot;&gt;湿度 &lt;output id=&quot;score-humidity-out&quot;&gt;&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;score-humidity&quot; type=&quot;range&quot; min=&quot;10&quot; max=&quot;100&quot; step=&quot;1&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;score-aod&quot;&gt;本地 AOD &lt;output id=&quot;score-aod-out&quot;&gt;&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;score-aod&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;0.8&quot; step=&quot;0.01&quot;&gt;&lt;/div&gt;
+            &lt;div class=&quot;control&quot;&gt;&lt;label for=&quot;score-boundary&quot;&gt;云边界 / 最大光程 &lt;output id=&quot;score-boundary-out&quot;&gt;&lt;/output&gt;&lt;/label&gt;&lt;input id=&quot;score-boundary&quot; type=&quot;range&quot; min=&quot;0.1&quot; max=&quot;1.2&quot; step=&quot;0.01&quot;&gt;&lt;/div&gt;
+          &lt;/div&gt;
+        &lt;/div&gt;
+        &lt;div&gt;
+          &lt;div class=&quot;score-readout&quot;&gt;&lt;div&gt;&lt;small&gt;必要条件 G&lt;/small&gt;&lt;strong id=&quot;gate-score&quot;&gt;0.00&lt;/strong&gt;&lt;/div&gt;&lt;div&gt;&lt;small&gt;质量 M&lt;/small&gt;&lt;strong id=&quot;modifier-score&quot;&gt;0.00&lt;/strong&gt;&lt;/div&gt;&lt;div&gt;&lt;small&gt;条件指数 P&lt;/small&gt;&lt;strong id=&quot;final-score&quot;&gt;0.00&lt;/strong&gt;&lt;/div&gt;&lt;/div&gt;
+          &lt;div class=&quot;score-bars&quot; id=&quot;score-bars&quot;&gt;&lt;/div&gt;
+          &lt;p class=&quot;caption&quot;&gt;红色为 gate，蓝色为 modifier。实际权重来自 &lt;code&gt;predictor/rules.py::STANDARD_WEIGHTS&lt;/code&gt;；日出与日落共享同一套规则，只改变事件时间与太阳方位。&lt;/p&gt;
+        &lt;/div&gt;
+      &lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;chapter&quot; id=&quot;paper-national&quot;&gt;
+      &lt;div class=&quot;chapter-head&quot;&gt;&lt;div class=&quot;chapter-no&quot;&gt;06&lt;/div&gt;&lt;div&gt;&lt;h2&gt;全国化：把昂贵的单点物理分成三层预算&lt;/h2&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;p class=&quot;lead&quot;&gt;全国每个格点都做 800 km、25 km 间隔的三维压力层光追会极其昂贵。当前产品采用“便宜筛选 → 候选精修 → 临近订正”的漏斗。&lt;/p&gt;
+      &lt;div class=&quot;segmented&quot; id=&quot;national-stages&quot; aria-label=&quot;全国计算阶段&quot;&gt;
+        &lt;button type=&quot;button&quot; data-stage=&quot;0&quot; aria-pressed=&quot;true&quot;&gt;基础气象场&lt;/button&gt;
+        &lt;button type=&quot;button&quot; data-stage=&quot;1&quot; aria-pressed=&quot;false&quot;&gt;Stage A · 1-D&lt;/button&gt;
+        &lt;button type=&quot;button&quot; data-stage=&quot;2&quot; aria-pressed=&quot;false&quot;&gt;Stage B · 2-D&lt;/button&gt;
+        &lt;button type=&quot;button&quot; data-stage=&quot;3&quot; aria-pressed=&quot;false&quot;&gt;Stage C · 卫星&lt;/button&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;two-col&quot;&gt;
+        &lt;figure class=&quot;figure&quot;&gt;
+          &lt;canvas id=&quot;national-canvas&quot; width=&quot;720&quot; height=&quot;390&quot; aria-label=&quot;全国评分多阶段筛选示意热力图&quot;&gt;&lt;/canvas&gt;
+          &lt;figcaption class=&quot;caption&quot;&gt;图 4 · 同一合成场经过不同计算层级的变化。这里只展示算法行为，不是某一天的真实预报地图。&lt;/figcaption&gt;
+        &lt;/figure&gt;
+        &lt;div class=&quot;stage-explain&quot; id=&quot;national-explain&quot;&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;table style=&quot;margin-top:28px&quot;&gt;
+        &lt;thead&gt;&lt;tr&gt;&lt;th&gt;层级&lt;/th&gt;&lt;th&gt;计算内容&lt;/th&gt;&lt;th&gt;空间采样&lt;/th&gt;&lt;th&gt;当前关键限制&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+        &lt;tbody&gt;
+          &lt;tr&gt;&lt;td&gt;基础&lt;/td&gt;&lt;td&gt;每格选择最接近日出/日落的 GFS 小时并做 gate × modifier&lt;/td&gt;&lt;td&gt;0.25°&lt;/td&gt;&lt;td&gt;只看本格云量会产生连续云带假阳性&lt;/td&gt;&lt;/tr&gt;
+          &lt;tr&gt;&lt;td&gt;Stage A&lt;/td&gt;&lt;td&gt;沿太阳方向抽取地面分层云量，寻找 20% 云边界&lt;/td&gt;&lt;td&gt;约 100 km 间隔，最长 800 km&lt;/td&gt;&lt;td&gt;中/高云底使用 3.5/7 km 代表高度&lt;/td&gt;&lt;/tr&gt;
+          &lt;tr&gt;&lt;td&gt;Stage B&lt;/td&gt;&lt;td&gt;候选格共享压力层 cube，诊断真实云层并做 2-D 光追&lt;/td&gt;&lt;td&gt;50 km；最多 4000 格&lt;/td&gt;&lt;td&gt;超出预算的候选保留 Stage A 分数&lt;/td&gt;&lt;/tr&gt;
+          &lt;tr&gt;&lt;td&gt;Stage C&lt;/td&gt;&lt;td&gt;两帧 Himawari B13 互相关估计云边界运动，置信度加权平移&lt;/td&gt;&lt;td&gt;10 分钟卫星，30 分钟帧对&lt;/td&gt;&lt;td&gt;只在事件前 2 小时内；被动红外不能给云底&lt;/td&gt;&lt;/tr&gt;
+        &lt;/tbody&gt;
+      &lt;/table&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;chapter&quot; id=&quot;paper-code&quot;&gt;
+      &lt;div class=&quot;chapter-head&quot;&gt;&lt;div class=&quot;chapter-no&quot;&gt;07&lt;/div&gt;&lt;div&gt;&lt;h2&gt;原理如何落到代码：模块地图&lt;/h2&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;div class=&quot;implementation-map&quot;&gt;
+        &lt;div&gt;&lt;h3&gt;数据读取&lt;/h3&gt;&lt;p&gt;&lt;code&gt;gfs.py&lt;/code&gt; 负责 GFS surface / pressure cube、cycle 回退、断点续传与缓存；&lt;code&gt;fetch.py&lt;/code&gt; 提供 Open-Meteo 快照；&lt;code&gt;satellite.py&lt;/code&gt; 读取 Himawari B13。&lt;/p&gt;&lt;/div&gt;
+        &lt;div&gt;&lt;h3&gt;垂直诊断&lt;/h3&gt;&lt;p&gt;&lt;code&gt;normalize.py&lt;/code&gt; 标准化高度、RH、露点；&lt;code&gt;clouds.py&lt;/code&gt; 找云层、相态、光学厚度与虚幡；&lt;code&gt;stability.py&lt;/code&gt; 识别层状/对流云况。&lt;/p&gt;&lt;/div&gt;
+        &lt;div&gt;&lt;h3&gt;空间几何&lt;/h3&gt;&lt;p&gt;&lt;code&gt;spatial.py&lt;/code&gt; 建 800 km 向日路径；&lt;code&gt;sunward_section.py&lt;/code&gt; 从共享 cube 组装距离 × 高度截面；&lt;code&gt;ray_path.py&lt;/code&gt; 做抛物线逐列遮挡检查。&lt;/p&gt;&lt;/div&gt;
+        &lt;div&gt;&lt;h3&gt;特征与评分&lt;/h3&gt;&lt;p&gt;&lt;code&gt;features.py&lt;/code&gt; 把原始量转成画布、边界、遮挡、AOD 和光追特征；&lt;code&gt;rules.py&lt;/code&gt; 计算 9 个组件并执行 &lt;code&gt;gate × modifier&lt;/code&gt;。&lt;/p&gt;&lt;/div&gt;
+        &lt;div&gt;&lt;h3&gt;全国产品&lt;/h3&gt;&lt;p&gt;&lt;code&gt;national_field.py&lt;/code&gt; 逐格匹配事件小时；&lt;code&gt;national_physics.py&lt;/code&gt; 做 Stage A；&lt;code&gt;national_refine.py&lt;/code&gt; 分组共享 cube 做 Stage B。&lt;/p&gt;&lt;/div&gt;
+        &lt;div&gt;&lt;h3&gt;临近与制图&lt;/h3&gt;&lt;p&gt;&lt;code&gt;nowcast.py&lt;/code&gt; 编排 Stage C；&lt;code&gt;national_product.py&lt;/code&gt; 与 &lt;code&gt;local_product.py&lt;/code&gt; 输出科研图和 JSON；显示平滑不反写原始评分。&lt;/p&gt;&lt;/div&gt;
+      &lt;/div&gt;
+      &lt;div class=&quot;callout green&quot; style=&quot;margin-top:30px&quot;&gt;&lt;strong&gt;局部精细图不是全国图插值。&lt;/strong&gt;&lt;br&gt;它在目标周边每个 0.1° 格点上执行完整单点物理，只是所有格点共享同一个压力层 cube，从而把网络成本从“一格一个 cube”降为“一张图一个 cube”。&lt;/div&gt;
+      &lt;div class=&quot;callout&quot; style=&quot;margin-top:16px&quot;&gt;&lt;strong&gt;远端预计算不改变算法。&lt;/strong&gt;&lt;br&gt;&lt;code&gt;precompute.py&lt;/code&gt; 在 GitHub Actions 上运行同一套生成函数，把 PNG、JSON、模型时次、校验和写入 Pages；本地 CLI 只负责校验并下载成品。&lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;chapter&quot; id=&quot;paper-limits&quot;&gt;
+      &lt;div class=&quot;chapter-head&quot;&gt;&lt;div class=&quot;chapter-no&quot;&gt;08&lt;/div&gt;&lt;div&gt;&lt;h2&gt;诚实边界：哪些已经实现，哪些还只是理论&lt;/h2&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;table class=&quot;truth-table&quot;&gt;
+        &lt;thead&gt;&lt;tr&gt;&lt;th&gt;问题&lt;/th&gt;&lt;th&gt;当前状态&lt;/th&gt;&lt;th&gt;意味着什么&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+        &lt;tbody&gt;
+          &lt;tr&gt;&lt;td&gt;火烧云会不会出现&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;badge output&quot;&gt;已实现&lt;/span&gt;&lt;/td&gt;&lt;td&gt;以物理启发的相对条件指数表达；已有离线性质测试，但未做大规模观测校准。&lt;/td&gt;&lt;/tr&gt;
+          &lt;tr&gt;&lt;td&gt;具体颜色 / 色温&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;badge approx&quot;&gt;未实现&lt;/span&gt;&lt;/td&gt;&lt;td&gt;Rayleigh、Mie、臭氧的光谱理论目前用于解释，不进入生产 RGB 预报。&lt;/td&gt;&lt;/tr&gt;
+          &lt;tr&gt;&lt;td&gt;全国真实云底&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;badge approx&quot;&gt;部分实现&lt;/span&gt;&lt;/td&gt;&lt;td&gt;Stage A 使用 3.5/7 km 代表高度；只有 Stage B 候选格做压力层真实诊断。&lt;/td&gt;&lt;/tr&gt;
+          &lt;tr&gt;&lt;td&gt;卫星云底&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;badge approx&quot;&gt;不可直接观测&lt;/span&gt;&lt;/td&gt;&lt;td&gt;Himawari B13 给云顶亮温与水平运动，不能单独约束云底。&lt;/td&gt;&lt;/tr&gt;
+          &lt;tr&gt;&lt;td&gt;气溶胶&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;badge approx&quot;&gt;灰度代理&lt;/span&gt;&lt;/td&gt;&lt;td&gt;550 nm AOD 进入本地观感和路径等效地表；未区分全波段、平流层与对流层。&lt;/td&gt;&lt;/tr&gt;
+          &lt;tr&gt;&lt;td&gt;对流云&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;badge physics&quot;&gt;降置信&lt;/span&gt;&lt;/td&gt;&lt;td&gt;诊断到明确浓积云时，把概率向 0.5 收缩；承认数值模式对快速生消云支持不足。&lt;/td&gt;&lt;/tr&gt;
+          &lt;tr&gt;&lt;td&gt;地图数值含义&lt;/td&gt;&lt;td&gt;&lt;span class=&quot;badge physics&quot;&gt;非校准&lt;/span&gt;&lt;/td&gt;&lt;td&gt;0.7 是比 0.4 更有利的诊断指数，不能直接读作 70% 的发生概率。&lt;/td&gt;&lt;/tr&gt;
+        &lt;/tbody&gt;
+      &lt;/table&gt;
+      &lt;div class=&quot;callout red&quot; style=&quot;margin-top:26px&quot;&gt;&lt;strong&gt;最重要的科学债务是验证，而不是再加一条经验规则。&lt;/strong&gt;&lt;br&gt;下一步应建立带时间、地点和强度标签的观测数据集，检验可靠性曲线、命中率、漏报率和空间偏差，再决定阈值与权重是否需要校准。&lt;/div&gt;
+    &lt;/section&gt;
+
+    &lt;section class=&quot;chapter&quot;&gt;
+      &lt;div class=&quot;chapter-head&quot;&gt;&lt;div class=&quot;chapter-no&quot;&gt;参考&lt;/div&gt;&lt;div&gt;&lt;h2&gt;理论依据与实现依据&lt;/h2&gt;&lt;/div&gt;&lt;/div&gt;
+      &lt;ol class=&quot;ref-list&quot;&gt;
+        &lt;li&gt;Corfidi, S. F. (2014). &lt;em&gt;The Colors of Twilight and Sunset&lt;/em&gt;. NOAA SPC.&lt;/li&gt;
+        &lt;li&gt;Kasten, F. &amp; Young, A. T. (1989). Revised optical air mass tables. &lt;em&gt;Applied Optics&lt;/em&gt;.&lt;/li&gt;
+        &lt;li&gt;Lange, Rozanov &amp; Burrows (2023). Revisiting “Why is the sky blue?”. &lt;em&gt;ACP&lt;/em&gt;.&lt;/li&gt;
+        &lt;li&gt;Bodhaine et al. (1999). Rayleigh optical depth calculations. &lt;em&gt;JTECH&lt;/em&gt;.&lt;/li&gt;
+        &lt;li&gt;WMO International Cloud Atlas.&lt;/li&gt;
+        &lt;li&gt;项目权威目标手册：&lt;em&gt;人工火烧云预报速成&lt;/em&gt;。&lt;/li&gt;
+        &lt;li&gt;&lt;code&gt;research/theory/single-point-fidelity-audit.md&lt;/code&gt;：当前实现与目标物理差距。&lt;/li&gt;
+        &lt;li&gt;&lt;code&gt;research/theory/intelligent-nationalization-spike-58.md&lt;/code&gt;：全国分层算力方案。&lt;/li&gt;
+      &lt;/ol&gt;
+    &lt;/section&gt;
+
+    &lt;footer class=&quot;footer&quot;&gt;
+      &lt;h2 style=&quot;font-size:28px&quot;&gt;一句话带走&lt;/h2&gt;
+      &lt;p&gt;这不是“看云量猜晚霞”的模型。它先确认一块云是否能成为画布，再沿着日出或日落方向验证光路，最后才讨论湿度、空气质量和覆盖率是否让画面更好；全国化只是把这套昂贵物理按预算分层执行。&lt;/p&gt;
+    &lt;/footer&gt;
+  &lt;/article&gt;
+
+  &lt;script&gt;
+    (() =&gt; {
+      const root = document.getElementById(&#x27;firecloud-paper&#x27;);
+      const $ = id =&gt; root.querySelector(&#x27;#&#x27; + id);
+      const clamp = (x, a = 0, b = 1) =&gt; Math.max(a, Math.min(b, x));
+      const trapezoid = (x, a, b, c, d) =&gt; x &lt;= a || x &gt;= d ? 0 : x &gt;= b &amp;&amp; x &lt;= c ? 1 : x &lt; b ? (x-a)/(b-a) : (d-x)/(d-c);
+      const value = id =&gt; Number($(id).value);
+      const setOut = (id, text) =&gt; $(id + &#x27;-out&#x27;).textContent = text;
+
+      const pipeline = [
+        [&#x27;01&#x27;, &#x27;事件几何&#x27;, &#x27;physics&#x27;, &#x27;先用 Astral 计算每个格点自己的日出或日落时刻和太阳方位。朝霞与晚霞没有两套算法：只要事件时刻改变，向日方向会自然从西侧镜像到东侧。&#x27;, &#x27;solar_event.py\nfeatures.compute_event_time\nsunset_grid.py&#x27;],
+        [&#x27;02&#x27;, &#x27;模式取时&#x27;, &#x27;data&#x27;, &#x27;全国每个格点的事件时刻不同。系统先确定覆盖全国事件时间范围的 GFS 小时，再让每格选择最近的有效时次，拼成“每格都接近自己的日出/日落”的气象场。&#x27;, &#x27;gfs.py\nnational_field.py\nnearest_valid_time_indices&#x27;],
+        [&#x27;03&#x27;, &#x27;云柱诊断&#x27;, &#x27;physics&#x27;, &#x27;压力层温度、湿度、云水、云冰和高度被标准化并切成连续云层，得到真实云底、云顶、相态、置信度、光学厚度和虚幡延伸。&#x27;, &#x27;normalize.py\nclouds.py\nillumination.py&#x27;],
+        [&#x27;04&#x27;, &#x27;画布选择&#x27;, &#x27;physics&#x27;, &#x27;先把有中高云时的低云转入遮挡通道，再在中高云层间比较光学厚度与高度。选层函数也支持覆盖率和向日边界延展，但当前生产调用尚未传入这两项，缺失时按中性值处理。&#x27;, &#x27;illumination.select_canvas\nfeatures.derive&#x27;],
+        [&#x27;05&#x27;, &#x27;向日剖面&#x27;, &#x27;physics&#x27;, &#x27;从观察者沿太阳方位采样最多 800 km，把每一列大气拼成“距离 × 高度”截面，并把云、地形、AOD 和近地湿度放在同一光路坐标里。&#x27;, &#x27;spatial.py\nsunward_section.py\ncross_section.py&#x27;],
+        [&#x27;06&#x27;, &#x27;规则评分&#x27;, &#x27;physics&#x27;, &#x27;四类必要条件组成 gate，四类质量条件组成 modifier。缺失的可选信号被省略，不会偷偷当作完美或失败。&#x27;, &#x27;rules.py\nfeatures.py\ngrid_score.py&#x27;],
+        [&#x27;07&#x27;, &#x27;卫星临近&#x27;, &#x27;approx&#x27;, &#x27;事件前 2 小时内，读取两帧 Himawari B13，用云掩膜互相关估计位移；只做有边界、有置信度、最大 2° 的有限修正。&#x27;, &#x27;satellite.py\ncloud_motion.py\nnowcast.py&#x27;],
+        [&#x27;08&#x27;, &#x27;产品发布&#x27;, &#x27;output&#x27;, &#x27;科研图展示分类色带、等值线、城市抽样值和数据来源；JSON 保存原始数值与计算层级。远端流程附加模型时次、生成时刻和 SHA-256。&#x27;, &#x27;national_product.py\nlocal_product.py\nprecompute.py\nremote_product.py&#x27;]
+      ];
+      const pButtons = $(&#x27;pipeline-buttons&#x27;);
+      pipeline.forEach((p, i) =&gt; {
+        const b = document.createElement(&#x27;button&#x27;);
+        b.type = &#x27;button&#x27;; b.dataset.index = i; b.setAttribute(&#x27;aria-pressed&#x27;, i === 0 ? &#x27;true&#x27; : &#x27;false&#x27;);
+        b.innerHTML = &#x27;&lt;code&gt;&#x27; + p[0] + &#x27;&lt;/code&gt;&lt;br&gt;&#x27; + p[1]; pButtons.appendChild(b);
+      });
+      function selectPipeline(i) {
+        [...pButtons.children].forEach((b, j) =&gt; b.setAttribute(&#x27;aria-pressed&#x27;, j === i ? &#x27;true&#x27; : &#x27;false&#x27;));
+        const p = pipeline[i]; $(&#x27;pipeline-title&#x27;).textContent = p[1]; $(&#x27;pipeline-body&#x27;).textContent = p[3]; $(&#x27;pipeline-code&#x27;).textContent = p[4];
+        $(&#x27;pipeline-badge&#x27;).textContent = p[2].toUpperCase(); $(&#x27;pipeline-badge&#x27;).className = &#x27;badge &#x27; + p[2];
+      }
+      pButtons.addEventListener(&#x27;click&#x27;, e =&gt; { const b = e.target.closest(&#x27;button&#x27;); if (b) selectPipeline(Number(b.dataset.index)); });
+      selectPipeline(0);
+
+      function drawSpectrum() {
+        const elev = value(&#x27;solar-elevation&#x27;), aod = value(&#x27;spectral-aod&#x27;);
+        setOut(&#x27;solar-elevation&#x27;, elev.toFixed(1) + &#x27;°&#x27;); setOut(&#x27;spectral-aod&#x27;, aod.toFixed(2));
+        const c = $(&#x27;spectrum-canvas&#x27;), x = c.getContext(&#x27;2d&#x27;), W=c.width, H=c.height;
+        x.clearRect(0,0,W,H); x.fillStyle=&#x27;#fff&#x27;; x.fillRect(0,0,W,H);
+        x.strokeStyle=&#x27;#d5dce3&#x27;; x.lineWidth=1;
+        for(let i=0;i&lt;=5;i++){ const yy=30+i*(H-70)/5; x.beginPath();x.moveTo(54,yy);x.lineTo(W-18,yy);x.stroke(); }
+        const airMass = Math.min(38, 1/(Math.sin((Math.max(elev,0.5))*Math.PI/180)+0.025));
+        const points=[];
+        for(let nm=400;nm&lt;=700;nm+=3){
+          const rayleigh=0.10*Math.pow(550/nm,4)*(airMass/10);
+          const mie=aod*(airMass/12)*Math.pow(550/nm,0.6);
+          const ozone=0.05*Math.exp(-Math.pow((nm-600)/65,2))*(airMass/10);
+          points.push([nm, Math.exp(-(rayleigh+mie+ozone))]);
+        }
+        const sx=nm=&gt;54+(nm-400)/300*(W-72), sy=t=&gt;H-40-t*(H-70);
+        const bands=[[400,490,&#x27;#5068c8&#x27;],[490,560,&#x27;#3d9c70&#x27;],[560,590,&#x27;#c7a122&#x27;],[590,630,&#x27;#d96f35&#x27;],[630,700,&#x27;#bd3f3a&#x27;]];
+        bands.forEach(b=&gt;{x.fillStyle=b[2];x.globalAlpha=.12;x.fillRect(sx(b[0]),30,sx(b[1])-sx(b[0]),H-70);});x.globalAlpha=1;
+        x.strokeStyle=&#x27;#17202a&#x27;;x.lineWidth=3;x.beginPath();points.forEach((p,i)=&gt;i?x.lineTo(sx(p[0]),sy(p[1])):x.moveTo(sx(p[0]),sy(p[1])));x.stroke();
+        x.fillStyle=&#x27;#17202a&#x27;;x.font=&#x27;12px IBM Plex Mono, monospace&#x27;;x.fillText(&#x27;relative transmission&#x27;,54,18);
+        [400,500,600,700].forEach(n=&gt;x.fillText(n+&#x27; nm&#x27;,sx(n)-16,H-16));
+        [450,550,650].forEach(n=&gt;{const p=points.reduce((a,b)=&gt;Math.abs(b[0]-n)&lt;Math.abs(a[0]-n)?b:a);x.fillStyle=n===450?&#x27;#4059af&#x27;:n===550?&#x27;#287d58&#x27;:&#x27;#a53430&#x27;;x.beginPath();x.arc(sx(n),sy(p[1]),5,0,Math.PI*2);x.fill();x.fillText(Math.round(p[1]*100)+&#x27;%&#x27;,sx(n)+8,sy(p[1])-7);});
+      }
+      [&#x27;solar-elevation&#x27;,&#x27;spectral-aod&#x27;].forEach(id=&gt;$(id).addEventListener(&#x27;input&#x27;,drawSpectrum)); drawSpectrum();
+
+      function drawCloud() {
+        const base=value(&#x27;cloud-base&#x27;), thick=value(&#x27;cloud-thickness&#x27;), low=value(&#x27;lower-cloud&#x27;);
+        setOut(&#x27;cloud-base&#x27;,base.toFixed(1)+&#x27; km&#x27;);setOut(&#x27;cloud-thickness&#x27;,thick.toFixed(1)+&#x27; km&#x27;);setOut(&#x27;lower-cloud&#x27;,low.toFixed(0)+&#x27;%&#x27;);
+        const c=$(&#x27;cloud-canvas&#x27;),x=c.getContext(&#x27;2d&#x27;),W=c.width,H=c.height;x.clearRect(0,0,W,H);x.fillStyle=&#x27;#fff&#x27;;x.fillRect(0,0,W,H);
+        const y=km=&gt;H-45-km/12*(H-75);
+        x.strokeStyle=&#x27;#d7dee5&#x27;;x.fillStyle=&#x27;#56616d&#x27;;x.font=&#x27;12px IBM Plex Mono, monospace&#x27;;
+        for(let k=0;k&lt;=12;k+=2){x.beginPath();x.moveTo(55,y(k));x.lineTo(W-20,y(k));x.stroke();x.fillText(k+&#x27; km&#x27;,12,y(k)+4);}
+        const rhPts=[];for(let k=0;k&lt;=12;k+=.25){let rh=30+12*Math.sin(k*1.3);if(k&gt;=base&amp;&amp;k&lt;=base+thick)rh=96;if(k&lt;1.4)rh=Math.max(rh,45+low*.45);rhPts.push([k,clamp(rh,0,100)]);}
+        const sx=v=&gt;75+v/100*(W-115);x.strokeStyle=&#x27;#1769aa&#x27;;x.lineWidth=2;x.beginPath();rhPts.forEach((p,i)=&gt;i?x.lineTo(sx(p[1]),y(p[0])):x.moveTo(sx(p[1]),y(p[0])));x.stroke();
+        x.fillStyle=&#x27;rgba(23,105,170,.18)&#x27;;x.fillRect(75,y(base+thick),W-115,y(base)-y(base+thick));x.strokeStyle=&#x27;#c23b32&#x27;;x.lineWidth=3;x.strokeRect(75,y(base+thick),W-115,y(base)-y(base+thick));
+        if(low&gt;5){x.fillStyle=&#x27;rgba(86,97,109,&#x27;+(0.10+low/180)+&#x27;)&#x27;;x.fillRect(75,y(1.4),W-115,y(.35)-y(1.4));x.fillStyle=&#x27;#56616d&#x27;;x.fillText(&#x27;low-cloud obstruction &#x27;+low.toFixed(0)+&#x27;%&#x27;,90,y(.8));}
+        x.fillStyle=&#x27;#17202a&#x27;;x.fillText(&#x27;RH profile&#x27;,W-105,22);x.fillStyle=&#x27;#c23b32&#x27;;x.fillText(&#x27;selected canvas&#x27;,90,y(base+thick)+18);
+      }
+      [&#x27;cloud-base&#x27;,&#x27;cloud-thickness&#x27;,&#x27;lower-cloud&#x27;].forEach(id=&gt;$(id).addEventListener(&#x27;input&#x27;,drawCloud));drawCloud();
+
+      function growth(rh){return rh&lt;=60?1:Math.pow(.4/(1-Math.min(rh,90)/100),.6)}
+      function groundHeight(aod,rh){const ae=aod*growth(rh), beta=ae/2;if(beta&lt;=.02)return 0;return 2000*Math.log(beta/.02)}
+      function drawRay(){
+        const base=value(&#x27;ray-base&#x27;),aod=value(&#x27;ray-aod&#x27;),rh=value(&#x27;ray-rh&#x27;),block=value(&#x27;ray-blocker&#x27;);
+        setOut(&#x27;ray-base&#x27;,base.toFixed(0)+&#x27; m&#x27;);setOut(&#x27;ray-aod&#x27;,aod.toFixed(2));setOut(&#x27;ray-rh&#x27;,rh.toFixed(0)+&#x27;%&#x27;);setOut(&#x27;ray-blocker&#x27;,block.toFixed(0)+&#x27; km&#x27;);
+        const eff=Math.max(0,base-groundHeight(aod,rh)),R=6371,vertex=Math.sqrt(2*R*(eff/1000)),reach=2*vertex;
+        const rayH=d=&gt;Math.pow(d-vertex,2)/(2*R)*1000;
+        const blockerTop=1800, blocked=block&lt;=reach &amp;&amp; rayH(block)&lt;=blockerTop;
+        const c=$(&#x27;ray-canvas&#x27;),x=c.getContext(&#x27;2d&#x27;),W=c.width,H=c.height;x.clearRect(0,0,W,H);x.fillStyle=&#x27;#fff&#x27;;x.fillRect(0,0,W,H);
+        const sx=d=&gt;48+d/800*(W-70),sy=m=&gt;H-38-m/11000*(H-68);
+        x.strokeStyle=&#x27;#d7dee5&#x27;;x.fillStyle=&#x27;#56616d&#x27;;x.font=&#x27;11px IBM Plex Mono, monospace&#x27;;
+        for(let d=0;d&lt;=800;d+=100){x.beginPath();x.moveTo(sx(d),28);x.lineTo(sx(d),H-38);x.stroke();x.fillText(d+&#x27; km&#x27;,sx(d)-16,H-17);}
+        [0,3000,6000,9000].forEach(m=&gt;{x.beginPath();x.moveTo(48,sy(m));x.lineTo(W-22,sy(m));x.stroke();x.fillText((m/1000)+&#x27; km&#x27;,8,sy(m)+4);});
+        x.fillStyle=&#x27;rgba(194,59,50,.28)&#x27;;x.fillRect(sx(block-22),sy(blockerTop),sx(block+22)-sx(block-22),sy(0)-sy(blockerTop));
+        x.fillStyle=&#x27;rgba(23,105,170,.16)&#x27;;x.fillRect(sx(0),sy(base+1300),46,sy(base)-sy(base+1300));x.strokeStyle=&#x27;#1769aa&#x27;;x.lineWidth=3;x.beginPath();
+        let started=false;for(let d=0;d&lt;=Math.min(800,reach);d+=4){const h=rayH(d);if(h&gt;11000)continue;started?x.lineTo(sx(d),sy(h)):x.moveTo(sx(d),sy(h));started=true;}x.stroke();
+        x.fillStyle=&#x27;#17202a&#x27;;x.fillText(&#x27;observer canvas&#x27;,sx(0)+7,sy(base)-8);x.fillText(&#x27;upstream low cloud&#x27;,sx(block)-54,sy(blockerTop)-8);x.fillText(&#x27;effective base &#x27;+Math.round(eff)+&#x27; m&#x27;,W-190,20);
+        const v=$(&#x27;ray-verdict&#x27;);v.className=&#x27;callout &#x27;+(blocked?&#x27;red&#x27;:&#x27;green&#x27;);v.innerHTML=&#x27;&lt;strong&gt;&#x27;+(blocked?&#x27;光路被截断：illumination gate = 0&#x27;:&#x27;光路通过：继续累积其他 gate&#x27;)+&#x27;&lt;/strong&gt;&lt;br&gt;有效云底 &#x27;+Math.round(eff)+&#x27; m；几何最大可达 &#x27;+Math.round(reach)+&#x27; km；光线在低云位置高度 &#x27;+Math.round(rayH(block))+&#x27; m。&#x27;;
+      }
+      [&#x27;ray-base&#x27;,&#x27;ray-aod&#x27;,&#x27;ray-rh&#x27;,&#x27;ray-blocker&#x27;].forEach(id=&gt;$(id).addEventListener(&#x27;input&#x27;,drawRay));drawRay();
+
+      const presets={good:[52,68,12,58,.10,.48],nocanvas:[0,0,5,55,.08,.45],overcast:[60,72,92,88,.18,.55],haze:[48,58,18,88,.58,.72]};
+      const scoreIds=[&#x27;score-mid&#x27;,&#x27;score-high&#x27;,&#x27;score-low&#x27;,&#x27;score-humidity&#x27;,&#x27;score-aod&#x27;,&#x27;score-boundary&#x27;];
+      function aodScore(a){const pts=[[0,1],[.1,1],[.2,.9],[.3,.75],[.5,.4],[.8,0]];for(let i=1;i&lt;pts.length;i++)if(a&lt;=pts[i][0]){const p=pts[i-1],q=pts[i],t=(a-p[0])/(q[0]-p[0]);return p[1]+t*(q[1]-p[1]);}return 0;}
+      function updateScore(){
+        const mid=value(&#x27;score-mid&#x27;),high=value(&#x27;score-high&#x27;),low=value(&#x27;score-low&#x27;),rh=value(&#x27;score-humidity&#x27;),aod=value(&#x27;score-aod&#x27;),ratio=value(&#x27;score-boundary&#x27;),canvas=Math.max(mid,high);
+        setOut(&#x27;score-mid&#x27;,mid+&#x27;%&#x27;);setOut(&#x27;score-high&#x27;,high+&#x27;%&#x27;);setOut(&#x27;score-low&#x27;,low+&#x27;%&#x27;);setOut(&#x27;score-humidity&#x27;,rh+&#x27;%&#x27;);setOut(&#x27;score-aod&#x27;,aod.toFixed(2));setOut(&#x27;score-boundary&#x27;,ratio.toFixed(2));
+        const comps={presence:Math.min(1,canvas/20),obstruction:low&lt;=20?1:Math.max(0,1-(low-20)/80),solar:1,illumination:ratio&lt;=.7?1:ratio&gt;=1?0:(1-ratio)/.3,humidity:trapezoid(rh,20,40,80,95),altitude:(mid+high)&gt;0?(high+.5*mid)/(mid+high):0,sweet:trapezoid(canvas,10,40,75,95),clean:aodScore(aod*growth(rh))};
+        const gw={presence:2,obstruction:2,solar:1.5,illumination:2.5},mw={humidity:1,altitude:1,sweet:1.5,clean:1.5};
+        const gsum=Object.values(gw).reduce((a,b)=&gt;a+b,0),msum=Object.values(mw).reduce((a,b)=&gt;a+b,0);
+        let g=1;Object.keys(gw).forEach(k=&gt;g*=Math.pow(comps[k],gw[k]/gsum));let m=Object.keys(mw).reduce((s,k)=&gt;s+mw[k]*comps[k],0)/msum,p=g*m;
+        $(&#x27;gate-score&#x27;).textContent=g.toFixed(2);$(&#x27;modifier-score&#x27;).textContent=m.toFixed(2);$(&#x27;final-score&#x27;).textContent=p.toFixed(2);
+        const labels={presence:&#x27;中高云存在&#x27;,obstruction:&#x27;低云通透&#x27;,solar:&#x27;事件时机&#x27;,illumination:&#x27;向日照明&#x27;,humidity:&#x27;湿度&#x27;,altitude:&#x27;云高偏好&#x27;,sweet:&#x27;覆盖甜点&#x27;,clean:&#x27;本地空气&#x27;};
+        $(&#x27;score-bars&#x27;).innerHTML=Object.keys(comps).map(k=&gt;&#x27;&lt;div class=&quot;bar-row &#x27;+(gw[k]?&#x27;gate&#x27;:&#x27;&#x27;)+&#x27;&quot;&gt;&lt;code&gt;&#x27;+labels[k]+&#x27;&lt;/code&gt;&lt;div class=&quot;bar-track&quot;&gt;&lt;div class=&quot;bar-fill&quot; style=&quot;width:&#x27;+Math.round(comps[k]*100)+&#x27;%&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;span&gt;&#x27;+comps[k].toFixed(2)+&#x27;&lt;/span&gt;&lt;/div&gt;&#x27;).join(&#x27;&#x27;);
+      }
+      function usePreset(name){scoreIds.forEach((id,i)=&gt;$(id).value=presets[name][i]);[...$(&#x27;score-presets&#x27;).children].forEach(b=&gt;b.setAttribute(&#x27;aria-pressed&#x27;,b.dataset.preset===name?&#x27;true&#x27;:&#x27;false&#x27;));updateScore();}
+      $(&#x27;score-presets&#x27;).addEventListener(&#x27;click&#x27;,e=&gt;{const b=e.target.closest(&#x27;button&#x27;);if(b)usePreset(b.dataset.preset)});scoreIds.forEach(id=&gt;$(id).addEventListener(&#x27;input&#x27;,updateScore));usePreset(&#x27;good&#x27;);
+
+      const stageCopy=[
+        [&#x27;基础气象场&#x27;,&#x27;逐格匹配自己的事件时刻，再用本格低/中/高云、RH、能见度计算基础指数。&#x27;, [&#x27;优点：一次读取整张 GFS 网格，便宜而连续&#x27;,&#x27;缺点：看不见向日云边界，容易把整片连续云带误判为候选&#x27;]],
+        [&#x27;Stage A · 1-D 向日筛选&#x27;,&#x27;从每格沿太阳方向读取表面分层云量，寻找画布云从 &gt;20% 降到 ≤20% 的边界，并与几何最大光程比较。&#x27;, [&#x27;边界在最大光程 70% 内：照明 gate = 1&#x27;,&#x27;70%–100%：线性衰减；超过光程或始终无入口：0&#x27;]],
+        [&#x27;Stage B · 候选 2-D 精修&#x27;,&#x27;只对 Stage A 指数 ≥0.50 的候选下载压力层 cube，诊断真实云层，并让光线逐列检查云、地形、气溶胶。&#x27;, [&#x27;候选按有效小时与 5° tile 分组，共享 cube&#x27;,&#x27;最多精修 4000 格；大 bbox 自动拆分，避免内存爆炸&#x27;]],
+        [&#x27;Stage C · 卫星临近订正&#x27;,&#x27;事件前 0–2 小时，用两帧 B13 云掩膜的最佳整数像素位移估计运动，将模式概率场向观测边界有限拉动。&#x27;, [&#x27;稳定平流默认置信度 0.8；发展对流降到 0.4&#x27;,&#x27;位移限制在 2°，亚像素变化不虚报为“已订正”&#x27;]]
+      ];
+      function drawNational(stage){
+        const c=$(&#x27;national-canvas&#x27;),x=c.getContext(&#x27;2d&#x27;),W=c.width,H=c.height,cols=34,rows=17,cw=(W-50)/cols,ch=(H-48)/rows;
+        x.clearRect(0,0,W,H);x.fillStyle=&#x27;#fff&#x27;;x.fillRect(0,0,W,H);
+        for(let j=0;j&lt;rows;j++)for(let i=0;i&lt;cols;i++){
+          const blob1=Math.exp(-((i-11-stage*.8)**2/38+(j-8)**2/10));const blob2=.8*Math.exp(-((i-24+stage*.4)**2/28+(j-6-stage*.3)**2/8));let v=clamp(blob1+blob2);
+          const corridor=Math.abs(j-(10-i*.12));if(stage&gt;=1&amp;&amp;corridor&lt;2.2&amp;&amp;i&gt;10&amp;&amp;i&lt;25)v*=.18;if(stage&gt;=2&amp;&amp;i&gt;17&amp;&amp;i&lt;21&amp;&amp;j&gt;5&amp;&amp;j&lt;12)v*=.15;if(stage===3)v=clamp(v*.8+.2*Math.exp(-((i-23)**2/18+(j-5)**2/5)));
+          const hue=210-v*195,sat=45+v*35,light=96-v*48;x.fillStyle=`hsl(${hue} ${sat}% ${light}%)`;x.fillRect(28+i*cw,18+j*ch,cw+.3,ch+.3);
+        }
+        x.strokeStyle=&#x27;#17202a&#x27;;x.lineWidth=1.5;x.strokeRect(28,18,cols*cw,rows*ch);x.fillStyle=&#x27;#56616d&#x27;;x.font=&#x27;11px IBM Plex Mono, monospace&#x27;;x.fillText(&#x27;synthetic condition index field&#x27;,28,H-12);
+      }
+      function useStage(n){[...$(&#x27;national-stages&#x27;).children].forEach(b=&gt;b.setAttribute(&#x27;aria-pressed&#x27;,Number(b.dataset.stage)===n?&#x27;true&#x27;:&#x27;false&#x27;));const s=stageCopy[n];$(&#x27;national-explain&#x27;).innerHTML=&#x27;&lt;h3&gt;&#x27;+s[0]+&#x27;&lt;/h3&gt;&lt;p&gt;&#x27;+s[1]+&#x27;&lt;/p&gt;&lt;ul&gt;&#x27;+s[2].map(v=&gt;&#x27;&lt;li&gt;&#x27;+v+&#x27;&lt;/li&gt;&#x27;).join(&#x27;&#x27;)+&#x27;&lt;/ul&gt;&#x27;;drawNational(n);}
+      $(&#x27;national-stages&#x27;).addEventListener(&#x27;click&#x27;,e=&gt;{const b=e.target.closest(&#x27;button&#x27;);if(b)useStage(Number(b.dataset.stage));});useStage(0);
+    })();
+  &lt;/script&gt;
+&lt;/div&gt;
+
+&lt;script src=&quot;https://unpkg.com/@floating-ui/core@1.7.3/dist/floating-ui.core.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script src=&quot;https://unpkg.com/@floating-ui/dom@1.7.4/dist/floating-ui.dom.umd.min.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  if (window.FloatingUIDOM == null) {
+    return;
+  }
+  const { autoUpdate, computePosition, flip, offset, shift, size } =
+    window.FloatingUIDOM;
+  const tooltipPlacements = new Set([&quot;top&quot;, &quot;right&quot;, &quot;bottom&quot;, &quot;left&quot;]);
+  const tooltipId = `codex-visualization-tooltip-${
+    window.crypto?.randomUUID?.() ?? Date.now().toString(36)
+  }`;
+  const tooltipGap = 5;
+  const hoverDelay = 700;
+  const skipDelay = 300;
+  let activeTrigger = null;
+  let pendingTrigger = null;
+  let tooltip = null;
+  let openTimeout = null;
+  let autoUpdateCleanup = null;
+  let positionRequest = 0;
+  let skipDelayUntil = 0;
+
+  const getTrigger = (target) =&gt;
+    target?.nodeType === Node.ELEMENT_NODE
+      ? target.closest(&quot;[data-tooltip]&quot;)
+      : null;
+  const containsTarget = (trigger, target) =&gt;
+    target?.nodeType != null &amp;&amp; trigger.contains(target);
+  const getContent = (trigger) =&gt;
+    trigger.getAttribute(&quot;data-tooltip&quot;)?.trim() ?? &quot;&quot;;
+  const getPlacement = (trigger) =&gt; {
+    const placement = trigger.getAttribute(&quot;data-tooltip-placement&quot;);
+    return tooltipPlacements.has(placement) ? placement : &quot;top&quot;;
+  };
+  const getTooltip = () =&gt; {
+    if (tooltip == null) {
+      tooltip = document.createElement(&quot;div&quot;);
+      tooltip.id = tooltipId;
+      tooltip.className = &quot;tooltip&quot;;
+      tooltip.setAttribute(&quot;role&quot;, &quot;tooltip&quot;);
+    }
+    return tooltip;
+  };
+  const setDescribedBy = (trigger, described) =&gt; {
+    const ids = new Set(
+      (trigger.getAttribute(&quot;aria-describedby&quot;) ?? &quot;&quot;)
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+    if (described) {
+      ids.add(tooltipId);
+    } else {
+      ids.delete(tooltipId);
+    }
+    if (ids.size === 0) {
+      trigger.removeAttribute(&quot;aria-describedby&quot;);
+    } else {
+      trigger.setAttribute(&quot;aria-describedby&quot;, [...ids].join(&quot; &quot;));
+    }
+  };
+  const clearOpenTimeout = () =&gt; {
+    if (openTimeout != null) {
+      window.clearTimeout(openTimeout);
+      openTimeout = null;
+    }
+    pendingTrigger = null;
+  };
+  const closeTooltip = (activateSkipDelay = true) =&gt; {
+    clearOpenTimeout();
+    positionRequest += 1;
+    autoUpdateCleanup?.();
+    autoUpdateCleanup = null;
+    if (activeTrigger == null) {
+      return;
+    }
+    setDescribedBy(activeTrigger, false);
+    activeTrigger = null;
+    tooltip?.remove();
+    if (activateSkipDelay) {
+      skipDelayUntil = Date.now() + skipDelay;
+    }
+  };
+  const updatePosition = (trigger, floating) =&gt; {
+    const request = ++positionRequest;
+    void computePosition(trigger, floating, {
+      middleware: [
+        offset(tooltipGap),
+        flip({ padding: tooltipGap }),
+        shift({ padding: tooltipGap }),
+        size({
+          padding: tooltipGap,
+          apply({ availableHeight, availableWidth, elements }) {
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-width&quot;,
+              `${Math.max(0, availableWidth)}px`,
+            );
+            elements.floating.style.setProperty(
+              &quot;--tooltip-available-height&quot;,
+              `${Math.max(0, availableHeight)}px`,
+            );
+          },
+        }),
+      ],
+      placement: getPlacement(trigger),
+      strategy: &quot;fixed&quot;,
+    })
+      .then(({ x, y }) =&gt; {
+        if (activeTrigger !== trigger || request !== positionRequest) {
+          return;
+        }
+        const scale = window.devicePixelRatio || 1;
+        floating.style.transform = `translate(${Math.round(x * scale) / scale}px, ${Math.round(y * scale) / scale}px)`;
+        floating.style.visibility = &quot;visible&quot;;
+      })
+      .catch(() =&gt; {
+        if (activeTrigger === trigger &amp;&amp; request === positionRequest) {
+          closeTooltip(false);
+        }
+      });
+  };
+  const openTooltip = (trigger) =&gt; {
+    const content = getContent(trigger);
+    if (!trigger.isConnected || content.length === 0) {
+      return;
+    }
+    clearOpenTimeout();
+    if (activeTrigger === trigger) {
+      return;
+    }
+    closeTooltip();
+    const floating = getTooltip();
+    floating.textContent = content;
+    floating.style.visibility = &quot;hidden&quot;;
+    floating.style.transform = &quot;translate(0, 0)&quot;;
+    document.body.appendChild(floating);
+    activeTrigger = trigger;
+    setDescribedBy(trigger, true);
+    autoUpdateCleanup = autoUpdate(trigger, floating, () =&gt; {
+      updatePosition(trigger, floating);
+    });
+  };
+  const requestOpen = (trigger, immediate = false) =&gt; {
+    if (
+      getContent(trigger).length === 0 ||
+      activeTrigger === trigger ||
+      pendingTrigger === trigger
+    ) {
+      return;
+    }
+    clearOpenTimeout();
+    pendingTrigger = trigger;
+    const delay =
+      immediate || activeTrigger != null || Date.now() &lt; skipDelayUntil
+        ? 0
+        : hoverDelay;
+    if (delay === 0) {
+      openTooltip(trigger);
+      return;
+    }
+    openTimeout = window.setTimeout(() =&gt; {
+      openTimeout = null;
+      pendingTrigger = null;
+      openTooltip(trigger);
+    }, delay);
+  };
+  const handlePointerOpen = (event) =&gt; {
+    if (event.pointerType === &quot;touch&quot;) {
+      return;
+    }
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    requestOpen(trigger);
+  };
+  const handleLeave = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger == null || containsTarget(trigger, event.relatedTarget)) {
+      return;
+    }
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const handleFocusIn = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (trigger?.matches(&quot;:focus-visible&quot;)) {
+      requestOpen(trigger, true);
+    }
+  };
+  const handleKeyDown = (event) =&gt; {
+    if (event.key === &quot;Escape&quot;) {
+      closeTooltip();
+    }
+  };
+  const handleContextMenu = (event) =&gt; {
+    const trigger = getTrigger(event.target);
+    if (activeTrigger === trigger || pendingTrigger === trigger) {
+      closeTooltip();
+    }
+  };
+  const destroy = () =&gt; {
+    closeTooltip(false);
+    document.removeEventListener(&quot;pointerover&quot;, handlePointerOpen);
+    document.removeEventListener(&quot;pointerout&quot;, handleLeave);
+    document.removeEventListener(&quot;focusin&quot;, handleFocusIn);
+    document.removeEventListener(&quot;focusout&quot;, handleLeave);
+    document.removeEventListener(&quot;keydown&quot;, handleKeyDown);
+    document.removeEventListener(&quot;contextmenu&quot;, handleContextMenu);
+    tooltip = null;
+  };
+
+  document.addEventListener(&quot;pointerover&quot;, handlePointerOpen);
+  document.addEventListener(&quot;pointerout&quot;, handleLeave);
+  document.addEventListener(&quot;focusin&quot;, handleFocusIn);
+  document.addEventListener(&quot;focusout&quot;, handleLeave);
+  document.addEventListener(&quot;keydown&quot;, handleKeyDown);
+  document.addEventListener(&quot;contextmenu&quot;, handleContextMenu);
+  window.addEventListener(&quot;pagehide&quot;, destroy, { once: true });
+})();
+&lt;/script&gt;
+&lt;script id=&quot;codex-visualization-lucide&quot; async src=&quot;https://unpkg.com/lucide@1.17.0/dist/umd/lucide.js&quot;&gt;&lt;/script&gt;
+&lt;script&gt;
+(() =&gt; {
+  const initialize = () =&gt; {
+    globalThis.lucide?.createIcons({ attrs: { width: 16, height: 16 } });
+  };
+  if (globalThis.lucide != null) {
+    initialize();
+    return;
+  }
+  document
+    .getElementById(&quot;codex-visualization-lucide&quot;)
+    ?.addEventListener(&quot;load&quot;, initialize, { once: true });
+})();
+&lt;/script&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;
+"></iframe>
+</body>
+</html>

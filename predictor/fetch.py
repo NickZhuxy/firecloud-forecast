@@ -92,6 +92,8 @@ class OpenMeteoSource:
         ",wind_speed_700hPa,wind_direction_700hPa"
         ",wind_speed_400hPa,wind_direction_400hPa"
     )
+    MAX_REQUEST_ATTEMPTS = 3
+    TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
     def __init__(self, session=None, timeout: float = 15.0, solar_event: SolarEvent | str = SolarEvent.SUNSET):
         self._session = session
@@ -363,32 +365,54 @@ class OpenMeteoSource:
         return float(values[idx])
 
     def _get_json(self, url: str, params: dict):
-        if self._session is not None:
-            resp = self._session.get(url, params=params, timeout=self._timeout)
-            resp.raise_for_status()
-            return resp.json()
         import json
         import time as time_module
-        from urllib.error import HTTPError
+        from urllib.error import HTTPError, URLError
         from urllib.parse import urlencode
         from urllib.request import urlopen
 
         request_url = f"{url}?{urlencode(params)}"
-        for attempt in range(3):
+        for attempt in range(self.MAX_REQUEST_ATTEMPTS):
             try:
+                if self._session is not None:
+                    resp = self._session.get(url, params=params, timeout=self._timeout)
+                    resp.raise_for_status()
+                    return resp.json()
                 with urlopen(request_url, timeout=self._timeout) as fh:
                     return json.loads(fh.read().decode("utf-8"))
-            except HTTPError as exc:
-                if exc.code != 429 or attempt == 2:
+            except (HTTPError, URLError, TimeoutError, OSError) as exc:
+                if not self._is_transient_request_error(exc) or attempt == self.MAX_REQUEST_ATTEMPTS - 1:
                     raise
-                retry_header = exc.headers.get("Retry-After")
-                try:
-                    delay = float(retry_header) if retry_header else 1.5 * (attempt + 1)
-                except ValueError:
-                    delay = 1.5 * (attempt + 1)
-                time_module.sleep(min(delay, 10.0))
+                time_module.sleep(self._retry_delay_seconds(exc, attempt))
 
         raise RuntimeError("unreachable")
+
+    @classmethod
+    def _is_transient_request_error(cls, exc: Exception) -> bool:
+        """Return whether a failed upstream request is safe to retry."""
+        from urllib.error import HTTPError, URLError
+
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+        if status_code is None:
+            status_code = getattr(exc, "status_code", None)
+        if isinstance(status_code, int):
+            return status_code in cls.TRANSIENT_HTTP_STATUS_CODES
+        if isinstance(exc, HTTPError):
+            return exc.code in cls.TRANSIENT_HTTP_STATUS_CODES
+        if isinstance(exc, URLError):
+            return isinstance(exc.reason, (TimeoutError, OSError))
+        return isinstance(exc, (TimeoutError, OSError))
+
+    @staticmethod
+    def _retry_delay_seconds(exc: Exception, attempt: int) -> float:
+        """Bounded exponential backoff, respecting an upstream Retry-After hint."""
+        retry_header = getattr(getattr(exc, "headers", None), "get", lambda _key: None)("Retry-After")
+        try:
+            if retry_header is not None:
+                return min(max(float(retry_header), 0.0), 10.0)
+        except ValueError:
+            pass
+        return min(1.5 * (2 ** attempt), 10.0)
 
     @classmethod
     def _snapshot_for_sunset(

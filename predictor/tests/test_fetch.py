@@ -488,6 +488,68 @@ def test_open_meteo_retries_http_429(monkeypatch):
     assert len(calls) == 2
 
 
+@pytest.mark.parametrize(
+    "first_error",
+    [
+        lambda url: __import__("urllib.error", fromlist=["HTTPError"]).HTTPError(
+            url, 503, "service unavailable", {}, None
+        ),
+        lambda _url: TimeoutError("read timed out"),
+        lambda _url: __import__("urllib.error", fromlist=["URLError"]).URLError(
+            TimeoutError("TLS handshake timed out")
+        ),
+    ],
+)
+def test_open_meteo_retries_transient_upstream_failures(monkeypatch, first_error):
+    import json
+    import time as time_module
+    import urllib.request
+
+    payload = _open_meteo_payload()
+    calls = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps(payload).encode()
+
+    def fake_urlopen(url, timeout):
+        calls.append(url)
+        if len(calls) == 1:
+            raise first_error(url)
+        return Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(time_module, "sleep", lambda _: None)
+
+    assert OpenMeteoSource()._get_json("https://example.test", {"x": "1"}) == payload
+    assert len(calls) == 2
+
+
+def test_open_meteo_does_not_retry_permanent_http_error(monkeypatch):
+    from urllib.error import HTTPError
+    import time as time_module
+    import urllib.request
+
+    calls = []
+
+    def fake_urlopen(url, timeout):
+        calls.append(url)
+        raise HTTPError(url, 400, "bad request", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(time_module, "sleep", lambda _: None)
+
+    with pytest.raises(HTTPError, match="HTTP Error 400"):
+        OpenMeteoSource()._get_json("https://example.test", {"x": "1"})
+    assert len(calls) == 1
+
+
 def _detail_weather_payload(mid_cover: float) -> dict:
     payload = _open_meteo_payload(
         times=("2026-06-22T10:00",),
