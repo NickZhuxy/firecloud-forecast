@@ -346,7 +346,7 @@ def test_upstream_excess_over_hazy_observer_blocks():
 
 
 # ---------------------------------------------------------------------------
-# FA-A4: hygroscopic growth on the per-column veto (manual §2.4.3 雾霾)
+# FA-A4: hygroscopic growth on the per-column veto (manual §2.4.3 haze)
 # ---------------------------------------------------------------------------
 
 
@@ -367,7 +367,7 @@ def test_humid_upstream_pocket_blocks_at_uniform_aod():
     # Same column AOD everywhere, but an 85% RH pocket at 150 km swells that
     # column's extinction (g≈1.80): its equivalent ground rises ~1.2 km above
     # the dry-observer datum while the grazing ray is only ~7 m up → veto.
-    # This is the manual's 雾霾联手 case, the gap FA-A2's note §5 left open.
+    # This is the manual's combined fog and haze case, the gap FA-A2's note §5 left open.
     aod = [0.5] * 5
     rh = [60.0, 60.0, 60.0, 85.0, 60.0]
     result = trace_ray_clearance(
@@ -454,7 +454,7 @@ def test_missing_observer_elevation_skips_terrain_checks():
 
 
 def test_virga_extends_an_opaque_layer_downward_into_the_ray():
-    # FA-C6 "浓密幡状云还会挡住阳光": an opaque deck whose hard base sits 500 m
+    # FA-C6 "dense fall streaks can also block sunlight": an opaque deck whose hard base sits 500 m
     # above the ray blocks once its 600 m fall streaks are accounted for.
     h50 = ray_height_m(50.0, VERTEX_2KM)
     hard_base = h50 + 500.0
@@ -475,7 +475,7 @@ def test_virga_extends_an_opaque_layer_downward_into_the_ray():
 
 
 # ---------------------------------------------------------------------------
-# FA-C3: graded semi-transparent obstruction along the light path (杂云调光)
+# FA-C3: graded semi-transparent obstruction along the light path (cloud attenuation)
 # ---------------------------------------------------------------------------
 
 from predictor.illumination import _layer_opacity as _opacity
@@ -490,7 +490,7 @@ def test_clear_sky_path_transmittance_is_unity():
 
 def test_semi_transparent_wisp_dims_but_does_not_block():
     # A thin wisp (opacity < threshold) on the lit path: the ray survives but
-    # arrives dimmed — the manual's 半透明 → 闷烧 band, invisible to the old
+    # arrives dimmed — the manual's semi-transparent → dimmed glow band, invisible to the old
     # binary veto.
     wisp = _thin(0.0, 500.0)
     xs = _xsec([0, 50, 100, 150, 200], [[], [], [], [wisp], []])
@@ -504,7 +504,7 @@ def test_semi_transparent_wisp_dims_but_does_not_block():
 def test_transmittance_multiplies_per_crossed_column():
     # The same veil crossed at two sampled columns loses light twice: the
     # per-column product is the crude slant-path integration (§4.2.1(2): the
-    # longer the grazing run inside the veil, the closer to 封死).
+    # longer the grazing run inside the veil, the closer to fully blocked).
     wisp = _thin(0.0, 500.0)
     xs = _xsec([0, 50, 100, 150, 200], [[], [], [wisp], [wisp], []])
     result = trace_ray_clearance(xs, 2000.0)

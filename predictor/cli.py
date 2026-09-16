@@ -1,7 +1,7 @@
 """Unified ``firecloud`` command-line entry (#61).
 
 One command, flags rather than subcommands. With no arguments it produces today's
-national firecloud potential for **both** events (朝霞 + 晚霞) into a per-date folder
+national firecloud potential for **both** events (sunrise + sunset) into a per-date folder
 ``output/{date}/``:
 
     firecloud                              # today · national · sunrise + sunset
@@ -76,7 +76,7 @@ def plan_products(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="firecloud",
-        description="Generate China firecloud (sunrise/sunset glow) forecast products.",
+        description="Generate firecloud (sunrise/sunset glow) forecast products. Current coverage: China; additional regions are planned.",
     )
     parser.add_argument(
         "--date", type=date.fromisoformat, default=None,
@@ -140,16 +140,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 # --- progress framing + humanized errors (#106) ---------------------------
 
-_EVENT_CN = {SolarEvent.SUNRISE: "日出", SolarEvent.SUNSET: "日落"}
-_EVENTS_CN = {"both": "日出+日落", "sunrise": "日出", "sunset": "日落"}
+_EVENT_LABEL = {SolarEvent.SUNRISE: "sunrise", SolarEvent.SUNSET: "sunset"}
+_EVENT_LABELS = {"both": "sunrise + sunset", "sunrise": "sunrise", "sunset": "sunset"}
 _BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _product_label(product: PlannedProduct) -> str:
-    event_cn = _EVENT_CN[product.solar_event]
+    event_label = _EVENT_LABEL[product.solar_event]
     if product.scope == "national":
-        return f"国家{event_cn}图"
-    return f"本地{event_cn}图 ({product.lat}, {product.lon})"
+        return f"National {event_label} map"
+    return f"Local {event_label} map ({product.lat}, {product.lon})"
 
 
 def _format_elapsed(seconds: float) -> str:
@@ -157,13 +157,13 @@ def _format_elapsed(seconds: float) -> str:
     if whole < 60:
         return f"{whole}s"
     minutes, secs = divmod(whole, 60)
-    return f"{minutes}分{secs}s"
+    return f"{minutes}m {secs}s"
 
 
 def _format_beijing_time(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(_BEIJING_TZ).strftime("%Y-%m-%d %H:%M 北京时间")
+    return value.astimezone(_BEIJING_TZ).strftime("%Y-%m-%d %H:%M UTC+08:00")
 
 
 def _format_model_run(value: str) -> str:
@@ -178,14 +178,14 @@ def _format_model_run(value: str) -> str:
 
 
 def _remote_hit_message(result) -> str:
-    origin = "本地缓存的远端产品" if result.cached else "远端预计算产品"
-    runs = "、".join(_format_model_run(run) for run in result.model_runs)
+    origin = "Cached remote product" if result.cached else "Remote precomputed product"
+    runs = ", ".join(_format_model_run(run) for run in result.model_runs)
     if not runs:
-        runs = "未提供"
+        runs = "not provided"
     return (
-        f"{origin}已命中\n"
-        f"  模型起报: {runs}\n"
-        f"  产品生成: {_format_beijing_time(result.generated_at)}"
+        f"{origin} found\n"
+        f"  Model initialization: {runs}\n"
+        f"  Product generated: {_format_beijing_time(result.generated_at)}"
     )
 
 
@@ -210,18 +210,18 @@ def _plan_header(
     cold: bool,
     source: str,
 ) -> str:
-    scope = "全国+本地" if lat is not None else "全国"
-    cache = "冷(需下载)" if cold else "热(已缓存)"
-    eta = "预计 ~10–20 分钟,取决于网速" if cold else "预计 1–3 分钟"
+    scope = "national + local" if lat is not None else "national"
+    cache = "cold (downloads required)" if cold else "warm (cached)"
+    eta = "estimate ~10–20 min, depending on network speed" if cold else "estimate 1–3 min"
     if source == "remote":
-        source_status = "来源:仅远端 · 不启动本地下载"
+        source_status = "source: remote only · no local data downloads"
     elif source == "local":
-        source_status = f"来源:本地计算 · 缓存:{cache} · {eta}"
+        source_status = f"source: local computation · cache: {cache} · {eta}"
     else:
-        source_status = f"来源:远端优先 · 本地回退缓存:{cache}"
+        source_status = f"source: remote first · local fallback cache: {cache}"
     return (
-        f"firecloud · {target_date.isoformat()} · {_EVENTS_CN[event]} · {scope}\n"
-        f"计划:{n} 个产品 · {source_status}"
+        f"firecloud · {target_date.isoformat()} · {_EVENT_LABELS[event]} · {scope}\n"
+        f"Plan: {n} products · {source_status}"
     )
 
 
@@ -254,7 +254,7 @@ def _run_product(product: PlannedProduct, target_date: date, args) -> object:
         except RemoteProductUnavailable as exc:
             if args.source == "remote":
                 raise
-            logger.warning("远端预计算产品不可用，转为本地计算: %s", exc)
+            logger.warning("Remote precomputed product unavailable; falling back to local computation: %s", exc)
     if product.scope == "national":
         return generate_product(
             target_date, product.output_dir, dpi=args.dpi, source=None,
@@ -270,25 +270,25 @@ def _run_product(product: PlannedProduct, target_date: date, args) -> object:
 
 
 def _print_data_failure(i: int, n: int, label: str) -> None:
-    print(f"[{i}/{n}] ✗ {label}失败:数据源连不上(NOAA/网络,已自动重试多次)")
-    print("  多半是网络或 NOAA 源临时问题,不是你的操作。")
-    print("  → 稍后重跑(已下载的分片会复用,不会重下)")
-    print("  → 或加 --no-refine 先出粗图(跳过气压立体数据下载)")
+    print(f"[{i}/{n}] ✗ {label} failed: data source unreachable (NOAA/network; retries exhausted)")
+    print("  This is likely a temporary network or NOAA source issue, not your input.")
+    print("  → Retry later (downloaded subsets will be reused)")
+    print("  → Or add --no-refine for a coarse national map (skips national pressure-cube refinement)")
 
 
 def _print_unexpected_failure(i: int, n: int, label: str, verbose: bool) -> None:
-    print(f"[{i}/{n}] ✗ {label}出错了(通常不是你的操作问题)")
-    print("  常见原因是网络、NOAA 源或本地依赖临时异常。")
+    print(f"[{i}/{n}] ✗ {label} failed (usually a network, data-source, or dependency issue)")
+    print("  Common causes include network, NOAA source, or local dependency failures.")
     if verbose:
         traceback.print_exc()
     else:
-        print("  (加 --verbose 看完整技术细节)")
+        print("  (Add --verbose for full technical details)")
 
 
 def _print_remote_failure(i: int, n: int, label: str) -> None:
-    print(f"[{i}/{n}] ✗ {label}失败:远端预计算产品不可用")
-    print("  已按 --source remote 禁止本地大文件下载。")
-    print("  → 稍后重试，或使用 --source local 明确启动本地计算")
+    print(f"[{i}/{n}] ✗ {label} failed: Remote precomputed product unavailable")
+    print("  --source remote prevents local weather-data downloads.")
+    print("  → Retry later, or use --source local to compute locally")
 
 
 def _national_product_mod():
@@ -342,8 +342,8 @@ def main(argv: list[str] | None = None) -> int:
         succeeded += 1
 
     total = _format_elapsed(time.perf_counter() - run_started)
-    tail = "" if succeeded == n else f"({n - succeeded} 失败)"
-    print(f"\n总结:{succeeded}/{n} 出图  ·  总耗时 {total}{tail}")
+    tail = "" if succeeded == n else f" ({n - succeeded} failed)"
+    print(f"\nSummary: {succeeded}/{n} products  ·  elapsed {total}{tail}")
     return 0 if succeeded == n else 1
 
 

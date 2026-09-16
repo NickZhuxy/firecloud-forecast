@@ -37,7 +37,7 @@ def test_no_eligible_cells_skips_satellite_entirely():
     sat = _RecordingSat()
     res = apply_nowcast(_prob(), _LATS, _LONS, _times(5.0), sat, now=_NOW)
     assert res.applied is False and res.source == "model"
-    assert sat.calls == []                       # 门在取数之前
+    assert sat.calls == []                       # gate runs before data fetch
     np.testing.assert_array_equal(res.corrected_probability, _prob())
     assert not res.corrected_mask.any()
 
@@ -77,10 +77,10 @@ def test_regime_none_passes_through():
         observation_time=_NOW - timedelta(minutes=30), band="B13",
         source_label="t", retrieved_at=_NOW,
     )
-    sat = _RecordingSat(frames=[warm2, frame])   # 全暖 → 无云掩膜 → regime none
+    sat = _RecordingSat(frames=[warm2, frame])   # all warm → no cloud mask → regime none
     res = apply_nowcast(_prob(), _LATS, _LONS, _times(1.0), sat, now=_NOW)
     assert res.applied is False
-    assert len(sat.calls) == 2                    # 确实取了 2 帧
+    assert len(sat.calls) == 2                    # two frames were fetched
     np.testing.assert_array_equal(res.corrected_probability, _prob())
 
 
@@ -92,7 +92,7 @@ def _shifted_frames():
     lons = np.arange(116.0, 119.0, 0.25)
     ny, nx = lats.size, lons.size
     warm, cold = 290.0, 250.0
-    # 双向有界的云块——竖直通条会让互相关在垂直方向简并(任意 dy 等价)。
+    # Bounded cloud patch: a full-height stripe makes vertical correlation degenerate (any dy is equivalent).
     bt0 = np.full((ny, nx), warm); bt0[4:9, 4:7] = cold
     bt1 = np.full((ny, nx), warm); bt1[4:9, 5:8] = cold
     t0 = _NOW - timedelta(minutes=30)
@@ -120,10 +120,10 @@ def test_correction_nudges_toward_advected_position():
 
     assert res.applied is True and res.source == "satellite"
     assert res.motion.regime == "advective"
-    # 东移 1 px/30min = 0.5°/hr × 1h → dcol=+2;混合权 = confidence。
+    # Eastward 1 px/30min = 0.5°/hr × 1h → dcol=+2; blend weight = confidence.
     advected = np.roll(prob, 2, axis=1)
     expected = prob + res.motion.confidence * (advected - prob)
-    inner = np.s_[:, 2:]                          # 西侧 2 列是回卷条带,另测
+    inner = np.s_[:, 2:]                          # western two columns wrap around; tested separately
     np.testing.assert_allclose(res.corrected_probability[inner], expected[inner])
     assert res.corrected_mask[:, 2:].any()
     assert res.lead_hr_range == (1.0, 1.0)
@@ -134,7 +134,7 @@ def test_wrapped_edge_strip_reverts_to_model():
     prob = np.full((lats.size, lons.size), 0.7)
     times = _grid_times(prob.shape, 1.0)
     res = apply_nowcast(prob, lats, lons, times, _RecordingSat(frames=[f0, f1]), now=_NOW)
-    # 东移 dcol=+2 → 西侧 2 列是回卷数据:还原为模式值且不进 mask。
+    # Eastward dcol=+2: restore the western wraparound columns to model values and exclude from mask.
     np.testing.assert_array_equal(res.corrected_probability[:, :2], prob[:, :2])
     assert not res.corrected_mask[:, :2].any()
 
@@ -142,16 +142,16 @@ def test_wrapped_edge_strip_reverts_to_model():
 def test_only_eligible_band_cells_change():
     lats, lons, f0, f1 = _shifted_frames()
     prob = np.full((lats.size, lons.size), 0.7)
-    times = _grid_times(prob.shape, 5.0)          # 默认全部窗口外
+    times = _grid_times(prob.shape, 5.0)          # all cells outside the window by default
     near = np.datetime64(int((_NOW + timedelta(hours=1)).timestamp()), "s")
-    times[:, :6] = near                            # 只有西半有资格
+    times[:, :6] = near                            # only the western half is eligible
     res = apply_nowcast(prob, lats, lons, times, _RecordingSat(frames=[f0, f1]), now=_NOW)
-    assert not res.corrected_mask[:, 6:].any()     # 窗口外的格子不动
+    assert not res.corrected_mask[:, 6:].any()     # cells outside the window are unchanged
     np.testing.assert_array_equal(res.corrected_probability[:, 6:], prob[:, 6:])
 
 
 def test_ascending_latitude_direction_is_correct():
-    # 北移帧(dv>0);升序 lats 下订正必须把场向北(行号增大)搬。
+    # Northward frames (dv>0): with ascending latitudes, correction must move toward larger row indices.
     lats = np.arange(28.0, 31.0, 0.25)
     lons = np.arange(116.0, 119.0, 0.25)
     ny, nx = lats.size, lons.size
@@ -168,7 +168,7 @@ def test_ascending_latitude_direction_is_correct():
     times = _grid_times(prob.shape, 1.0)
     res = apply_nowcast(prob, lats, lons, times, _RecordingSat(frames=[f0, f1]), now=_NOW)
     assert res.applied
-    j = 5 + 2                                     # 北移 0.5°/hr × 1h = 2 行
+    j = 5 + 2                                     # Northward 0.5°/hr × 1h = 2 rows
     assert res.corrected_probability[j, :].mean() > prob[j, :].mean()
 
 

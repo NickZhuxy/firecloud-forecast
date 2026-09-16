@@ -223,7 +223,7 @@ def test_single_level_condensate_layer_optical_depth_nan():
 
 
 # ---------------------------------------------------------------------------
-# FA-C6: virga (落幡) lowering the effective base
+# FA-C6: virga (virga) lowering the effective base
 # ---------------------------------------------------------------------------
 
 _VIRGA_HEIGHTS = [500, 1500, 2500, 3500, 4500, 5500, 6500, 7500]
@@ -258,7 +258,7 @@ def test_virga_stops_at_the_first_dry_sublayer():
 
 
 def test_warm_base_layer_gets_no_virga():
-    # +5 °C base: no ice-phase fall-streak propensity (manual: 落幡 is a cold
+    # +5 °C base: no ice-phase fall-streak propensity (manual: virga is a cold
     # altocumulus / high-cloud phenomenon).
     warm = [295, 292, 289, 286, 283, 278, 272, 266]
     p = _profile(

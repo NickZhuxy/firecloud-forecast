@@ -57,7 +57,7 @@ def test_conversions_are_vectorized():
 
 
 # ---- FA-C4 (#86): parcel-lifting primitives ----
-# Theory: research/theory/fa-c4-skewt-stability-convective-regime.md §2.1
+# Theory: research/methodology.md (Cloud diagnosis and stability)
 
 
 def test_lcl_height_scales_linearly_with_dewpoint_depression():
@@ -84,7 +84,7 @@ def test_moist_lapse_below_dry_and_converges_when_cold():
     cold = moist_adiabatic_lapse_c_per_km(213.0, 200.0)    # near tropopause, dry
     assert 0.0 < warm < DRY_LAPSE_C_PER_KM
     assert warm < 6.5                                      # moist tropical ≈ 4–5 ℃/km
-    assert cold > 9.0                                      # §1.1.3 阶段3: Γm → Γd
+    assert cold > 9.0                                      # §1.1.3 stage 3: Γm → Γd
     assert cold <= DRY_LAPSE_C_PER_KM + 1e-9
 
 

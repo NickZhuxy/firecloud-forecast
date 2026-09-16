@@ -1,5 +1,6 @@
 """Per-cell sunset interpolation and GFS timestep selection (#43)."""
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
@@ -73,7 +74,8 @@ def test_sunset_timestamp_sunrise_reads_sunrise_key():
     from predictor.solar_event import SolarEvent
     d = date(2026, 6, 29)
     expected = sun(
-        Observer(latitude=35.0, longitude=115.0), date=d, tzinfo=timezone.utc
+        Observer(latitude=35.0, longitude=115.0), date=d,
+        tzinfo=ZoneInfo("Asia/Shanghai")
     )["sunrise"].timestamp()
     assert _sunset_timestamp(d, 35.0, 115.0, SolarEvent.SUNRISE) == expected
     assert _sunset_timestamp(d, 35.0, 115.0, SolarEvent.SUNRISE) != _sunset_timestamp(
@@ -241,3 +243,32 @@ def test_nearest_valid_time_rejects_non_increasing_valid_times():
     )
     with pytest.raises(ValueError, match="strictly increasing"):
         nearest_valid_time_indices(sunsets, valid_times)
+
+
+@pytest.mark.parametrize("target_date", [date(2026, 9, 14), date(2026, 1, 1), date(2026, 3, 8), date(2026, 11, 1)])
+@pytest.mark.parametrize("lat,lon,zone", [
+    (34.05, -118.24, "America/Los_Angeles"),
+    (40.71, -74.01, "America/New_York"),
+    (31.23, 121.47, "Asia/Shanghai"),
+])
+@pytest.mark.parametrize("event", ["sunrise", "sunset"])
+def test_grid_event_belongs_to_requested_local_date(target_date, lat, lon, zone, event):
+    result = sunset_utc_grid(target_date, [lat], [lon], solar_event=event)
+    actual = datetime.fromtimestamp(int(result[0, 0].astype("int64")), timezone.utc)
+    expected = sun(Observer(lat, lon), date=target_date, tzinfo=ZoneInfo(zone))[event]
+    assert actual.astimezone(ZoneInfo(zone)).date() == target_date
+    assert abs((actual - expected).total_seconds()) <= 1
+
+
+def test_us_sunset_grid_interpolates_across_utc_midnight_without_day_jump():
+    target_date = date(2026, 9, 14)
+    lons = np.arange(-120.0, -73.0, 1.0)
+    times = sunset_utc_grid(target_date, [35.0], lons)[0]
+    for lon, actual in zip(lons, times):
+        expected = sun(Observer(35.0, lon), date=target_date,
+                       tzinfo=ZoneInfo("America/Los_Angeles"))["sunset"]
+        assert abs(int(actual.astype("int64")) - expected.timestamp()) < 120
+    assert np.all(np.diff(times.astype("int64")) < 0)
+    hours = hourly_valid_times(times)
+    assert hours[0].date() == target_date
+    assert hours[-1].date() == date(2026, 9, 15)

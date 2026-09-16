@@ -447,7 +447,7 @@ def generate_local_product(
     field toward the observed cloud motion; failures keep the field as-is and
     ``satellite=False`` skips the stage entirely."""
     from predictor.fetch import OpenMeteoSource
-    from predictor.features import compute_event_time
+    from predictor.solar_event import event_time_utc
     from predictor.gfs import GFSSource
     from predictor.rules import standard_predictor
 
@@ -456,8 +456,7 @@ def generate_local_product(
     cubes = cube_source if cube_source is not None else GFSSource()
     context = load_map_context()
 
-    reference = datetime(target_date.year, target_date.month, target_date.day, 12, tzinfo=timezone.utc)
-    event_time = compute_event_time(lat, lon, reference, solar_event)
+    event_time = event_time_utc(target_date, lat, lon, solar_event)
 
     field = build_local_field(
         pred, cubes, lat, lon, event_time,

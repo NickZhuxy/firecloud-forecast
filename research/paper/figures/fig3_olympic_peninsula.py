@@ -6,7 +6,7 @@ scores, and plots side-by-side cartopy heatmaps. The point of the figure
 is to show that weighted-sum produces uniform ~0.6 probability where the
 gate × modifier architecture correctly returns ~0 (no mid/high cloud canvas).
 
-Usage: uv run python docs/paper/figures/fig3_olympic_peninsula.py
+Usage: uv run python research/paper/figures/fig3_olympic_peninsula.py
 """
 from datetime import datetime, timezone
 from pathlib import Path

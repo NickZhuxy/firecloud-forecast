@@ -1,6 +1,6 @@
 # Agent coordination
 
-Before changing code, read `.agent-progress.md` in the repository root. It is the live coordination ledger for agents sharing this workspace and is intentionally ignored by Git.
+Before changing code, read `.agent-progress.md` in the repository root. If it does not exist (for example, in a fresh clone), create a minimal local ledger with the fields below. It is the live coordination ledger for agents sharing this workspace and is intentionally ignored by Git.
 
 ## Working protocol
 
@@ -17,3 +17,9 @@ Agents in separate Git worktrees do not share ignored files. For cross-worktree 
 
 - Project: <https://github.com/users/NickZhuxy/projects/2>
 - Repository: <https://github.com/NickZhuxy/firecloud-forecast>
+
+## Public repository conventions
+
+Use English for documentation, comments, and user-facing messages. Preserve existing
+localization data when needed for API compatibility. Follow `CONTRIBUTING.md` for
+tests and distribution boundaries; do not include local execution notes in releases.

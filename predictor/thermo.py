@@ -49,8 +49,8 @@ def dewpoint_k(t_k, rh_pct):
 
 
 # --- FA-C4 (#86): parcel lifting -------------------------------------------
-# Theory: research/theory/fa-c4-skewt-stability-convective-regime.md §2.1.
-# Manual (人工火烧云预报速成) constants: dry adiabat 9.8 ℃/km (§1.1.3, valid in
+# Theory: research/methodology.md (Cloud diagnosis and stability).
+# Manual (Practical Sunset-Glow Forecasting manual) constants: dry adiabat 9.8 ℃/km (§1.1.3, valid in
 # the lowest 3–4 km), mixing-ratio dewpoint line 1.2 ℃/km (§1.4.1). The moist
 # pseudo-adiabat has no manual formula ("gentler than dry, converges when the
 # vapor is exhausted"), so the standard AMS Glossary / Bolton (1980) form fills

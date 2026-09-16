@@ -178,10 +178,10 @@ def test_main_prints_plan_header_and_per_product_frame(monkeypatch, tmp_path, ca
     rc = main(["--date", "2026-06-29", "--event", "both", "--output", str(tmp_path)])
     out = capsys.readouterr().out
     assert rc == 0
-    assert "计划" in out and "2" in out          # plan header names the product count
-    assert "缓存" in out                          # cold/warm cache label present
+    assert "Plan" in out and "2" in out          # plan header names the product count
+    assert "cache" in out                          # cold/warm cache label present
     assert "[1/2]" in out and "[2/2]" in out       # per-product frame
-    assert "总结" in out and "2/2" in out          # run summary
+    assert "Summary" in out and "2/2" in out          # run summary
 
 
 def test_main_humanizes_gfs_unavailable_and_continues(monkeypatch, tmp_path, capsys):
@@ -199,7 +199,7 @@ def test_main_humanizes_gfs_unavailable_and_continues(monkeypatch, tmp_path, cap
     # The sunset product still ran despite the sunrise failure (no all-or-nothing).
     assert len(seen) == 2
     assert "✗" in out
-    assert "稍后重跑" in out and "--no-refine" in out   # actionable Chinese advice
+    assert "Retry later" in out and "--no-refine" in out   # actionable recovery advice
     assert "1/2" in out                                 # summary flags the partial result
     assert rc != 0                                      # a requested product failed
 
@@ -211,7 +211,7 @@ def test_main_unexpected_error_is_reassuring_not_bare_traceback(monkeypatch, tmp
     monkeypatch.setattr(cli_mod, "generate_product", boom)
     rc = main(["--date", "2026-06-29", "--event", "sunset", "--output", str(tmp_path)])
     out = capsys.readouterr().out
-    assert "不是你的操作" in out                 # reassuring, human framing
+    assert "Common causes include" in out         # actionable context without a traceback
     assert "Traceback" not in out               # no scary stack dump by default
     assert "matplotlib exploded" not in out     # raw exception text hidden
     assert rc != 0
@@ -334,7 +334,7 @@ def test_remote_only_supports_published_point_product(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize(
     ("cached", "heading"),
-    [(False, "远端预计算产品已命中"), (True, "本地缓存的远端产品已命中")],
+    [(False, "Remote precomputed product found"), (True, "Cached remote product found")],
 )
 def test_remote_hit_message_labels_times_in_beijing_time(tmp_path, cached, heading):
     result = RemoteProductResult(
@@ -348,8 +348,8 @@ def test_remote_hit_message_labels_times_in_beijing_time(tmp_path, cached, headi
 
     assert message.splitlines() == [
         heading,
-        "  模型起报: 2026-07-13 02:00 北京时间 (07-12 18Z)",
-        "  产品生成: 2026-07-13 07:32 北京时间",
+        "  Model initialization: 2026-07-13 02:00 UTC+08:00 (07-12 18Z)",
+        "  Product generated: 2026-07-13 07:32 UTC+08:00",
     ]
 
 
@@ -368,4 +368,4 @@ def test_remote_source_failure_never_starts_large_local_download(
     out = capsys.readouterr().out
 
     assert rc == 1
-    assert "远端预计算产品不可用" in out
+    assert "Remote precomputed product unavailable" in out

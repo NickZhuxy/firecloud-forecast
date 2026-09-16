@@ -48,7 +48,7 @@ def test_rh_source_lowers_confidence_with_named_reason():
     rh_bd = assess_layer(rh_layer, prof, [[_layer(2050, 5050)]])
     cond_bd = assess_layer(cond_layer, prof, [[_layer(2050, 5050)]])
     assert rh_bd.overall < cond_bd.overall
-    assert any("rh" in f.name.lower() or "回退" in f.detail for f in rh_bd.factors)
+    assert any("rh" in f.name.lower() or "fallback" in f.detail for f in rh_bd.factors)
 
 
 def test_time_divergence_lowers_confidence():

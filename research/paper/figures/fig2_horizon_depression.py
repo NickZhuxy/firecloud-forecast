@@ -6,7 +6,7 @@ of cloud altitude, with WMO three-tier altitude bands shaded.
 Right panel: direct-illumination time window Δt(h) = 2 d(h) / |dα/dt| from
 apparent sunset, using a mid-latitude approximate solar rate of 0.20°/min.
 
-Usage: uv run python docs/paper/figures/fig2_horizon_depression.py
+Usage: uv run python research/paper/figures/fig2_horizon_depression.py
 """
 from pathlib import Path
 

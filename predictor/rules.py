@@ -112,12 +112,12 @@ class LocalAerosolPerception:
 
     FA-A3 split (manual §2.4.1): local aerosol between the observer and the lit
     canvas dims perceived brightness/saturation — a quality effect, so this is
-    a modifier, not a gate ("火烧云再怎么大烧也是污烧": the burn still happens).
+    a modifier, not a gate ("even a strong glow can appear polluted": the burn still happens).
     Path extinction's probability role lives entirely in the geometry channel
     (equivalent ground per column, FA-A2; 1-D sunward mean in the illumination
     gate), so this rule reads only the local 550 nm AOD through the manual's
     Table 2.3 perception bands (≤0.1 crystal, 0.1–0.3 clean, 0.3–0.5 ordinary,
-    0.5–0.8 hazy, >0.8 污烧) — monotonic, deliberately not Goldilocks (audit §5).
+    0.5–0.8 hazy, >0.8 polluted glow) — monotonic, deliberately not Goldilocks (audit §5).
     Surface visibility remains a local fallback only. With neither signal the
     component is omitted (None), never assumed perfect.
 
@@ -223,8 +223,8 @@ class SunwardIlluminationGate:
         if f.sunward_ray_clearance is not None:
             if not f.sunward_ray_clearance.clear:
                 return 0.0
-            # FA-C3: semi-transparent 杂云 crossed by the ray dims whatever the
-            # 1-D geometry allows through (manual §4.2.1(2) 闷烧). Only actual
+            # FA-C3: semi-transparent intervening clouds crossed by the ray dim whatever the
+            # 1-D geometry allows through (manual §4.2.1(2) dimmed glow). Only actual
             # geometric scores are scaled — the None (component omitted)
             # branches keep their missing-data semantics.
             transmittance = f.sunward_ray_clearance.path_transmittance

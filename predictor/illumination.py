@@ -144,13 +144,13 @@ def select_canvas(
 ) -> CanvasSelection:
     """Pick the colour canvas by the manual's multi-criteria logic (FA-C2, §4.1.1).
 
-    Two steps, mirroring the 伊春 worked example ("高云云量没有中云多,而且高云
-    边界比中云边界近,所以直接看中云"):
+    Two steps, mirroring the Yichun worked example ("high cloud has less cover and a nearer boundary
+    than mid cloud, so use the mid-cloud layer"):
 
     1. Étage precedence: candidates are the mid/high decks whose étage cover is
        unknown or ≥ the presence threshold — low cloud under a present elevated
        deck is obstruction, not canvas (#13). Only when no elevated deck is
-       present does the whole sky compete (深圳 stratocumulus case).
+       present does the whole sky compete (Shenzhen stratocumulus case).
     2. ``score = cover · substance · height · extent`` over the candidates;
        ties break to the higher base (the old rule's degenerate case). Cover is
        dominant; substance (τ, thickness×phase fallback), height and boundary

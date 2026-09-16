@@ -1,9 +1,9 @@
 """FA-C2 multi-criteria canvas selection (#88, manual §4.1.1).
 
-The canvas pick follows the manual's 伊春 worked example — étage cover and
+The canvas pick follows the manual's Yichun worked example — étage cover and
 sunward boundary distance rank the diagnosed decks, with optical substance and
 height as soft criteria — instead of "highest deck always wins". Invariants
-from research/theory/fa-c2-canvas-layer-selection.md §4.
+from research/methodology.md (Canvas selection).
 """
 import math
 
@@ -70,7 +70,7 @@ def test_raising_cover_never_demotes_from_canvas():
 # ---------------------------------------------------------------------------
 # Étage precedence (#13 semantics kept): low cloud under a present mid/high
 # deck is obstruction, not canvas; it becomes eligible only when nothing
-# mid/high is present (manual §4.1.1 深圳 stratocumulus case).
+# mid/high is present (manual §4.1.1 Shenzhen stratocumulus case).
 # ---------------------------------------------------------------------------
 
 
@@ -93,7 +93,7 @@ def test_low_deck_wins_when_mid_high_below_presence():
 
 
 def test_low_only_sky_keeps_low_canvas():
-    low = _layer(1800, 2000 - 200, phase="liquid", conf=0.8)  # 深圳-like stratocumulus
+    low = _layer(1800, 2000 - 200, phase="liquid", conf=0.8)  # Shenzhen-like stratocumulus
     assert canvas_layer_from_diagnosis([low]) is low
 
 
@@ -131,7 +131,7 @@ def test_single_layer_is_always_canvas():
 
 
 # ---------------------------------------------------------------------------
-# Boundary distance (manual 伊春: "高云边界比中云边界近,所以直接看中云").
+# Boundary distance (manual Yichun: "the high-cloud boundary is nearer, so use mid cloud").
 # ---------------------------------------------------------------------------
 
 

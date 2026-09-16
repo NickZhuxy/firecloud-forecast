@@ -79,7 +79,7 @@ def test_existing_behavior_unchanged_without_layers():
 def test_virga_lowers_effective_base_but_not_etage_identity():
     # FA-C6: the canvas's fall streaks lower the GEOMETRY base (reach/duration
     # shrink with it), but the deck's étage identity keeps the true base — the
-    # manual measures "云底（不算落幡）".
+    # manual measures "cloud base excluding virga".
     virga_canvas = CloudLayer(
         6500.0, 9000.0, 2500.0, "ice", 0.63, "condensate",
         signal_margin=10.0, virga_extension_m=800.0,

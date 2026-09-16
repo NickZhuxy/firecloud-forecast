@@ -84,9 +84,9 @@ def sunset_speed_km_min(lat: float) -> float:
     return _SUNSET_SPEED_EQUATOR_KM_MIN * math.cos(math.radians(lat))
 
 
-# Manual appendix (人工火烧云预报速成) terminator-speed values cluster in a narrow
+# Manual appendix (Practical Sunset-Glow Forecasting manual) terminator-speed values cluster in a narrow
 # 18–21 km/min band across China, centred near 20 — notably below the cos-lat
-# physical speed and flatter in latitude (see research/theory/fa-g4-terminator-speed.md).
+# physical speed and flatter in latitude (see research/methodology.md).
 _MANUAL_TERMINATOR_SPEED_KM_MIN = 20.0
 
 
@@ -194,7 +194,7 @@ def aerosol_ground_height_m(
 
     ``rh_pct`` (FA-A4) is the co-located near-ground relative humidity: the AOD
     is amplified by :func:`hygroscopic_growth_factor` before the profile math,
-    so a humid boundary layer raises h_x by ``H·ln(g)`` (manual §2.4.3 雾霾).
+    so a humid boundary layer raises h_x by ``H·ln(g)`` (manual §2.4.3 haze).
 
     Below ``h_x`` the near-surface aerosol is "effectively opaque" to grazing
     sunlight. Returns 0 when AOD is unknown / non-positive, or when the surface is

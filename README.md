@@ -1,144 +1,133 @@
 # Firecloud Forecast
 
-面向中国地区的火烧云条件预测算法与本地科研制图工具。系统使用公开数值预报、物理规则
-和人工预报经验，输出可解释的**条件指数**；该数值尚未经过统计校准，不应解释为真实
-概率。
+**Explainable sunrise and sunset glow forecasts.**
 
-项目不维护交互网页或在线 API。全国标准图可由 GitHub Actions 远端预计算并通过
-GitHub Pages 静态分发；本地科研计算与公开分享仍使用同一张 SunsetWx 风格标准图。
+Firecloud combines public weather forecasts, cloud-layer diagnosis, and sunward
+illumination geometry to produce national and local maps with traceable metadata.
+Its output is a **condition index from 0 to 1**, not a calibrated probability:
+`0.8` does not mean an 80% chance of a colorful sky.
 
-## 当前能力
+This is research software. It provides a Python package and command-line tools;
+precomputed maps can be distributed through a static GitHub Pages feed.
 
-- GFS 0.25° 压力层、三档云量、2m 相对湿度、能见度与全国地面网格读取。
-- 温湿廓线标准化、多层云诊断、云底/云顶/相态/置信度与照明几何。
-- 沿真实日落方位的 0–800 km 三维路径和垂直剖面诊断。
-- gate × modifier 可解释评分，并与标量规则保持 `1e-9` 等价。
-- 中国全国场按每格日落时间选择最近的共同 GFS cycle 时次后向量化评分。
-- 本地输出完整 SunsetWx 风格 PNG 与 JSON 元数据。
-- 全国成品支持远端预计算、SHA-256 校验、过期检查和本地缓存回退。
+**Current coverage:** China is the first supported region. Coverage will expand
+to additional regions in future releases.
 
-## 安装
+## Quick start
+
+Requires Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv sync
+git clone https://github.com/NickZhuxy/firecloud-forecast.git
+cd firecloud-forecast
+uv sync --frozen
+uv run firecloud --help
+uv run firecloud --source remote --event sunset
 ```
 
-GRIB/GFS 开发在 macOS 上还需要：
+The last command downloads a published map if one is available. It fails with
+an explanation if the feed is unavailable or stale, without starting a local
+weather-data download. The public feed is best-effort and may have coverage gaps.
+
+For local computation:
 
 ```bash
-brew install eccodes geos proj
+uv run firecloud --source local --event sunset
 ```
 
-## 生成预测图（统一 `firecloud` CLI）
+The first local run downloads GFS subsets and Cartopy map data. Downloads can be
+large, and full refinement can take tens of minutes or longer. On macOS, if
+native GRIB or mapping libraries are missing, install `eccodes`, `geos`, and
+`proj` with Homebrew. See [usage and troubleshooting](docs/usage.md).
+
+## What it does
+
+- Produces national sunrise/sunset maps and optional detailed local maps.
+- Reads GFS 0.25° forecasts and diagnoses cloud base, top, phase, and opacity.
+- Evaluates the sunward path out to 800 km, including cloud and aerosol obstruction.
+- Combines necessary conditions and quality modifiers into an explainable index.
+- Saves PNG maps and JSON provenance, timing, and algorithm metadata.
+- Supports remote downloads with checksum verification and valid-cache fallback.
 
 ```bash
-firecloud                              # 今天 · 全国 · 朝霞 + 晚霞
-firecloud --date 2026-06-29
-firecloud --event sunrise              # 只出朝霞
-firecloud --source remote              # 只取远端成品，失败时绝不启动大下载
-firecloud --source local               # 明确在本机下载 GFS 并完整计算
-firecloud --lat 31.23 --lon 121.47     # + 上海局部精细产品（远端优先）
-firecloud --lat 31.23 --lon 121.47 --source remote  # 只取已发布的全国+局部图
-firecloud --lat 31.2 --lon 121.5 --radius 120 --resolution 0.2  # 未发布网格会本地计算
+uv run firecloud                          # Today, both events; remote first
+uv run firecloud --event sunrise          # One event
+uv run firecloud --lat 31.23 --lon 121.47  # Add local products around Shanghai
+uv run firecloud --source local --no-refine --event sunset
 ```
 
-全国图和已发布点位默认使用 `--source auto`：先获取远端预计算的 PNG/JSON，远端尚未发布、
-已过期、坐标/半径/分辨率不匹配或校验失败时才回退到本地完整计算。已经下载且仍在有效期内
-的远端成品可在短暂断网时复用。定时 Pages 任务默认发布上海 `31.23,121.47`、150 km、0.1°；
-Actions 的 `locations` 输入可用逗号分隔的 `NAME:LAT:LON` 扩展地点。`--source remote` 不做
-本地回退，因此只有请求与已发布点位及网格参数完全一致时才成功。
+`--source auto` is the default. If remote products are missing, invalid, or do not
+match the requested grid, it falls back to local computation. Use `--source remote`
+when you only want published products. Local products default to a 150 km radius
+and 0.1° evaluation grid; this finer sampling does **not** increase the resolution
+of the underlying GFS model.
 
-输出按日期建文件夹，文件名带事件（朝霞/晚霞同日不再互相覆盖）；给坐标再加局部图：
+Outputs are grouped by date:
 
 ```text
-output/2026-06-29/national-sunrise.png
-output/2026-06-29/national-sunset.png
-output/2026-06-29/point-31.23_121.47-sunrise.png  # 给 --lat/--lon 时
-output/2026-06-29/point-31.23_121.47-sunset.png
+output/YYYY-MM-DD/
+├── national-sunrise.png
+├── national-sunrise.json
+├── national-sunset.png
+├── national-sunset.json
+└── point-31.23_121.47-sunset.png   # Plus JSON, when coordinates are supplied
 ```
 
-局部图在坐标周边小网格上逐格跑**完整单点物理**（FA-G5 截面光追 + 云诊断），共享一次 GFS cube、
-快照按 Open-Meteo 批量取——国家级省掉的真保真，而非密插值。`--radius`（km）/`--resolution`（度）
-控制范围与评估网格（默认 150km / 0.1°，全国域内自动控量）。远端和本地局部图使用同一套
-全域条件指数、0.3/0.5/0.7/0.9 等值线、STIX 科研字体和非校准指标声明。
+## Documentation
 
-PNG 是唯一标准版式，包含模型初始化时间、逐格事件有效时段、行政边界、经纬度与
-“暖色更优”色标；JSON 保存相同的数据来源、时间、算法和性能元数据（含 `solar_event`、
-`event_range_utc`）。首次运行会下载 GFS GRIB 子集与 Cartopy Natural Earth 地图资料。
-`output/` 是本地产物目录，不进入 Git。
+| Guide | Contents |
+| --- | --- |
+| [Usage](docs/usage.md) | Installation, CLI options, output interpretation, troubleshooting |
+| [Architecture](docs/architecture.md) | Data flow, package map, contributor invariants |
+| [Methodology](research/methodology.md) | Implemented assumptions, scoring, scientific limitations |
+| [Static publishing](docs/publishing.md) | Precomputation and GitHub Pages setup |
+| [Contributing](CONTRIBUTING.md) | Development setup, tests, and pull requests |
+| [Research](research/README.md) | Experiments and the historical paper |
 
-## 远端预计算与静态发布
-
-[`.github/workflows/precompute-pages.yml`](.github/workflows/precompute-pages.yml) 在每个 GFS
-cycle 发布完成后定时运行，也支持从 Actions 页面手动触发。它默认计算上海日期的今天和
-明天、朝霞和晚霞，并把一次完整快照部署到 GitHub Pages：
+## Repository layout
 
 ```text
-products/latest/2026-07-10/sunrise.json       # 客户端入口清单
-products/runs/<算法版本>/<GFS时次>/...        # 不可变 PNG/JSON 成品
+predictor/              Forecast package and command-line entry points
+  tests/                Synthetic, regression, and opt-in network tests
+docs/                   User and developer guides
+research/
+  experiments/          Reproducible research scripts
+  paper/                Historical LaTeX case study and figure sources
+  methodology.md        Current implementation guide
+.github/                Test/publishing workflows and contribution templates
 ```
 
-首次启用需要在仓库 `Settings → Pages` 中把发布来源设为 **GitHub Actions**，并把工作流
-合并到默认分支；定时任务只从默认分支运行。公开仓库使用标准 GitHub-hosted runner，且
-Pages 流量和站点体积保持在 GitHub 限额内时，这套方案不需要另买服务器。具体配额以
-[GitHub Actions 计费说明](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
-和 [GitHub Pages 限额](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
-为准。
+Downloaded data, generated forecasts, private reference documents, and personal
+planning archives stay outside version control. The lockfile and small paper
+figures remain tracked for reproducibility. Internal implementation diaries have
+been replaced by focused public guides; their originals remain in Git history.
 
-需要在本地检查发布目录时，可以手动构建；这条命令会真的下载并计算 GFS 数据：
+## Scientific status
 
-```bash
-PYTHONPATH=. uv run --no-sync python -m predictor.precompute \
-  --days 2 --output _site
-```
+The score is an uncalibrated heuristic. Cloud boundaries, aerosol structure,
+terrain, and event timing are uncertain at model resolution. Offline regression
+and physical-consistency tests check software behavior; they do not establish
+real-world forecast skill. Satellite-related modules are experimental and their
+availability must be checked in product metadata. This is not a full spectral
+radiative-transfer model, and it does not predict exact sky colors.
 
-客户端默认读取 `https://nickzhuxy.github.io/firecloud-forecast/`。测试其他部署时可设置
-`FIRECLOUD_REMOTE_BASE_URL`，无需修改代码。
+Some Python fields retain historical names such as `probability` for compatibility;
+interpret them as condition indices. The legacy `label_zh` localization field is
+also retained, while public documentation and command-line output use English.
 
-底层单事件入口仍在（同样按日期建子文件夹）：
+## Contributing and next steps
 
-```bash
-PYTHONPATH=. uv run python -m predictor.national_product \
-  --date 2026-06-29 --event sunset --output-dir products
-# → products/2026-06-29/national-sunset.png + .json
-```
+Bug reports, reproducible forecast cases, documentation improvements, and
+independent validation are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md)
+and the [issue tracker](https://github.com/NickZhuxy/firecloud-forecast/issues).
+Planning lives on the [project board](https://github.com/users/NickZhuxy/projects/2).
 
-## 其他本地诊断
+The most useful next steps are an independent validation dataset, a small gallery
+of verified forecast examples, and a versioned release with clear data provenance.
+Algorithm changes should be evaluated separately from repository maintenance.
 
-真实 GFS 单点廓线 smoke：
+## License
 
-```bash
-PYTHONPATH=. uv run python -m predictor.gfs_smoke --lat 31.23 --lon 121.47
-```
-
-代码中还提供 sounding 与日落方向垂直剖面绘图函数，供算法复核和与 Windy/人工分析
-并排比较。
-
-## 测试
-
-```bash
-PYTHONPATH=. uv run --no-sync pytest -m "not integration"  # 默认，不访问外网
-PYTHONPATH=. uv run --no-sync pytest -m integration        # 手动，真实 GFS
-```
-
-## 目录
-
-- `predictor/` — 数据源、标准化、云层诊断、几何、评分、全国场和本地制图。
-- `predictor/tests/` — 合成场、规则等价、回归与真实数据分层测试。
-- `research/theory/` — 气象与大气光学依据。
-- `research/paper/` — 历史 CONUS 案例论文的 LaTeX 源文件与图表。
-- `docs/superpowers/specs/` — 已交付功能的设计与验收记录。
-- `AGENTS.md` — 多 Agent 协作规则；实时认领记录在本地 `.agent-progress.md`。
-
-## 数据路线与限制
-
-全国产品当前基于免费 GFS 0.25°，空间分辨率约 25 km。它是模式预测场，不是真实卫星
-云图；FY-4/Himawari 红外亮温和云边界融合属于后续卫星订正路线。
-
-项目不规划依靠个人长期观察积累训练集。验证优先使用公开模式/卫星资料、离线物理
-情景、专业观测和同时次人工交叉检查。
-
-## 规划
-
-- [Agile Project](https://github.com/users/NickZhuxy/projects/2)
-- [v0.2 · 真实云层诊断](https://github.com/NickZhuxy/firecloud-forecast/milestone/1)
+Licensed under the [MIT License](LICENSE).
+Weather data, maps, and third-party references have their own terms; see
+[data sources](docs/data-sources.md).

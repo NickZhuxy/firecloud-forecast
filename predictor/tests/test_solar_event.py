@@ -36,3 +36,15 @@ def test_spec_for_accepts_plain_string():
 def test_spec_for_rejects_unknown():
     with pytest.raises(ValueError):
         spec_for("noon")
+
+
+@pytest.mark.parametrize("event", [SolarEvent.SUNRISE, SolarEvent.SUNSET])
+def test_event_date_is_identical_for_signed_and_gfs_longitudes(event):
+    from datetime import date, timezone
+    from predictor.solar_event import event_time_utc
+
+    target_date = date(2026, 9, 14)
+    signed = event_time_utc(target_date, 34.05, -118.25, event)
+    gfs = event_time_utc(target_date, 34.05, 241.75, event)
+    assert signed == gfs
+    assert signed.tzinfo == timezone.utc

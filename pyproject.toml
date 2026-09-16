@@ -1,7 +1,11 @@
 [project]
 name = "firecloud-forecast"
 version = "0.1.0"
-description = "Physics-motivated sunset-glow condition forecasting"
+description = "Explainable sunrise and sunset glow condition forecasting"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["weather", "sunrise", "sunset", "forecast", "atmospheric-science"]
 requires-python = ">=3.11"
 dependencies = [
     "herbie-data>=2024.8.0",
@@ -14,6 +18,11 @@ dependencies = [
     "astral>=3.2",
     "requests>=2.31",
 ]
+
+[project.urls]
+Homepage = "https://github.com/NickZhuxy/firecloud-forecast"
+Documentation = "https://github.com/NickZhuxy/firecloud-forecast/tree/main/docs"
+Issues = "https://github.com/NickZhuxy/firecloud-forecast/issues"
 
 [project.scripts]
 firecloud = "predictor.cli:main"
@@ -40,6 +49,28 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["predictor"]
+exclude = ["predictor/tests/**"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/predictor",
+    "/docs/*.md",
+    "/research/README.md",
+    "/research/methodology.md",
+    "/research/experiments",
+    "/research/paper/README.md",
+    "/research/paper/Makefile",
+    "/research/paper/*.tex",
+    "/research/paper/*.bib",
+    "/research/paper/figures/*.py",
+    "/research/paper/figures/*.png",
+    "/README.md",
+    "/CONTRIBUTING.md",
+    "/LICENSE",
+    "/pyproject.toml",
+    "/uv.lock",
+]
+exclude = ["**/__pycache__/**", "**/*.pyc"]
 
 [tool.pytest.ini_options]
 testpaths = ["predictor/tests"]

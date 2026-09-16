@@ -41,11 +41,11 @@ class CloudLayer:
     # when not derivable (RH-fallback layer, or a single-level layer that cannot
     # be integrated); consumers then fall back to the thickness×phase proxy.
     optical_depth: float = float("nan")
-    # Fall-streak (落幡/virga) depth below base_m (FA-C6, manual §2.2.2): how far
+    # Fall-streak (virga) depth below base_m (FA-C6, manual §2.2.2): how far
     # precipitation from a cold, optically substantial deck survives into the
     # humid sub-base air before evaporating. Lowers the EFFECTIVE geometry base
     # (base_m − virga_extension_m); the étage identity keeps the true base
-    # (the manual measures "云底（不算落幡）"). 0 when absent.
+    # (the manual measures "cloud base excluding virga"). 0 when absent.
     virga_extension_m: float = 0.0
 
 
@@ -94,8 +94,8 @@ class CloudDiagnosisConfig:
     liquid_eff_radius_m: float = 1.0e-5
     ice_eff_radius_m: float = 3.0e-5
     # Virga (FA-C6, manual §2.2.2). A deck sheds visible fall streaks when its
-    # base is cold (ice-phase propensity; the manual's 落幡云洞 altocumulus runs
-    # from about −20 °C, generic 幡 earlier → −10 °C default) AND it is optically
+    # base is cold (ice-phase propensity; the manual's virga-hole altocumulus runs
+    # from about −20 °C, generic fall streaks earlier → −10 °C default) AND it is optically
     # substantial (τ ≥ 1: thin wisps shed nothing that survives). The streaks
     # reach down through the CONTIGUOUS humid sub-base air (RH ≥ 60%) and
     # evaporate at the first dry layer, capped at a typical virga depth.

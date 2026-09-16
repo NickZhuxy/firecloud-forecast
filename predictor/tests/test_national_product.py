@@ -820,7 +820,7 @@ def test_generate_product_applies_nowcast_and_attaches_block(monkeypatch, tmp_pa
     assert field.nowcast is not None and field.nowcast["applied"] is True
     assert field.nowcast["cells_corrected"] == 1
     assert field.nowcast["regime"] == "advective"
-    assert field.probability[0, 0] == 0.99          # 上图替换生效
+    assert field.probability[0, 0] == 0.99          # replacement field is used in the plot
 
 
 def test_generate_product_satellite_off_never_calls_nowcast(monkeypatch, tmp_path):

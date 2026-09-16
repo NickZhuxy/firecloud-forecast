@@ -848,7 +848,7 @@ def test_transient_retry_log_is_human_and_hides_exception_repr(monkeypatch, capl
     warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
     assert warnings, "a retry should log at WARNING"
     line = warnings[0].message
-    assert "重试" in line and "1/3" in line          # human: which attempt
+    assert "retrying" in line and "1/3" in line          # human: which attempt
     assert "HTTPSConnectionPool" not in line          # raw repr not in the headline
 
 

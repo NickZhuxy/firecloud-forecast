@@ -49,6 +49,8 @@ concurrency:
 
 jobs:
   build:
+    # Forks must explicitly opt in before running expensive forecast publishing.
+    if: github.repository == 'NickZhuxy/firecloud-forecast' || vars.FIRECLOUD_ENABLE_PUBLISHING == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 330
     env:
