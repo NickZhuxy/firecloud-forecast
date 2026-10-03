@@ -142,6 +142,7 @@ the event time in local time and UTC. It records the GFS forecast hour separatel
 | [Usage](docs/usage.md) | Installation, CLI options, output interpretation, troubleshooting |
 | [Example forecast](examples/shanghai-sunset/README.md) | A real map, exact source times, and offline integrity verification |
 | [New York City pilot](examples/new-york-sunset/README.md) | A local forecast, model times, input limits, and download measurements |
+| [Observation pilot](docs/observation-pilot.md) | Save forecasts and record sky observations at one location |
 | [Project story](docs/project-story.md) | Development milestones, lessons, and evidence from repository history |
 | [Architecture](docs/architecture.md) | Data flow, package map, contributor invariants |
 | [Methodology](research/methodology.md) | Implemented assumptions, scoring, scientific limitations |

@@ -55,6 +55,7 @@ exclude = ["predictor/tests/**"]
 include = [
     "/predictor",
     "/docs/*.md",
+    "/docs/templates/*.csv",
     "/examples/shanghai-sunset",
     "/examples/new-york-sunset",
     "/research/README.md",
