@@ -117,8 +117,8 @@ def test_convective_regime_handling_never_pushes_probability_from_half():
 
 def test_more_local_aerosol_dims_but_never_extinguishes(base_features):
     """FA-A3, manual §2.4.1: local aerosol dims the perceived brightness and
-    saturation (质量) monotonically — but it does not prevent the burn. Even at
-    the >0.8 "污烧" band the event still happens, so with every necessary
+    saturation (quality) monotonically — but it does not prevent the burn. Even at
+    the >0.8 "polluted glow" band the event still happens, so with every necessary
     condition passing, the composite must fall with local AOD yet stay > 0."""
     aods = [0.0, 0.1, 0.3, 0.5, 0.8, 0.9]
     scores = [
@@ -128,7 +128,7 @@ def test_more_local_aerosol_dims_but_never_extinguishes(base_features):
         assert later <= earlier + 1e-12
     # Non-vacuous: the perception penalty really bites…
     assert scores[-1] < scores[0]
-    # …but never pretends the burn does not happen (污烧 ≠ 无烧).
+    # …but never pretends the burn does not happen (polluted glow is not absent glow).
     assert scores[-1] > 0.0
 
 
@@ -150,7 +150,7 @@ def test_rising_humidity_with_local_aerosol_never_raises_composite(base_features
 
 def test_semi_transparent_wisp_on_the_lit_path_never_raises_composite(base_features):
     """FA-C3, manual §4.2.1(2): a semi-transparent veil on the light path dims
-    the burn (闷烧) — adding one must never RAISE the composite, and must
+    the burn (dimmed glow) — adding one must never RAISE the composite, and must
     strictly lower it when the path was previously clean (non-vacuity)."""
     from predictor.ray_path import RayClearance
 

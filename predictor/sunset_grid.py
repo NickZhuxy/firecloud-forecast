@@ -10,10 +10,8 @@ from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 
 import numpy as np
-from astral import Observer
-from astral.sun import sun
 
-from predictor.solar_event import SolarEvent, spec_for
+from predictor.solar_event import SolarEvent, event_time_utc, spec_for
 
 
 def _axis(values, name: str) -> np.ndarray:
@@ -43,9 +41,8 @@ def _sunset_timestamp(
     target_date: date, lat: float, lon: float, solar_event: SolarEvent = SolarEvent.SUNSET
 ) -> float:
     spec = spec_for(solar_event)
-    observer = Observer(latitude=lat, longitude=lon)
     try:
-        event = sun(observer, date=target_date, tzinfo=timezone.utc)[spec.astral_key]
+        event = event_time_utc(target_date, lat, lon, solar_event)
     except ValueError:
         # Deterministic polar-edge degradation: the event's local solar hour (dusk
         # 18 / dawn 6).  China's 17–54 N domain does not take this path, but a failed
@@ -53,7 +50,8 @@ def _sunset_timestamp(
         midnight = datetime(
             target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc
         )
-        event = midnight + timedelta(hours=spec.fallback_solar_hour - lon / 15.0)
+        signed_lon = (lon + 180.0) % 360.0 - 180.0
+        event = midnight + timedelta(hours=spec.fallback_solar_hour - signed_lon / 15.0)
     return event.timestamp()
 
 
@@ -67,6 +65,7 @@ def sunset_utc_grid(
 ) -> np.ndarray:
     """Return a ``(lat, lon)`` UTC solar-event field as ``datetime64[s]``.
 
+    ``target_date`` is the local solar date, not the UTC event date.
     Target axes may be ascending or descending.  Sampling axes always include
     the exact target bounds, so interpolation never extrapolates. ``solar_event``
     (#60) selects sunset (default) or sunrise; the rest of the pipeline (GFS-hour

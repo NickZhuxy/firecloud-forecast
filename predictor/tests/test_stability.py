@@ -1,6 +1,6 @@
 """FA-C4 (#86): conditional-instability diagnosis — offline synthetic profiles.
 
-Theory: research/theory/fa-c4-skewt-stability-convective-regime.md §2.2/§2.3.
+Theory: research/methodology.md (Cloud diagnosis and stability).
 """
 from datetime import datetime, timezone
 

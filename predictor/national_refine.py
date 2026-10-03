@@ -234,7 +234,7 @@ def refine_field(
 
     n_to_refine = int(candidate_mask.sum())
     if n_to_refine:
-        logger.info("精修 %d 个候选格(%d 个下载组)…", n_to_refine, len(groups))
+        logger.info("Refining %d candidate cells (%d download groups)…", n_to_refine, len(groups))
 
     # Story B (#108): warm every distinct hour's cube on disk in parallel before
     # the serial decode/score loop, so the downloads overlap instead of queuing.
@@ -302,7 +302,7 @@ def refine_field(
         release(valid_times[previous_hour])
 
     if cells_refined:
-        logger.info("精修完成:%d 格 · %d 次立体数据读取", cells_refined, cubes_fetched)
+        logger.info("Refinement complete: %d cells · %d cube reads", cells_refined, cubes_fetched)
 
     spatial_tiles = {(tj, ti) for (_h, tj, ti) in groups}
     return RefineResult(

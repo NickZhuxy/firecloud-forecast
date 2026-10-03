@@ -1,0 +1,24 @@
+name: Feature or research proposal
+description: Propose an improvement with a defined scope and validation plan.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or research question
+      description: Who needs this, and what is currently missing?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Describe inputs, outputs, scope, and alternatives.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation and acceptance criteria
+      description: How would we know the change works? For physics changes, include sources and a discriminating test case.
+    validations:
+      required: true

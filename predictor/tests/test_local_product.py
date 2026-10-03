@@ -239,3 +239,26 @@ def test_local_metadata_and_caption_carry_nowcast():
     fig = mod.plot_local_product(field, date(2026, 6, 29), solar_event="sunset",
                                  generated_at=_VALID, context=None)
     assert any("satellite-nudged" in t.get_text() for t in fig.texts)
+
+
+def test_local_product_los_angeles_uses_requested_evening(monkeypatch, tmp_path):
+    from zoneinfo import ZoneInfo
+    from astral import Observer
+    from astral.sun import sun
+    import predictor.local_product as mod
+
+    captured = {}
+    def fake_build(pred, cubes, lat, lon, event_time, **kwargs):
+        captured["event_time"] = event_time
+        return _field()
+
+    monkeypatch.setattr(mod, "build_local_field", fake_build)
+    monkeypatch.setattr(mod, "load_map_context", lambda: None)
+    monkeypatch.setattr(mod, "save_local_product", lambda *a, **k: None)
+    target_date = date(2026, 9, 14)
+    mod.generate_local_product(target_date, tmp_path, 34.05, -118.24,
+                               source=object(), cube_source=object(), predictor=object(),
+                               satellite=False)
+    expected = sun(Observer(34.05, -118.24), date=target_date,
+                   tzinfo=ZoneInfo("America/Los_Angeles"))["sunset"]
+    assert captured["event_time"] == expected

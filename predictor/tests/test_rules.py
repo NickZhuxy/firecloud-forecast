@@ -221,8 +221,8 @@ def test_sunward_illumination_skips_without_profile(base_features):
 
 
 def test_sunward_illumination_scales_by_path_transmittance(base_features):
-    # FA-C3: a clear-but-dimmed trace (semi-transparent 杂云 on the path)
-    # multiplies the geometric score — 闷烧, not a binary pass.
+    # FA-C3: a clear-but-dimmed trace (semi-transparent intervening clouds on the path)
+    # multiplies the geometric score — dimmed glow, not a binary pass.
     f = replace(
         base_features, cloud_base_m=7000.0, sunward_aod_mean=0.1,
         sunward_profile_max_km=800.0, sunward_cloud_boundary_km=150.0,

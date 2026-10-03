@@ -13,7 +13,7 @@ The manual also concedes humilis vs convective stratocumulus can be genuinely
 ambiguous, so the classification carries an explicit ``marginal`` flag near
 the congestus threshold instead of pretending a hard cut.
 
-Theory note: research/theory/fa-c4-skewt-stability-convective-regime.md.
+Theory note: research/methodology.md.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from predictor.thermo import lcl_height_m, parcel_profile_k
 
 @dataclass(frozen=True)
 class StabilityConfig:
-    # Manual §2.2 thresholds on the right-offset (unstable) depth. 长三角
+    # Manual §2.2 thresholds on the right-offset (unstable) depth. Yangtze River Delta
     # empirical grading — configurable for other climates.
     congestus_min_depth_m: float = 2000.0
     mediocris_min_depth_m: float = 400.0

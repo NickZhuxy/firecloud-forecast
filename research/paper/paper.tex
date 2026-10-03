@@ -48,20 +48,22 @@
 \DeclareMathOperator{\trap}{trap}
 
 % --- Title ---
-\title{An Operational, Physics-Motivated Framework for\\
-Sunset Glow Prediction over the Continental United States}
+\title{A Physics-Motivated Heuristic for Sunset Glow Forecasting:\\
+A Historical HRRR Case Study}
 \author{Nick Zhu \\ \small\texttt{zhuxyparzival@gmail.com}}
-\date{\today\\\small Working draft v0.4 --- arxiv preprint target}
+\date{Historical working draft v0.4\\\small Unpublished; not peer-reviewed}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Vivid sunset and sunrise glows---colloquially ``fire clouds'' in Chinese (\textit{huoshaoyun})---arise from a narrow set of atmospheric conditions: mid- to high-level clouds illuminated by low-angle sunlight that has traversed a long atmospheric path, with the troposphere clean enough to deliver ``unadulterated'' red light to the cloud canvas. Existing commercial prediction services (SunsetWx, Sunsethue) score these conditions with weighted-sum combinations of meteorological variables, treating necessary conditions (such as the presence of mid- or high-level clouds) as substitutable for other favorable factors. We show this produces substantial false positives: in an end-to-end run over Washington State's Olympic Peninsula at sunset on 20 May 2026, a weighted-sum predictor returned probabilities of 0.625--0.631 uniformly across all 180 cells of a 0.1\textdegree{}-resolution grid despite mid- and high-level cloud coverage of zero. We propose a two-layer scoring architecture in which physically necessary conditions act as multiplicative gates and enhancement variables modulate the result. The framework incorporates ozone Chappuis-band absorption---recently shown by \citet{lange2023revisiting} to dominate twilight blue color at low solar elevations---as an explicit pathway alongside Rayleigh and Mie scattering. We implement the framework as an open-source Python package consuming NOAA's High Resolution Rapid Refresh (HRRR) numerical weather prediction data, and present a preliminary case study comparison: the proposed gate $\times$ modifier scheme correctly returns zero across the Olympic Peninsula bounding box, where weighted-sum scoring fails. Full validation against large public reference datasets and professional observations is identified as future work.
+Sunrise and sunset cloud glows depend on a cloud canvas and an illumination path, with atmospheric extinction influencing the light that reaches the clouds. This historical working draft documents a structural problem in Firecloud's own early weighted-average prototype: for a NOAA High Resolution Rapid Refresh (HRRR) forecast over Washington State's Olympic Peninsula on 20 May 2026, it returned scores of 0.625--0.631 across 180 grid cells despite zero model-reported mid- and high-level cloud coverage. A gate $\times$ modifier alternative returns zero for the same component scores, enforcing the prototype's missing-canvas condition. This is a software and model-consistency case, not an observed forecast-accuracy result or a comparison of competing services. Rayleigh scattering, Mie scattering, and ozone Chappuis-band absorption are reviewed as atmospheric-optics background; the predictor does not implement a wavelength-resolved or ozone-driven color model. The output is an uncalibrated condition index, not a probability. Independent observation-based evaluation remains future work.
 
 \medskip
 \noindent\textbf{Keywords:} atmospheric optics; twilight color; sunset prediction; numerical weather prediction; operational forecasting; Rayleigh scattering; Mie scattering; ozone Chappuis absorption.
 \end{abstract}
+
+\noindent\textbf{Scope of this draft.} The methods and case below describe the early HRRR prototype, not the current GFS product pipeline. Historical rule names and the symbol $P$ are retained for continuity, but every forecast score in this manuscript is an uncalibrated condition index. The current software first supports China and has additional regional coverage planned; the historical CONUS example does not establish current U.S. product support. For present behavior, consult \texttt{research/methodology.md} and \texttt{docs/architecture.md} in the repository. Source code and offline tests do not establish real-world skill, and historical data availability may limit a fresh rerun of the case.
 
 \section{Introduction}
 
@@ -73,23 +75,23 @@ Knowing when and where a sunset glow will occur has practical value for landscap
 
 \subsection{Existing Approaches}
 
-Three public services currently offer sunset color predictions for North America: SunsetWx, a Penn State--origin model using NOAA Global Forecast System (GFS) data with a 20-factor weighted scoring algorithm \citep{forecastingbeauty2015}; Sunsethue, an independent service that publishes cloud-cover, altitude, humidity, and air-quality thresholds in narrative form on its blog; and Skyfire, a closed-source feature of the PhotoPills planning application. None of these services has published a peer-reviewed methodology paper, released scoring weights, or provided systematic validation against ground truth.
+Services considered during the prototype's development included SunsetWx, Sunsethue, and Skyfire. SunsetWx's public description discusses a GFS-based, multi-factor approach \citep{forecastingbeauty2015}; other public descriptions discuss cloud, moisture, and air-quality conditions. These summaries do not establish their complete scoring algebra, internal implementation, or comparative forecast skill. No competing service was run or evaluated in the case study below.
 
 Peer-reviewed research on twilight color has focused on the optical mechanism rather than operational prediction. Foundational works include \citet{strutt1871scattering}'s derivation of the $\lambda^{-4}$ molecular scattering dependence, \citet{mie1908beitrage}'s treatment of arbitrary-sized particle scattering, and \citet{hulburt1953explanation}'s early recognition that ozone absorption contributes substantially to sky color. Operational synthesis includes \citet{corfidi2014colors}'s summary for the NOAA Storm Prediction Center, which provides the most authoritative qualitative account of which clouds redden and why.
 
 Recent quantitative work has refined the textbook picture. \citet{lee2003purple} combined spectral measurements over multiple seasons with radiative transfer modeling to show that twilight's ``purple light'' cannot be attributed to stratospheric aerosols alone: both tropospheric and stratospheric scattering and extinction are required. \citet{lange2023revisiting} revisited the canonical question of why the sky is blue, demonstrating with the SCIATRAN radiative transfer model that ozone Chappuis-band absorption, not Rayleigh scattering, dominates sky blue color at high solar zenith angles: at total ozone column 300\,DU with zenith viewing geometry, ozone contributes 66\% of the blue color and Rayleigh only 34\%.
 
-The gap addressed by the present work lies between these two strands of literature. Existing operational prediction tools lack a physics-rigorous foundation; peer-reviewed optics literature has not been translated into a deployable forecasting framework.
+The project's question is narrower: can an inspectable heuristic preserve physically motivated necessary conditions while turning a weather forecast into a useful research product? The following case studies Firecloud's own scoring design; it does not establish a gap in the physics or validation of other services.
 
 \subsection{Contributions}
 
 This paper contributes:
 \begin{enumerate}
 \item An explicit catalog of necessary versus enhancing conditions for sunset glow formation, grounded in current peer-reviewed atmospheric optics literature (Section~\ref{sec:theory}).
-\item A two-layer \emph{gate $\times$ modifier} scoring architecture that respects the multiplicatively-gated nature of necessary conditions, avoiding a class of false positives produced by weighted-sum scoring (Section~\ref{sec:methodology}).
-\item To the authors' knowledge, the first published prediction framework to incorporate ozone Chappuis-band absorption as an explicit factor, building directly on \citet{lange2023revisiting} (Sections~\ref{sec:atmoptics} and~\ref{sec:rules}).
-\item An open-source Python implementation consuming NOAA HRRR data, with end-to-end reproducibility (Section~\ref{sec:implementation}, code at \texttt{https://github.com/NickZhuxy/firecloud-forecast}).
-\item A preliminary case study on the Olympic Peninsula demonstrating the false-positive pathology of additive scoring and motivating the gate $\times$ modifier alternative (Section~\ref{sec:casestudy}).
+\item A two-layer \emph{gate $\times$ modifier} architecture that enforces a zero score for a missing positive-weight necessary condition (Section~\ref{sec:methodology}).
+\item A review of ozone Chappuis-band absorption as relevant atmospheric-optics background, drawing on \citet{lange2023revisiting}. An ozone scoring rule is a research proposal, not an implemented contribution (Sections~\ref{sec:atmoptics} and~\ref{sec:rules}).
+\item An open-source HRRR prototype with inspectable source, tests, and figure-generation scripts; a fresh historical-data rerun depends on archive availability (Section~\ref{sec:implementation}, code at \texttt{https://github.com/NickZhuxy/firecloud-forecast}).
+\item A preliminary Olympic Peninsula case demonstrating a missing-canvas inconsistency in Firecloud's own additive baseline and motivating the gate $\times$ modifier alternative (Section~\ref{sec:casestudy}).
 \end{enumerate}
 
 \subsection{Outline}
@@ -102,7 +104,7 @@ Section~\ref{sec:theory} develops the theoretical background spanning atmospheri
 \subsection{Atmospheric Optics: Three Mechanisms of Selective Extinction}
 \label{sec:atmoptics}
 
-The color of a sunset glow is the surviving signature of selective light extinction along the long optical path from the sun to a high-altitude cloud surface. Three independent mechanisms contribute, in order of decreasing wavelength selectivity: molecular Rayleigh scattering, gas-phase Chappuis-band ozone absorption, and aerosol Mie scattering. We treat each in turn and combine them via the Beer--Lambert law.
+The color of a sunset glow depends in part on selective light extinction along the optical path from the sun to a cloud surface. Molecular Rayleigh scattering, gas-phase Chappuis-band ozone absorption, and aerosol Mie scattering provide relevant background. This section reviews them and illustrates their combination via the Beer--Lambert law. These spectral equations and Figure~\ref{fig:extinction} are explanatory material; they are not the computation performed by the heuristic predictor.
 
 \subsubsection{Rayleigh Scattering}
 
@@ -151,7 +153,7 @@ The consequence for sunset color is that tropospheric pollution, far from enhanc
 
 Ozone has a broad, weak absorption band in the 500--700\,nm range known as the Chappuis band, with peak absorption near 600\,nm. At solar zenith angles approaching $90^\circ$ the optical path through the stratospheric ozone layer is approximately 30 times longer than at solar noon, so Chappuis absorption becomes correspondingly more important at sunset.
 
-\citet{lange2023revisiting} used the SCIATRAN radiative transfer model to quantify the relative contributions of Rayleigh scattering versus ozone Chappuis absorption to the perceived blueness of the twilight sky. For 300\,DU total ozone column at solar zenith angle $90^\circ$ and zenith viewing, they find ozone contributes 66\% and Rayleigh 34\% to the chromaticity displacement. The contribution varies systematically with total ozone column: 60\% at 240\,DU, 76\% at 500\,DU. Their result confirms a long-standing single-scattering estimate by \citet{hulburt1953explanation} using modern multi-scattering radiative transfer. This finding modifies the textbook picture in which Rayleigh scattering is the sole explanation for sky blue---and by extension, contributes to the late-stage reddening of sunset glow by removing residual orange-yellow wavelengths in transit through the ozone layer.
+\citet{lange2023revisiting} used the SCIATRAN radiative transfer model to quantify the relative contributions of Rayleigh scattering versus ozone Chappuis absorption to the perceived blueness of the twilight sky. For 300\,DU total ozone column at solar zenith angle $90^\circ$ and zenith viewing, they find ozone contributes 66\% and Rayleigh 34\% to the chromaticity displacement. The contribution varies systematically with total ozone column: 60\% at 240\,DU, 76\% at 500\,DU. Their result confirms a long-standing single-scattering estimate by \citet{hulburt1953explanation} using modern multi-scattering radiative transfer. This finding refines a Rayleigh-only account of twilight sky color for the studied viewing geometry. It does not by itself quantify ozone's contribution to an illuminated cloud's color, and no such contribution is calculated by this predictor.
 
 \subsubsection{Combined Extinction}
 
@@ -409,7 +411,7 @@ Stratospheric $\AOD$ & OSIRIS, OMPS, SAGE III & $\sim$100\,km daily & Volcanic e
 \label{tab:aerosoldata}
 \end{table}
 
-Section~\ref{sec:datasources} describes our operational use of HRRR's surface visibility variable as the immediate Goldilocks gate proxy, with HRRR-Smoke and satellite $\AOD$ identified as possible future enhancements.
+Surface visibility is a possible input for the proposed aerosol proxy; the historical prototype's table in Section~\ref{sec:datasources} marks this gate as planned. HRRR-Smoke and satellite $\AOD$ were also candidate enhancements, not inputs used in the Olympic Peninsula comparison.
 
 \subsubsection{Equivalent Cloud Base Height from the Aerosol Extinction Profile}
 \label{sec:eqcloudbase}
@@ -435,7 +437,7 @@ h_{CB, \text{eff}} = h_{CB} - h_x,
 \end{equation}
 and the maximum penetration distance becomes $2 \sqrt{2 R_\oplus \, h_{CB, \text{eff}}}$. The fire-cloud spatiotemporal triangle of Section~\ref{sec:triangle} contracts correspondingly.
 
-The threshold $\beta_x$ is operationally chosen rather than derived; a working value of $\beta_x = 0.02$\,km$^{-1}$ at 550\,nm corresponds to the visibility-based extinction relation $\text{Vis} = -\ln(0.02) / \beta_{550} \approx 196 / \beta_{550}$\,km, calibrated against the standard visibility convention that an object is at the limit of visibility when its image contrast reaches 2\% of intrinsic. Equation~\ref{eq:equivalent_ground} provides the conceptual link between HRRR's surface visibility variable (operationally available, per Section~\ref{sec:datasources}) and the geometric framework of Section~\ref{sec:solargeometry}.
+The threshold $\beta_x$ is chosen rather than derived. Under the 2\% contrast convention, the visibility-based extinction relation is $\text{Vis} = -\ln(0.02) / \beta_{550} \approx 3.912 / \beta_{550}$; expressing $\beta_{550}$ in km$^{-1}$ gives visibility in km. The working threshold $\beta_x = 0.02$~km$^{-1}$ therefore corresponds to approximately 196~km visibility under that convention. This threshold is a heuristic transmission cutoff, not a fit to observed sunset-glow outcomes. Equation~\ref{eq:equivalent_ground} provides the conceptual link between a visibility-derived extinction proxy and the geometric framework of Section~\ref{sec:solargeometry}.
 
 Table~\ref{tab:hxvalues} tabulates $h_x$ for representative aerosol scale heights at $\AOD = 0.15$ (a typical clean-to-moderately-polluted CONUS value):
 
@@ -462,14 +464,14 @@ $h_a$ (km) & $h_x$ (km) \\
 
 For a candidate fire cloud with cloud base 5\,km and the maximum equivalent ground height $h_x \approx 2.75$\,km, the effective cloud base shrinks to 2.25\,km and the maximum penetration distance contracts from 505\,km to $2\sqrt{2 R_\oplus \cdot 2.25} \approx 339$\,km---a 33\% reduction that the simple Earth-shadow geometry would miss. For cloud bases of comparable altitude to $h_x$, sunlight does not reach the cloud base at all, and the prediction becomes \emph{no fire cloud is possible} regardless of cloud cover or sky conditions otherwise.
 
-This refinement upgrades the binary $\texttt{CleanAirGate}$ rule of Section~\ref{sec:rules} from a simple visibility threshold to a continuous correction on the cloud-base height used by the geometric model. The architectural impact is contained: the gate's score function is replaced by a transformation of the cloud-base feature, and downstream rules operate on the modified value.
+This proposed refinement would replace a simple visibility threshold with a cloud-base correction in a geometric model. It is a theoretical design extension to the historical prototype, not a computation used in the case comparison; later repository implementations are documented separately in \texttt{research/methodology.md}.
 
 \subsection{Synthesis: Necessary vs.\ Enhancing Conditions}
 \label{sec:synthesis}
 
 The physical mechanisms developed in Sections~\ref{sec:atmoptics}--\ref{sec:solargeometry} admit a coarse but operationally useful binary classification: variables either \emph{must} take a value in some range for sunset glow to be possible at all, or they \emph{modulate} the intensity and character of a glow when the necessary conditions are satisfied. We make the classification explicit here because it is the conceptual hinge between the theoretical background and the predictor design of Section~\ref{sec:methodology}.
 
-A variable is \emph{necessary} when no plausible value of any other variable can compensate for its failure. A variable is \emph{enhancing} when it shifts the intensity or color but cannot, on its own, prevent glow formation. The literature surveyed in Sections~\ref{sec:atmoptics}--\ref{sec:solargeometry} supports the following partition for the visible-band sunset-glow phenomenon:
+A variable is \emph{necessary} when no plausible value of any other variable can compensate for its failure. A variable is \emph{enhancing} when it shifts the intensity or color but cannot, on its own, prevent glow formation. For this heuristic design, the literature surveyed in Sections~\ref{sec:atmoptics}--\ref{sec:solargeometry} motivates the following simplified partition. Its proxy thresholds and cloud-tier choices are assumptions, not universal physical cutoffs:
 
 \textbf{Necessary conditions:}
 \begin{enumerate}
@@ -516,13 +518,13 @@ VIS & \texttt{vis} & Surface visibility (m) & \texttt{CleanAirGate} (planned) \\
 HPBL & \texttt{hpbl} & PBL height (m) & \texttt{CleanAirGate} feature (planned) \\
 \bottomrule
 \end{tabular}
-\caption{HRRR variables consumed by the predictor (current and planned).}
+\caption{HRRR variables used or proposed for the historical prototype.}
 \label{tab:hrrr_vars}
 \end{table}
 
 Access to operational HRRR data is mediated by the Herbie library \citep{blaylock2024herbie}, which transparently retrieves GRIB2 files from AWS Open Data S3 buckets, parses byte-range index files for variable-level subsetting, and integrates with \texttt{xarray} via the \texttt{cfgrib} engine. We use Herbie's on-disk caching to avoid redundant downloads and supplement with an in-memory cache of parsed \texttt{xarray.Dataset} objects keyed by HRRR cycle (Section~\ref{sec:code}), which reduces grid-scale notebook execution from minutes to seconds for a fixed query time.
 
-The current implementation queries HRRR with a 2-hour run lag and a 2-hour forecast hour, yielding a fresh forecast that has been computed and published with high reliability at query time. Earlier prototypes used a 1-hour lag and encountered intermittent unavailability for very recent cycles; the 2-hour offset trades a small amount of forecast freshness for operational reliability.
+The historical prototype queried HRRR with a 2-hour run lag and a 2-hour forecast hour to reduce requests for not-yet-available cycles. Earlier runs using a 1-hour lag encountered unavailable recent cycles. This is a documented availability workaround, not a measured service-reliability guarantee or the current GFS cycle-selection policy.
 
 For global coverage outside CONUS the framework is designed to accept a \texttt{GFSSource} implementation of the same \texttt{WeatherSource} protocol (Section~\ref{sec:globalext}); GFS at $0.25^\circ$ resolution provides equivalent cloud-cover and humidity fields at the cost of substantially coarser spatial resolution. Total ozone column from NASA OMI or TROPOMI satellite retrievals, sampled daily, would inform the planned Chappuis-band rule; the asynchronous and lower-cadence nature of satellite ozone products is the principal obstacle to immediate integration. We discuss the engineering implications in Section~\ref{sec:openquestions}.
 
@@ -559,7 +561,7 @@ Each physically motivated condition of Section~\ref{sec:synthesis} is encoded as
 
 \textbf{Asymmetric piecewise-linear ramps} for monotonic conditions, parameterized by a plateau range and a single linear extent.
 
-The four rules currently implemented and their parameters:
+The four rules used by the historical prototype and their parameters:
 
 \begin{table}[H]
 \centering
@@ -574,13 +576,13 @@ Rule & Type & Function & Literature anchor \\
 \texttt{HumidityFactor} & Modifier & $\trap(\text{humidity};\, 20, 40, 80, 95)$ & Sunsethue 40--80\% \\
 \bottomrule
 \end{tabular}
-\caption{Current scoring rules. Type ``Gate'' indicates a necessary condition (multiplicative); ``Modifier'' indicates an enhancing condition (additive).}
+\caption{Historical prototype scoring rules. Type ``Gate'' indicates a necessary-condition heuristic (multiplicative); ``Modifier'' indicates an enhancing-condition heuristic (additive). These are not the current product's complete rule set.}
 \label{tab:rules}
 \end{table}
 
 Planned additions identified by the theoretical analysis of Section~\ref{sec:theory}: \texttt{CleanAirGate} (Gate, trapezoidal in HRRR \texttt{VIS}); \texttt{CloudAltitudePreference} (Modifier, weighted by altitude); \texttt{CloudCoverSweetSpot} (Modifier, trapezoidal at 40--75\%); \texttt{OzoneChappuisContribution} (Modifier, requires OMI/TROPOMI integration).
 
-The parameter choices are starting points from literature consensus rather than fitted values. Section~\ref{sec:validation} describes the independent public evidence required before statistical calibration would be justified.
+The parameter choices are heuristic starting points informed by the cited literature and public descriptions, not fitted values or an established scientific consensus. Section~\ref{sec:validation} describes the independent public evidence required before statistical calibration would be justified.
 
 \subsection{The Gate $\times$ Modifier Architecture}
 \label{sec:gatemodifier}
@@ -590,7 +592,7 @@ Let $\mathcal{R} = \{r_1, r_2, \ldots, r_n\}$ be the set of scoring rules. Each 
 \item \textbf{Gates} $\mathcal{G} \subseteq \mathcal{R}$: rules corresponding to physically necessary conditions.
 \item \textbf{Modifiers} $\mathcal{M} = \mathcal{R} \setminus \mathcal{G}$: rules corresponding to enhancing or modulating conditions.
 \end{itemize}
-Each rule carries a non-negative weight $w_i$. The two layers compose multiplicatively into a composite probability.
+Each rule carries a non-negative weight $w_i$. The two layers compose multiplicatively into a condition index; neither the component scores nor their product are calibrated probabilities.
 
 \subsubsection{Gate Score}
 
@@ -599,9 +601,9 @@ The gate score $G$ is defined as a weighted geometric mean of the gate rules:
 G = \prod_{i \in \mathcal{G}} s_i^{w_i / W_G}, \qquad W_G = \sum_{i \in \mathcal{G}} w_i, \qquad G \in [0, 1].
 \label{eq:gate}
 \end{equation}
-The defining property is that $G = 0$ whenever any gate score $s_i = 0$, regardless of the other gates or weights. The weights within the gate express \emph{relative} importance among necessary conditions---but no weight is large enough to compensate for another's zero. This is the architectural commitment: necessary conditions cannot substitute for one another.
+The defining property is that $G = 0$ whenever a gate with positive weight has score $s_i = 0$, assuming $W_G > 0$. A zero-weight rule does not impose a veto. The weights within the gate express \emph{relative} importance among necessary conditions---but no weight is large enough to compensate for another's zero. This is the architectural commitment: necessary conditions cannot substitute for one another.
 
-As $s_i \to 0$, the weighted geometric mean attenuates super-linearly with respect to $s_i$, so $G$ falls toward zero faster than the corresponding arithmetic average would.
+With positive gate weight, $G$ approaches zero as $s_i$ approaches zero, while an arithmetic average can remain positive because of the other components. The exponent $w_i/W_G$ controls this response; it does not imply super-linear convergence.
 
 \subsubsection{Modifier Score}
 
@@ -614,7 +616,7 @@ Within the modifier layer, a low score on one variable \emph{can} be compensated
 
 \subsubsection{Composite Score}
 
-The composite probability is the product:
+The composite condition index is the product:
 \begin{equation}
 P = G \cdot M \in [0, 1].
 \label{eq:composite}
@@ -623,7 +625,7 @@ P = G \cdot M \in [0, 1].
 Boundary cases:
 \begin{itemize}
 \item $\mathcal{M} = \emptyset$: by convention $M = 1$, recovering a pure-gate model $P = G$.
-\item $\mathcal{G} = \emptyset$: $G = 1$, and the architecture degenerates to standard weighted-average scoring $P = M$. This is the operational regime of SunsetWx and Sunsethue.
+\item $\mathcal{G} = \emptyset$: $G = 1$, and the architecture degenerates to standard weighted-average scoring $P = M$. This boundary case describes the algebra, not the implementation of an external service.
 \item $|\mathcal{G}| \geq 1$ and $|\mathcal{M}| \geq 1$: the regime of interest.
 \end{itemize}
 
@@ -636,11 +638,11 @@ P_{\text{add}} = \frac{\sum_{i \in \mathcal{R}} w_i \, s_i}{\sum_{i \in \mathcal
 \end{equation}
 The pathology of $P_{\text{add}}$ is that for any rule $r_i$, increasing $s_i$ from 0 to its maximum can compensate for $s_j = 0$ on any other rule, provided $w_i \geq w_j$. There is no place in the algebra where ``this condition is non-negotiable'' can be expressed. The Olympic Peninsula case study (Section~\ref{sec:casestudy}) is a concrete instantiation of this failure mode.
 
-In contrast, $P = G \cdot M$ satisfies $P = 0$ whenever any gate score is exactly 0, and $P$ falls toward zero with super-linear convergence as any gate score approaches 0.
+In contrast, $P = G \cdot M$ satisfies $P = 0$ whenever a positive-weight gate score is exactly 0, and approaches zero as that score approaches 0, provided the other terms remain defined.
 
 \subsubsection{Connection to Probabilistic Models}
 
-The gate layer is a relaxation of the \emph{noisy-AND} model in probabilistic logic \citep{pearl1988probabilistic}. If we interpret each gate score $s_i$ as the probability that condition $i$ is satisfied, the strict noisy-AND under independence is $P_{\text{noisy-AND}} = \prod_i s_i$, which is our $G$ with all weights equal to 1. Our weighted form $\prod s_i^{w_i/W_G}$ is a softening of this: rules with $w_i \ll W_G$ behave as weak constraints, those with $w_i \approx W_G$ behave as strong constraints. We do not adopt strict noisy-AND because intermediate gate values (for example, mid-high cloud coverage of 0.4) should not zero out the composite the way an exact 0 does.
+A conjunction of independent events with calibrated probabilities would have joint probability $\prod_i s_i$; probabilistic models require explicit dependence assumptions \citep{pearl1988probabilistic}. Here, equal gate weights produce a geometric mean, not that probability product. The weights express relative sensitivity within a heuristic, and the gate inputs are not established event probabilities. The useful shared property is the zero veto for a missing positive-weight condition; this does not make $G$ or $P$ a probabilistic forecast.
 
 \subsubsection{Choice of Weights}
 
@@ -676,7 +678,7 @@ Each Protocol can be satisfied by any conforming class without inheritance. Conc
 \subsection{Code Organization}
 \label{sec:code}
 
-The package is organized into four modules with disjoint responsibilities: \texttt{score.py} (public types), \texttt{features.py} (feature derivation and solar geometry), \texttt{fetch.py} (data sources including \texttt{HRRRSource} with its in-memory dataset cache and cos(lat)-corrected nearest-grid lookup), and \texttt{rules.py} (scoring rules and predictor composition).
+The historical prototype centered on four modules: \texttt{score.py} (public types), \texttt{features.py} (feature derivation and solar geometry), \texttt{fetch.py} (data sources including \texttt{HRRRSource} with its in-memory dataset cache and cos(lat)-corrected nearest-grid lookup), and \texttt{rules.py} (scoring rules and predictor composition).
 
 The test suite in \texttt{predictor/tests/} covers each scoring rule, snapshot transformation, nearest-grid lookup, dataset-cache behavior, end-to-end forecast composition, and boundary conditions. Network-dependent checks are gated by a pytest \texttt{integration} marker and excluded from default runs.
 
@@ -689,7 +691,7 @@ Herbie's on-disk cache of downloaded GRIB2 files lives at \texttt{research/data/
 \subsection{A Human-in-the-Loop Operational Workflow}
 \label{sec:workflow}
 
-The framework as implemented produces a single-number probability per grid point. For an experienced forecaster, however, this output is the starting point of a richer characterization: when does the glow begin and end? What color? What accompanying optical phenomena? How robust is the prediction to uncertainty in the underlying NWP forecast? This subsection sketches a five-step workflow that uses the geometric apparatus of Section~\ref{sec:solargeometry} (the parabolic reformulation, fire-cloud triangle, and equivalent cloud base height) together with standard meteorological diagnostic plots (vertical cross sections, skew-T diagrams) to produce a forecaster-grade prediction. The framework's role here is to mechanize the per-rule scoring and to expose the components for inspection; the human role is to judge the cross-cutting evidence and quantify uncertainty.
+The historical prototype produces a single-number condition index per grid point. For an experienced forecaster, however, this output is the starting point of a richer characterization: when does the glow begin and end? What color? What accompanying optical phenomena? How robust is the prediction to uncertainty in the underlying NWP forecast? This subsection sketches a five-step workflow that uses the geometric apparatus of Section~\ref{sec:solargeometry} (the parabolic reformulation, fire-cloud triangle, and equivalent cloud base height) together with standard meteorological diagnostic plots (vertical cross sections, skew-T diagrams) to organize an inspectable qualitative assessment. The framework's role here is to mechanize the per-rule scoring and to expose the components for inspection; the human role is to judge the cross-cutting evidence and quantify uncertainty.
 
 \textbf{Step 1: Identify the cloud base along the sunset direction.} From an NWP vertical cross section taken from the observer's location along the sunset azimuth (computed for the query date and location), identify any layer of high relative humidity ($> 90\%$) and read its altitude and approximate downwind extent. The skew-T diagram at the observer's location supplements this with cloud-base temperature and a check on the relative-humidity-derived layer.
 
@@ -701,12 +703,12 @@ The framework as implemented produces a single-number probability per grid point
 
 \textbf{Step 5: Uncertainty diagnosis.} Identify the sources of uncertainty in the prediction, addressed systematically in Section~\ref{sec:openquestions}, and qualitatively assess their magnitude for the case at hand. A confident forecast is one where the four to five most plausible failure modes can be ruled out by inspection of the available NWP and observational evidence; a tentative forecast carries explicit caveats.
 
-We emphasize that this workflow is not a replacement for the automated framework; it is a complementary mode in which the framework's per-rule scoring is one input among several that an experienced forecaster integrates. The implemented predictor of Section~\ref{sec:implementation} is the appropriate tool for large-scale (e.g., CONUS) maps and for retrospective validation against historical observations; the workflow described here is appropriate for the case where a forecaster wishes to issue a detailed prediction for a specific location and time.
+We emphasize that this workflow is not a replacement for the automated framework; it is a complementary mode in which the framework's per-rule scoring is one input among several that an experienced forecaster integrates. The historical predictor of Section~\ref{sec:implementation} supplies inspectable components for a regional research map. Retrospective evaluation would require an independent observation dataset and an explicit evaluation protocol. This proposed workflow does not establish professional-grade forecasting performance or automated prediction of sky color and ice-crystal phenomena.
 
 \section{Preliminary Case Study: Olympic Peninsula, 20 May 2026}
 \label{sec:casestudy}
 
-To demonstrate the false-positive pathology of weighted-sum scoring and the corrective behavior of the gate $\times$ modifier architecture, we describe an end-to-end prediction over a $1.4^\circ \times 1^\circ$ geographic region on the Pacific coast of Washington State that includes the towns of Forks, La Push, and Ruby Beach. The region is noted in landscape-photography literature for its frequent dramatic sunsets when conditions cooperate.
+To demonstrate a missing-canvas inconsistency in Firecloud's own weighted-average baseline and the changed behavior of the gate $\times$ modifier alternative, we describe an end-to-end prediction over a $1.4^\circ \times 1^\circ$ geographic region on the Pacific coast of Washington State that includes the towns of Forks, La Push, and Ruby Beach. The region is noted in landscape-photography literature for its frequent dramatic sunsets when conditions cooperate.
 
 \subsection{Setup}
 
@@ -717,11 +719,11 @@ Query parameters:
 \item \textbf{Grid resolution}: $0.1^\circ$ spacing (approximately 10\,km), producing 180 query points.
 \end{itemize}
 
-The predictor was invoked with the four rules of Section~\ref{sec:rules} combined by weighted-sum scoring with weights $\{2.0, 2.0, 1.5, 1.0\}$. Weather data: NOAA HRRR cycle initialized 01:00 UTC on 21 May 2026, forecast hour 2 (a verified forecast valid at the query time).
+The predictor was invoked with the four rules of Section~\ref{sec:rules} combined by weighted-sum scoring with weights $\{2.0, 2.0, 1.5, 1.0\}$. Weather data: NOAA HRRR cycle initialized 01:00 UTC on 21 May 2026, forecast hour 2 (a forecast valid at 03:00 UTC, 30 minutes before the request and 68 minutes before the stated sunset).
 
-\subsection{Result: Uniform False Positive}
+\subsection{Result: Uniformly Favorable Scores Without a Model Cloud Canvas}
 
-The weighted-sum predictor returned a probability of approximately 0.625--0.631 uniformly across all grid points within the bounding box. Decomposition at a representative grid point ($47.70^\circ$\,N, $124.80^\circ$\,W) yields:
+The weighted-sum predictor returned an index of approximately 0.625--0.631 uniformly across all grid points within the bounding box. Decomposition at a representative grid point ($47.70^\circ$\,N, $124.80^\circ$\,W) yields:
 
 \begin{table}[H]
 \centering
@@ -744,7 +746,7 @@ Rule & Score $s_i$ & Weight $w_i$ & $w_i s_i$ \\
 
 The underlying HRRR-reported atmospheric state at this grid point: high cloud coverage 0.0\%; mid cloud coverage 0.0\%; low cloud coverage 18.0\%; 2\,m relative humidity 86.0\%; local sunset time 04:08 UTC (21:08 PDT), so query time is approximately 38 minutes before sunset.
 
-Physically, the joint absence of mid and high cloud coverage means there is no surface available to reflect low-angle sunlight back to a ground observer. No sunset glow can form in this configuration regardless of the alignment of the other variables. The weighted-sum predictor, however, treats the rules as substitutable: the favorable scores for low-cloud absence, solar timing, and humidity outweigh the zero score for cloud presence, yielding a confident-looking but physically meaningless 0.63.
+Within this prototype's elevated-cloud-canvas assumption, zero model-reported mid and high cloud coverage should prevent a favorable index. The weighted average instead allows low-cloud absence, solar timing, and humidity to outweigh the zero canvas component, yielding 0.63. This exposes an inconsistency between the scoring algebra and its intended assumptions. Model-reported cloud absence is not proof of the observed sky state, and this case does not rule out all possible low-cloud illumination or other twilight phenomena.
 
 \subsection{Counterfactual: Gate $\times$ Modifier Result}
 
@@ -768,15 +770,15 @@ Re-running the predictor over the full 180-point grid with both scoring schemes 
 \toprule
 Scoring scheme & Min & Mean & Max \\
 \midrule
-Weighted-sum (current implementation) & 0.625 & 0.631 & 0.631 \\
-Gate $\times$ modifier (proposed) & 0.000 & 0.000 & 0.000 \\
+Weighted-sum (historical baseline) & 0.625 & 0.631 & 0.631 \\
+Gate $\times$ modifier (historical alternative) & 0.000 & 0.000 & 0.000 \\
 \bottomrule
 \end{tabular}
 \caption{Summary statistics across the 180-cell Olympic Peninsula grid.}
 \label{tab:casestudy_stats}
 \end{table}
 
-Figure~\ref{fig:olympic} displays both fields as side-by-side maps. The weighted-sum panel shows uniformly high probability across the region; the gate $\times$ modifier panel correctly returns zero everywhere. The gate's zero on \texttt{MidHighCloudPresence} drives the composite to zero in every cell, in line with physical expectation.
+Figure~\ref{fig:olympic} displays both fields as side-by-side maps. The weighted-sum panel shows uniformly favorable indices across the region; the gate $\times$ modifier panel returns zero everywhere. The zero on \texttt{MidHighCloudPresence} drives the composite to zero, enforcing the prototype's missing-canvas assumption without establishing which scheme better predicted the observed event.
 
 \begin{figure}[H]
 \centering
@@ -788,9 +790,9 @@ Figure~\ref{fig:olympic} displays both fields as side-by-side maps. The weighted
 \subsection{Sensitivity and Limitations}
 \label{sec:limitations}
 
-This case study is not a validation: we do not have ground-truth observations of whether a glow actually occurred at Forks on the queried evening. (The HRRR-reported atmospheric state, with zero mid and high cloud cover, suggests no glow was possible.) We use the case study only to demonstrate the structural failure mode of weighted-sum scoring and the corrective behavior of the gate $\times$ modifier alternative. Statistical validation requires independent public reference data and professional observations (Section~\ref{sec:validation}).
+This case study is not a validation: no independent ground-truth observation of whether a glow occurred at Forks on the queried evening is included. HRRR's zero mid/high cloud cover is an input forecast, not an observation of the outcome. The case demonstrates only the scoring inconsistency in Firecloud's own baseline and enforcement of its missing-canvas assumption by the alternative. Statistical validation requires independent public reference data and professional observations (Section~\ref{sec:validation}).
 
-Two implementation issues surfaced during this case study and have been addressed in the current code:
+Two implementation issues surfaced during early use and prompted fixes to the historical prototype:
 \begin{enumerate}
 \item \textbf{Serial loop re-parsing HRRR data.} A naive \texttt{HRRRSource.fetch} re-instantiates Herbie and re-parses GRIB2 via cfgrib for every query, introducing roughly ten minutes of redundant work per 150-point notebook run. We mitigate with the per-instance in-memory dataset cache (Section~\ref{sec:code}).
 \item \textbf{Cosine-latitude correction.} The HRRR grid is Lambert Conformal with two-dimensional latitude--longitude arrays. A naive Euclidean nearest-neighbor in raw degrees ignores the $\cos\phi$ compression and, at the Olympic Peninsula's $48^\circ$\,N, can select a grid cell whose ground distance is up to one cell (3\,km) farther than the true nearest. We apply Eq.~\ref{eq:coslat}.
@@ -812,9 +814,9 @@ Operational forecasting heuristics in each of these domains commonly express con
 
 \subsection{Comparison with Existing Services}
 
-SunsetWx and Sunsethue both publish enough information about their methodologies to permit qualitative reconstruction. SunsetWx's public summary \citep{forecastingbeauty2015} describes a ``20-factor algorithm'' using GFS data with cloud cover, moisture, and pressure as core factors and a final weighted score; the language is suggestive of additive composition without explicit gating. Sunsethue's blog narrative similarly lists factor ranges without distinguishing necessary from enhancing conditions. Closed-source services such as Skyfire publish even less.
+Public service descriptions can identify relevant input factors, but they do not establish an exact reconstruction of proprietary scoring or its handling of absent conditions. The weighted-average baseline in Section~\ref{sec:casestudy} was Firecloud's own prototype; it is not an implementation of SunsetWx, Sunsethue, or Skyfire.
 
-We do not have systematic ground-truth comparisons against these services. The case study of Section~\ref{sec:casestudy} demonstrates only that \emph{our own} prior weighted-sum implementation produced a clearly false positive in a configuration that no physically motivated predictor should classify as favorable; we cannot extend the demonstration to SunsetWx or Sunsethue without access to their internals or a paired-prediction dataset with ground truth.
+No competing service is evaluated here. The Olympic Peninsula case demonstrates only a missing-canvas scoring inconsistency in \emph{our own} prior implementation. It establishes neither an observed false positive nor superior skill. Claims about a competing method would require appropriate implementation evidence and/or paired forecasts evaluated against independent outcomes.
 
 \subsection{Open Questions and Limitations}
 \label{sec:openquestions}
@@ -823,8 +825,8 @@ We do not have systematic ground-truth comparisons against these services. The c
 \item \textbf{Operational ozone column data are not real-time.} NASA OMI and TROPOMI products are produced on a daily cadence with one-to-several-day latency. Incorporating the Chappuis modifier requires either tolerating a stale TOC input or supplementing satellite retrievals with an operational model.
 \item \textbf{Aerosol layer separation is not directly observable from HRRR.} Distinguishing stratospheric from tropospheric aerosol contributions requires satellite limb-sounding products such as OSIRIS or OMPS-LP.
 \item \textbf{Choice of scoring-function shape.} We use trapezoidal and piecewise-linear forms for interpretability. Smoother forms (Gaussian, sigmoid, beta) would produce continuously differentiable predictors but introduce hyperparameters whose principled fitting requires labeled data.
-\item \textbf{No formal sensitivity analysis.} The case study is qualitative. A systematic analysis of the composite probability to each rule's parameters across a large grid of synthetic inputs would strengthen confidence and is identified as future work.
-\item \textbf{The Olympic Peninsula case study is not a validation.} We demonstrate a failure mode of weighted-sum scoring in a configuration where physical reasoning predicts no glow, but we have not collected the observation that would confirm no glow occurred.
+\item \textbf{No formal sensitivity analysis.} The case study is qualitative. A systematic analysis of the composite condition index to each rule's parameters across a large grid of synthetic inputs would strengthen confidence and is identified as future work.
+\item \textbf{The Olympic Peninsula case study is not a validation.} It demonstrates a scoring inconsistency under the prototype's assumptions, without an observation establishing the actual outcome.
 \item \textbf{HRRR-Smoke is CONUS-only.} Wildfire-driven aerosol enhancement, operationally important in Pacific Northwest and California fire seasons, is captured by HRRR-Smoke but unavailable outside the HRRR domain.
 \end{enumerate}
 
@@ -849,7 +851,7 @@ A forecaster reviewing a busted prediction should be able to attribute the failu
 
 \subsection{Summary}
 
-We have presented a physics-motivated framework for sunset glow prediction over the continental United States, with three principal contributions. First, an explicit catalog of necessary versus enhancing atmospheric conditions for the phenomenon, grounded in peer-reviewed atmospheric optics literature including the recent \citet{lange2023revisiting} refinement that ozone Chappuis absorption dominates twilight sky color at low solar elevations. Second, a two-layer gate $\times$ modifier scoring architecture that respects the multiplicatively-gated nature of necessary conditions and avoids a class of false positives produced by weighted-sum scoring as used in existing commercial services. Third, an open-source Python implementation consuming NOAA HRRR data with end-to-end reproducibility. A preliminary case study on the Olympic Peninsula demonstrates the structural failure mode of weighted-sum scoring (probability $\sim 0.63$ in a configuration with zero mid- and high-level cloud) and the corrective behavior of the gate $\times$ modifier architecture (probability $\to 0$ in the same configuration). Full validation against independent reference observations remains the principal piece of work before peer-reviewed submission.
+This historical draft records an atmospheric-optics review, a heuristic gate $\times$ modifier architecture, and an inspectable HRRR prototype. The Olympic Peninsula case shows that Firecloud's own weighted-average baseline returned an index near 0.63 with zero model-reported mid/high cloud cover, whereas the gate alternative enforces a zero under the same components. This demonstrates a design property, not observed forecast skill or superiority to another service. The spectral discussion, including ozone Chappuis absorption, provides background rather than an implemented sky-color model. The draft is unpublished and not peer-reviewed. Independent observation-based evaluation and statistical calibration remain future work; the repository's current GFS methodology is documented separately.
 
 \subsection{Validation Against Public Reference Data}
 \label{sec:validation}
@@ -860,7 +862,7 @@ A statistically meaningful validation requires independent reference observation
 \label{sec:globalext}
 \label{sec:future}
 
-The HRRR-based predictor described here is operational only for the continental United States. Global coverage requires substitution of the \texttt{WeatherSource} implementation with one consuming GFS (at $0.25^\circ$ resolution). The change is mechanically straightforward but the physical implications include reduced spatial resolution and loss of the HRRR-Smoke wildfire aerosol product. For regions where higher-resolution regional models exist (UK Met Office UKV, European COSMO-DE, Chinese CMA-GD), domain-specific \texttt{WeatherSource} implementations would restore HRRR-equivalent resolution at the cost of additional engineering effort.
+The historical HRRR case is within the contiguous United States. Subsequent development introduced GFS-based cloud diagnosis and map products; China is the first fully supported product region, with expansion planned. A global weather source alone does not establish regional readiness: event dates, geographic boundaries, map rendering, delivery namespaces, source availability, and validation must also be checked. Higher-resolution regional models would require adapters and evaluation; finer grid spacing alone does not establish improved forecast skill. The current implementation and limitations are described in \texttt{research/methodology.md}.
 
 \section*{Acknowledgments}
 

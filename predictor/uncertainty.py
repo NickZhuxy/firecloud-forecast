@@ -83,11 +83,11 @@ def assess_layer(
     if layer.source == "rh":
         factors.append(ConfidenceFactor(
             "rh_fallback", config.rh_source_mult,
-            "RH 回退诊断(无凝结物),证据弱于凝结物",
+            "RH fallback diagnosis (no condensate); weaker evidence than condensate",
         ))
     else:
         factors.append(ConfidenceFactor(
-            "condensate_source", 1.0, "由凝结物直接诊断",
+            "condensate_source", 1.0, "Diagnosed directly from condensate",
         ))
 
     # 2. Vertical support (how many levels span the layer).
@@ -95,11 +95,11 @@ def assess_layer(
     if levels <= 1:
         factors.append(ConfidenceFactor(
             "sparse_levels", config.single_level_mult,
-            f"仅 {levels} 个廓线层支撑,垂直结构稀疏",
+            f"Only {levels} profile levels support the layer; sparse vertical structure",
         ))
     else:
         factors.append(ConfidenceFactor(
-            "vertical_support", 1.0, f"{levels} 个廓线层支撑",
+            "vertical_support", 1.0, f"Supported by {levels} profile levels",
         ))
 
     # 3. Threshold-edge proximity.
@@ -107,28 +107,28 @@ def assess_layer(
     if math.isfinite(margin):
         if margin >= config.edge_margin_ratio:
             factors.append(ConfidenceFactor(
-                "threshold_margin", 1.0, f"信号远高于阈值 (×{margin:.1f})",
+                "threshold_margin", 1.0, f"Signal well above threshold (×{margin:.1f})",
             ))
         else:
             span = config.edge_margin_ratio - 1.0
             frac = (margin - 1.0) / span if span > 0 else 0.0
             mult = config.min_edge_mult + (1.0 - config.min_edge_mult) * max(0.0, min(1.0, frac))
             factors.append(ConfidenceFactor(
-                "threshold_edge", round(mult, 3), f"信号接近阈值 (×{margin:.2f})",
+                "threshold_edge", round(mult, 3), f"Signal near threshold (×{margin:.2f})",
             ))
 
     # 4. Cross-time consistency.
     agreement = cross_time_agreement(layer, neighbor_diagnoses, config.match_tolerance_m)
     if math.isnan(agreement):
         factors.append(ConfidenceFactor(
-            "no_cross_time", 1.0, "无相邻时次对照,未计入时次一致性",
+            "no_cross_time", 1.0, "No adjacent forecast times; temporal consistency not assessed",
         ))
     else:
         mult = config.min_time_mult + (1.0 - config.min_time_mult) * agreement
         n = len(neighbor_diagnoses)
         factors.append(ConfidenceFactor(
             "time_consistency", round(mult, 3),
-            f"相邻时次一致 {round(agreement * n)}/{n}",
+            f"Agreement across adjacent times: {round(agreement * n)}/{n}",
         ))
 
     overall = 1.0

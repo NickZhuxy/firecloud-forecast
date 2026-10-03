@@ -12,7 +12,7 @@ Approximations used (illustrative, not for quantitative reference):
   sigma = 5e-21 cm²/molecule (consistent with Brion et al. 1998 measurements);
   total ozone column 300 DU.
 
-Usage: uv run python docs/paper/figures/fig1_extinction_spectrum.py
+Usage: uv run python research/paper/figures/fig1_extinction_spectrum.py
 """
 from pathlib import Path
 

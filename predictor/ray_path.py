@@ -4,7 +4,7 @@ The current `SunwardIlluminationGate` only compares a scalar boundary distance t
 the maximum reach. The manual's operational method (§4.1.2) is richer: draw the
 parabola that represents the sunlight ray reaching the observer's cloud base and
 make sure it does not cross an opaque region — cloud or heavy aerosol — on its way
-in ("保证抛物线不穿过不透光的大气区域，比如有云的区域或者气溶胶消光严重的区域").
+in ("ensure the parabola avoids opaque atmospheric regions, such as clouds or strong aerosol extinction").
 
 This module is the pure algorithm (no I/O, no scoring): given an assembled
 ``SunwardCrossSection`` (which carries the diagnosed cloud layers per column) and
@@ -56,10 +56,10 @@ class RayClearance:
     blocked_layer: CloudLayer | None  # the obstructing layer (None for a terrain/aerosol block)
     columns_checked: int
     # FA-C3 (manual §4.2.1(2)): survival fraction of the ray through the
-    # semi-transparent 杂云 it crossed — Π(1−opacity) per crossed column (a
+    # semi-transparent intervening clouds it crossed — Π(1−opacity) per crossed column (a
     # crude slant-path integration at the section's sampling step). 1.0 on a
     # clean path, 0.0 when blocked. The illumination gate multiplies by this,
-    # turning "clear but veiled" into the manual's 闷烧 band.
+    # turning "clear but veiled" into the manual's dimmed glow band.
     path_transmittance: float = 1.0
 
 
@@ -124,7 +124,7 @@ def trace_ray_clearance(
     # that datum — i.e. by its EXCESS over the observer — so uniform haze (already in
     # the effective base) never self-vetoes and only a genuinely denser upstream
     # plume (manual §1.3.4) intercepts the low ray. FA-A4: each column's AOD is
-    # amplified by its own near-ground humidity (manual §2.4.3 雾霾), so a humid
+    # amplified by its own near-ground humidity (manual §2.4.3 haze), so a humid
     # upstream pocket can veto at uniform AOD while uniform humidity cancels out.
     observer_ground_m = 0.0
     observer_terrain_m = None
@@ -150,8 +150,8 @@ def trace_ray_clearance(
         height_m = ray_height_m(distance_km, vertex_km)
         checked += 1
         for layer in layers or []:
-            # FA-C6: an opaque deck's fall streaks (虚幡) extend its blocking
-            # span downward — "浓密幡状云还会挡住阳光". Opacity still comes from
+            # FA-C6: an opaque deck's fall streaks extend its blocking
+            # span downward — "dense fall streaks can also block sunlight". Opacity still comes from
             # the deck itself, so thin wisps gain no obstruction from streaks.
             span_bottom_m = layer.base_m - layer.virga_extension_m
             if span_bottom_m <= height_m <= layer.top_m:
@@ -161,9 +161,9 @@ def trace_ray_clearance(
                         False, float(distance_km), height_m, layer, checked,
                         path_transmittance=0.0,
                     )
-                # FA-C3: semi-transparent 杂云 dims the surviving ray — one
+                # FA-C3: semi-transparent intervening clouds dim the surviving ray — one
                 # (1−opacity) factor per crossed column approximates the
-                # grazing path length inside the veil (§4.2.1(2) 闷烧).
+                # grazing path length inside the veil (§4.2.1(2) dimmed glow).
                 transmittance *= 1.0 - opacity
         # FA-G6 terrain horizon: a ridge obstructs only by its EXCESS over the
         # observer-column elevation datum — a uniform plateau is a shifted

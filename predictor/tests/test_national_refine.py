@@ -350,8 +350,8 @@ def test_refine_logs_stage_start_and_done(caplog):
             threshold=0.5, distances_km=(0.0, 100.0, 200.0),
         )
     msgs = "\n".join(r.getMessage() for r in caplog.records)
-    assert "精修" in msgs and "候选格" in msgs      # start line names the workload
-    assert "精修完成" in msgs                        # done line closes the silent gap
+    assert "Refining" in msgs and "candidate cells" in msgs      # start line names the workload
+    assert "Refinement complete" in msgs                        # done line closes the silent gap
 
 
 class _FakeCubeSourceWithPrefetch(_FakeCubeSource):
@@ -385,8 +385,8 @@ def test_refine_prefetches_distinct_valid_hours(caplog):
         )
     assert src.prefetched == [_VALID]             # warmed the disk before the loop
     messages = [record.message for record in caplog.records]
-    assert any("精修 2 个候选格" in message for message in messages)
-    assert any("精修完成:2 格" in message for message in messages)
+    assert any("Refining 2 candidate cells" in message for message in messages)
+    assert any("Refinement complete: 2 cells" in message for message in messages)
 
 
 def test_refine_survives_prefetch_failure():

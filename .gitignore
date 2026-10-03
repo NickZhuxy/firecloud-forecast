@@ -57,3 +57,21 @@ research/paper/*.log
 research/paper/*.out
 research/paper/*.synctex.gz
 research/paper/*.toc
+
+# Personal archives and superseded internal design drafts
+/.local/
+/docs/superpowers/
+/research/theory/
+/research/interactive-algorithm-paper.html
+
+# Test/tool caches and local configuration
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.env
+.env.*
+!.env.example
+*.grib
+*.grib2
+*.grb2
+*.idx

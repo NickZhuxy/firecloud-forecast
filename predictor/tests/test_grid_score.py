@@ -119,7 +119,7 @@ def test_output_shape_and_range():
 
 
 def test_heavy_local_aerosol_dims_but_does_not_zero_grid():
-    # FA-A3: perception aerosol is a modifier — an AOD in the "污烧" band drags
+    # FA-A3: perception aerosol is a modifier — an AOD in the "polluted glow" band drags
     # quality down without zeroing the probability, and stays in lockstep with
     # the scalar predictor.
     low = np.array([[5.0]]); mid = np.array([[55.0]]); high = np.array([[40.0]])

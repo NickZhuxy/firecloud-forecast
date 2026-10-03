@@ -1,20 +1,30 @@
 # Research
 
-这里保存会直接影响预测算法的气象与大气光学依据。
+This directory connects physical assumptions to reproducible implementation work.
+Start with [methodology.md](methodology.md), which describes the current algorithm
+and its limitations in English.
 
-## 内容
+- `experiments/nationalization_spike.py`: offline synthetic comparison of national
+  approximations against detailed point calculations. This is a software/physics
+  benchmark, not observed forecast accuracy.
+- `experiments/live_refine_validation.py`: real-data refinement validation; requires
+  network access and can download substantial GFS data.
+- `paper/`: historical CONUS/HRRR case study, LaTeX source, bibliography, and figures.
+  Its domain and implementation predate the current product pipeline.
 
-- `theory/` — 按主题整理的原理、资料来源和算法启示。
-- `paper/` — 早期 CONUS/HRRR 案例论文；保留为历史研究材料，不代表当前产品路线。
-- `人工火烧云预报速成.pdf` — 本地参考资料，因体积与版权原因不纳入 Git。
-- `data/` — 运行时创建的原始数据和缓存，均不纳入 Git。
+Run the offline experiment from the repository root:
 
-## 从研究到实现
+```bash
+uv run python research/experiments/nationalization_spike.py
+```
 
-1. 从可靠资料提炼可计算假设。
-2. 在 `research/theory/` 记录依据、适用范围和不确定性。
-3. 在 GitHub Issue 中定义输入、输出与验收标准。
-4. 修改 `predictor/`，并添加不访问外网的物理情景测试。
-5. 用公开模式、卫星或专业观测做独立交叉检查。
+Historical theory drafts and implementation plans have been consolidated into the
+public methodology and architecture guides. Their complete originals remain in
+Git history; the maintainer's checkout also keeps ignored local copies. This is an
+editorial consolidation, not a sentence-by-sentence translation of old drafts.
+Old issue IDs in code comments identify provenance, not outstanding work.
 
-不建设个人观察训练集，也不把当前条件指数描述为统计概率。
+For new research, record the hypothesis, source, applicable domain, uncertainty,
+and a test that could disprove it. Use independent public observations or datasets
+for validation. Do not describe the condition index as a calibrated probability.
+Private reference PDFs and downloaded data are intentionally excluded from Git.

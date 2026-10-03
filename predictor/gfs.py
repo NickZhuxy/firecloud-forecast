@@ -728,7 +728,7 @@ class GFSSource:
                 if attempt == self.SURFACE_DOWNLOAD_ATTEMPTS or not _is_transient_network_error(exc):
                     raise
                 logger.warning(
-                    "GFS %s f%02d: 网络中断,自动重试 (%d/%d)…",
+                    "GFS %s f%02d: network interrupted; retrying (%d/%d)…",
                     what, fxx, attempt, self.SURFACE_DOWNLOAD_ATTEMPTS,
                 )
                 logger.debug("GFS %s f%02d transient detail: %r", what, fxx, exc)

@@ -1,7 +1,7 @@
 """Sunrise/sunset parameterization (#60).
 
-The fire-cloud physics is left-right symmetric: a morning glow (朝霞) over the
-eastern sky at sunrise is the mirror of an evening glow (晚霞) over the western sky
+The fire-cloud physics is left-right symmetric: a morning glow over the
+eastern sky at sunrise is the mirror of an evening glow over the western sky
 at sunset. The whole pipeline runs as ONE code path over a ``solar_event`` rather
 than duplicating "sunset" logic.
 
@@ -21,7 +21,11 @@ forecast-step field is needed here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
+
+from astral import Observer
+from astral.sun import sun
 
 
 class SolarEvent(str, Enum):
@@ -36,7 +40,7 @@ class SolarEventSpec:
     daily_field: str           # Open-Meteo daily= field
     fallback_solar_hour: float  # local solar hour for the polar-edge fallback
     label_en: str
-    label_zh: str
+    label_zh: str  # Legacy localization API; CLI output uses English.
 
 
 _SPECS: dict[SolarEvent, SolarEventSpec] = {
@@ -52,3 +56,25 @@ _SPECS: dict[SolarEvent, SolarEventSpec] = {
 def spec_for(solar_event: SolarEvent | str) -> SolarEventSpec:
     """Resolve the spec for a ``SolarEvent`` or its literal string ("sunrise"/"sunset")."""
     return _SPECS[SolarEvent(solar_event)]
+
+
+def event_time_utc(
+    target_date: date, lat: float, lon: float,
+    solar_event: SolarEvent | str = SolarEvent.SUNSET,
+) -> datetime:
+    """Resolve an event on the location's solar date, returning UTC.
+
+    A regional date is not a UTC date: a western sunset can occur tomorrow in
+    UTC, and an eastern sunrise yesterday. Use longitude's mean-solar offset
+    solely to select the event day, then convert the resulting instant to UTC.
+    This is not a civil-timezone lookup; political date-line exceptions require
+    an explicit regional timezone policy when those regions are supported.
+
+    Accept both signed and GFS 0–360 longitudes. Missing polar events raise
+    ValueError; the grid caller retains its existing polar fallback.
+    """
+    signed_lon = (lon + 180.0) % 360.0 - 180.0
+    solar_tz = timezone(timedelta(hours=signed_lon / 15.0))
+    observer = Observer(latitude=lat, longitude=signed_lon)
+    event = sun(observer, date=target_date, tzinfo=solar_tz)[spec_for(solar_event).astral_key]
+    return event.astimezone(timezone.utc)

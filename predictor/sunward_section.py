@@ -247,7 +247,7 @@ def _with_convective_regime(forecast, stability: StabilityDiagnosis, lat: float)
             )
             forecast.components["convective_regime_damping"] = CONVECTIVE_REGIME_DAMPING
             forecast.explanation += (
-                ";浓积云对流云况(手册§4.1.2:模式支持度低,建议临近实况)"
+                "; congestus convective regime (manual §4.1.2: low model confidence; check recent observations)"
             )
     forecast.geometry = geometry
     return forecast

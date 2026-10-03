@@ -356,7 +356,7 @@ def test_stable_cube_is_labeled_stratiform_with_zero_regression():
         30.0, 120.0, _VALID, distances_km=dist,
     )
     assert labeled.geometry["cloud_regime"] == "stratiform"
-    assert labeled.probability == baseline.probability           # 零回归
+    assert labeled.probability == baseline.probability           # unchanged score
     assert "convective_regime_damping" not in labeled.components
 
 
@@ -380,4 +380,4 @@ def test_congestus_cube_is_damped_labeled_and_explained():
     assert damped.probability == pytest.approx(
         0.5 + (undamped.probability - 0.5) * 0.5
     )
-    assert "对流云况" in damped.explanation
+    assert "convective regime" in damped.explanation
