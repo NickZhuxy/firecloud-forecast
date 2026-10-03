@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 from astral import Observer
 from astral.sun import sun
@@ -61,20 +62,24 @@ def spec_for(solar_event: SolarEvent | str) -> SolarEventSpec:
 def event_time_utc(
     target_date: date, lat: float, lon: float,
     solar_event: SolarEvent | str = SolarEvent.SUNSET,
+    *, timezone_name: str | None = None,
 ) -> datetime:
     """Resolve an event on the location's solar date, returning UTC.
 
     A regional date is not a UTC date: a western sunset can occur tomorrow in
     UTC, and an eastern sunrise yesterday. Use longitude's mean-solar offset
     solely to select the event day, then convert the resulting instant to UTC.
-    This is not a civil-timezone lookup; political date-line exceptions require
-    an explicit regional timezone policy when those regions are supported.
+    An explicit IANA ``timezone_name`` selects the region's civil calendar day.
+    Without it, the existing longitude-based solar-day policy is retained.
 
     Accept both signed and GFS 0–360 longitudes. Missing polar events raise
     ValueError; the grid caller retains its existing polar fallback.
     """
     signed_lon = (lon + 180.0) % 360.0 - 180.0
-    solar_tz = timezone(timedelta(hours=signed_lon / 15.0))
+    solar_tz = (
+        ZoneInfo(timezone_name) if timezone_name is not None
+        else timezone(timedelta(hours=signed_lon / 15.0))
+    )
     observer = Observer(latitude=lat, longitude=signed_lon)
     event = sun(observer, date=target_date, tzinfo=solar_tz)[spec_for(solar_event).astral_key]
     return event.astimezone(timezone.utc)

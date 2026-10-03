@@ -48,3 +48,36 @@ def test_event_date_is_identical_for_signed_and_gfs_longitudes(event):
     gfs = event_time_utc(target_date, 34.05, 241.75, event)
     assert signed == gfs
     assert signed.tzinfo == timezone.utc
+
+
+@pytest.mark.parametrize("event", [SolarEvent.SUNRISE, SolarEvent.SUNSET])
+@pytest.mark.parametrize("day", ["2026-01-01", "2026-03-08", "2026-06-21",
+    "2026-10-04", "2026-11-01", "2026-12-21"])
+def test_nyc_civil_event_date_and_longitude_encoding(event, day):
+    from datetime import date
+    from zoneinfo import ZoneInfo
+    from predictor.solar_event import event_time_utc
+
+    target = date.fromisoformat(day)
+    actual = event_time_utc(target, 40.7128, -74.006, event,
+                            timezone_name="America/New_York")
+    encoded = event_time_utc(target, 40.7128, 285.994, event,
+                             timezone_name="America/New_York")
+    assert actual == encoded
+    assert actual.astimezone(ZoneInfo("America/New_York")).date() == target
+    if event == SolarEvent.SUNSET and target.month == 6:
+        assert actual.date() > target
+
+
+def test_nyc_civil_event_timezone_tracks_dst():
+    from datetime import date, timedelta
+    from zoneinfo import ZoneInfo
+    from predictor.solar_event import event_time_utc
+
+    zone = ZoneInfo("America/New_York")
+    winter = event_time_utc(date(2026, 1, 1), 40.7128, -74.006,
+                            timezone_name=zone.key).astimezone(zone)
+    summer = event_time_utc(date(2026, 6, 21), 40.7128, -74.006,
+                            timezone_name=zone.key).astimezone(zone)
+    assert winter.utcoffset() == timedelta(hours=-5)
+    assert summer.utcoffset() == timedelta(hours=-4)

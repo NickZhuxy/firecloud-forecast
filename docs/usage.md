@@ -1,6 +1,7 @@
 # Usage
 
-China is currently the supported region. Support for additional regions is planned.
+China supports national and local products. New York City has an experimental
+local pilot. Additional regions are planned.
 
 ## Installation
 
@@ -42,16 +43,56 @@ uv run firecloud --date 2026-09-15 --event sunset --source local
 ```
 
 The explicit date is an example, not a guaranteed available forecast date. The CLI
-default is the computer's current date. Products currently use event times across the China
+default for China is the computer's current date. China products use event times across the China
 domain, and remote-hit timestamps are labeled `UTC+08:00`, with the GFS UTC cycle
 shown separately. Select `--date` explicitly when running outside China's timezone.
 
 `--date` selects the local event day, not its UTC date. For example, a September
 14 evening event in Los Angeles falls on September 15 in UTC; a September 14
 morning event in Shanghai falls on September 13 in UTC. The computation currently
-uses a longitude-based solar-day offset to choose that day. This fixes UTC rollover
-but does not provide civil-timezone lookup for political date-line exceptions.
-U.S. map coverage still requires the separate regional-support work.
+uses a longitude-based solar-day offset for the existing China profile. The New
+York City pilot selects the civil calendar day in `America/New_York` explicitly.
+
+## New York City pilot
+
+Use `--region us-nyc --scope local` and signed coordinates. The default region is
+`china`, which preserves the existing national and remote products.
+
+```bash
+uv run firecloud --region us-nyc --scope local --source local --event sunset \
+  --lat 40.7128 --lon -74.0060 --radius 25 --resolution 0.1
+```
+
+The sample coordinates identify New York City, not a private address. Observer
+centers must be within latitude 40.0–41.5 and longitude -75.0–-72.5. This bounded
+pilot is not full U.S. coverage. Change the coordinates within this area to select
+your location. Both sunrise and sunset use the same scoring path.
+
+An omitted `--date` means today in `America/New_York`. An explicit date means
+that local civil day. JSON metadata and the map show UTC and local event times;
+daylight saving time is handled by the IANA timezone database. GFS forecast hours
+are discrete and can differ from the exact event instant. Metadata reports both.
+The selected Open-Meteo hourly times are also recorded when available.
+
+There is no NYC remote feed. `--source remote` fails before contacting the China
+feed. `--source auto` computes locally. NYC has no national product, and Himawari
+satellite correction is unavailable; metadata records that limitation.
+
+The pilot bounds apply only to observer centers. The shared GFS cube includes
+every evaluation cell's complete 800 km sunward path, including Canadian and ocean
+samples. The 25 km example evaluates 25 cells at 0.1° spacing; the underlying GFS
+resolution remains 0.25°. The default 150 km grid has 945 cells at the sample
+latitude and is much more expensive.
+
+The default local pipeline uses GFS pressure profiles and Open-Meteo cloud cover,
+humidity, and visibility. It does not provide terrain heights or per-column
+aerosol fields. Its condition index is an uncalibrated heuristic, and this pilot
+does not establish observed forecast skill. Outputs use
+`output/us-nyc/YYYY-MM-DD/`.
+
+The [archived NYC pilot case](../examples/new-york-sunset/README.md) records one real
+run, its source times, zero-gate explanation, download measurements, and checksums.
+Its offline verification requires no weather download and does not replay the model.
 
 ## Select products
 

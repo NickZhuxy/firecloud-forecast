@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
@@ -45,6 +46,80 @@ class LocalField:
     # Stage C satellite-nowcast stats block (#84); None when the stage was
     # skipped entirely (satellite=False).
     nowcast: dict | None = None
+    provenance: dict | None = None
+    center_diagnostics: dict | None = None
+
+
+def _utc_text(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _gfs_timing(source_label: str | None) -> dict:
+    """Read the discrete forecast time without relabelling the event instant."""
+    match = re.fullmatch(
+        r"gfs@(\d{4}-\d{2}-\d{2}T\d{2}Z)\+f(\d+)", source_label or ""
+    )
+    if match is None:
+        return {
+            "initialization_time_utc": None,
+            "forecast_hour": None,
+            "valid_time_utc": None,
+        }
+    initialized = datetime.strptime(match[1], "%Y-%m-%dT%HZ").replace(tzinfo=timezone.utc)
+    forecast_hour = int(match[2])
+    return {
+        "initialization_time_utc": initialized.isoformat(),
+        "forecast_hour": forecast_hour,
+        "valid_time_utc": (initialized + timedelta(hours=forecast_hour)).isoformat(),
+    }
+
+
+def _source_provenance(cube, snapshots, time, cube_source, *, elevation_fn, aod_fn) -> dict:
+    labels = sorted({snapshot.source_label for snapshot in snapshots})
+    hourly_times = []
+    for label in labels:
+        match = re.fullmatch(r"open-meteo@(\d{4}-\d{2}-\d{2}T\d{2}Z)", label)
+        if match:
+            selected = datetime.strptime(match[1], "%Y-%m-%dT%HZ").replace(tzinfo=timezone.utc)
+            hourly_times.append(selected.isoformat())
+    retrievals = sorted(filter(None, (_utc_text(s.retrieved_at) for s in snapshots)))
+    source_label = getattr(cube, "source_label", None)
+    model = _gfs_timing(source_label)
+    if model["initialization_time_utc"] is None:
+        model["initialization_time_utc"] = _utc_text(getattr(cube, "run_time", None))
+    model.update(
+        source_label=source_label,
+        requested_time_utc=_utc_text(time),
+        selection_as_of_utc=_utc_text(getattr(cube_source, "as_of", None)),
+        retrieved_utc=_utc_text(getattr(cube, "retrieved_at", None)),
+        missing_variables=list(getattr(cube, "missing", [])),
+    )
+    return {
+        "requested_event_time_utc": _utc_text(time),
+        "gfs": model,
+        "weather_snapshots": {
+            "count": len(snapshots),
+            "source_labels": labels,
+            "selected_hourly_times_utc": hourly_times,
+            "first_retrieved_utc": retrievals[0] if retrievals else None,
+            "last_retrieved_utc": retrievals[-1] if retrievals else None,
+            "model_identity": (
+                "provider_default_unspecified"
+                if any(label.startswith("open-meteo@") for label in labels)
+                else "not_recorded"
+            ),
+        },
+        "input_availability": {
+            "terrain_elevation_provider": elevation_fn is not None,
+            "per_column_aerosol_provider": aod_fn is not None,
+            "snapshot_aod_cells": sum(s.aerosol_optical_depth is not None for s in snapshots),
+            "snapshot_visibility_cells": sum(s.visibility_m is not None for s in snapshots),
+        },
+    }
 
 
 # The default cap must admit the default radius/resolution across the WHOLE China
@@ -153,7 +228,7 @@ def build_local_field(
         elevation_fn=elevation_fn, domain=domain, margin_deg=margin_deg,
     )
     logger.info(
-        "Local product GFS cube: fetching bbox %.2f..%.2f N, %.2f..%.2f E",
+        "Local product GFS cube: fetching latitude %.2f..%.2f, longitude %.2f..%.2f",
         bbox[0], bbox[1], bbox[2], bbox[3],
     )
     cube = cube_source.fetch_cube(bbox, time)
@@ -173,6 +248,10 @@ def build_local_field(
     logger.info("Local product weather: loaded %d snapshots", len(snapshots))
 
     probability = np.empty((lats.size, lons.size), dtype=float)
+    center_j = int(np.argmin(np.abs(lats - center_lat)))
+    center_i = int(np.argmin(np.abs(lons - center_lon)))
+    center_k = center_j * lons.size + center_i
+    center_diagnostics = None
     logger.info("Local product scoring: scoring %d cells", n_points)
     for k, (la, lo) in enumerate(coords):
         forecast = score_point_with_cube(
@@ -181,6 +260,18 @@ def build_local_field(
             elevation_fn=elevation_fn, domain=domain, config=config, aod_fn=aod_fn,
         )
         probability[k // lons.size, k % lons.size] = forecast.probability
+        if k == center_k:
+            center_diagnostics = {
+                "stage": "model_before_nowcast",
+                "grid_cell": {"lat": la, "lon": lo, "row": center_j, "column": center_i},
+                "condition_index": float(forecast.probability),
+                "gate_score": getattr(forecast, "gate_score", None),
+                "modifier_score": getattr(forecast, "modifier_score", None),
+                "components": getattr(forecast, "components", {}),
+                "explanation": getattr(forecast, "explanation", None),
+                "inputs": getattr(forecast, "inputs", {}),
+                "geometry": getattr(forecast, "geometry", None),
+            }
     finite = probability[np.isfinite(probability)]
     if finite.size:
         logger.info(
@@ -194,4 +285,8 @@ def build_local_field(
         lats=lats, lons=lons, probability=probability,
         center=(center_lat, center_lon), radius_km=radius_km,
         valid_time=time, source_label=getattr(cube, "source_label", None),
+        provenance=_source_provenance(
+            cube, snapshots, time, cube_source, elevation_fn=elevation_fn, aod_fn=aod_fn,
+        ),
+        center_diagnostics=center_diagnostics,
     )

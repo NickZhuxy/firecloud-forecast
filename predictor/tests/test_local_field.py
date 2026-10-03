@@ -2,7 +2,8 @@
 """Tests for the local fine-product field (#62), offline with a synthetic cube."""
 import math
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -12,6 +13,7 @@ from predictor.local_field import LocalField, build_local_field, local_grid
 from predictor.profiles import AtmosphericCube
 from predictor.rules import standard_predictor
 from predictor.spatial import build_sunward_path
+from predictor.solar_event import event_time_utc
 from predictor.sunward_section import score_point_with_sunward_section
 
 _VALID = datetime(2026, 6, 29, 9, tzinfo=timezone.utc)
@@ -67,9 +69,9 @@ _Q = np.array([3e-3, 2e-3, 1e-3, 3e-4, 1e-4, 5e-5])
 _MID = np.array([0.0, 0.0, 5e-4, 5e-4, 0.0, 0.0])
 
 
-def _cube() -> AtmosphericCube:
-    lats = np.arange(26.0, 34.01, 0.5)
-    lons = np.arange(112.0, 122.01, 0.5)
+def _cube(*, lats=None, lons=None) -> AtmosphericCube:
+    lats = np.arange(26.0, 34.01, 0.5) if lats is None else np.asarray(lats)
+    lons = np.arange(112.0, 122.01, 0.5) if lons is None else np.asarray(lons)
     nz, ny, nx = _LEVELS.size, lats.size, lons.size
 
     def grid(col):
@@ -182,6 +184,65 @@ def test_build_local_field_batches_snapshots_when_source_supports_it():
     )
     assert src.batch_calls == 1
     assert src.single_calls == 0
+
+
+@pytest.mark.parametrize("event", ["sunrise", "sunset"])
+def test_nyc_shared_cube_covers_all_full_length_paths_without_land_clipping(
+    monkeypatch, event,
+):
+    import predictor.local_field as mod
+
+    lat, lon = 40.7128, -74.006
+    target = event_time_utc(date(2026, 6, 21), lat, lon, event)
+    # Cover the Canadian/Atlantic endpoints as well as the map itself. Coarse
+    # evaluation keeps this I/O-contract check small: 35 cells, no real scoring.
+    cube = _cube(lats=np.arange(34.0, 48.01, 0.5), lons=np.arange(-86.0, -61.99, 0.5))
+    fetched, scored_paths = [], []
+
+    class RecordingCubeSource:
+        def fetch_cube(self, bbox, time):
+            fetched.append((bbox, time))
+            return cube
+
+    def inspect_score(predictor, received_cube, snapshot, cell_lat, cell_lon, time, **kwargs):
+        assert received_cube is cube
+        assert time == target
+        path = build_sunward_path(
+            cell_lat, cell_lon, time,
+            distances_km=kwargs["distances_km"],
+            azimuth_deg=kwargs["azimuth_deg"], domain=kwargs["domain"],
+        )
+        assert len(path.samples) == 33
+        assert path.samples[0].distance_km == 0.0
+        assert path.samples[-1].distance_km == 800.0
+        for sample in path.samples:
+            assert sample.in_domain, "Political land boundaries must not clip weather paths"
+            assert cube.lats.min() <= sample.lat <= cube.lats.max()
+            assert cube.lons.min() <= sample.lon <= cube.lons.max()
+        scored_paths.append(path)
+        return SimpleNamespace(probability=0.42)
+
+    monkeypatch.setattr(mod, "score_point_with_cube", inspect_score)
+    field = build_local_field(
+        standard_predictor(FakeSource(_snapshot())), RecordingCubeSource(),
+        lat, lon, target, radius_km=150.0, resolution_deg=0.5,
+    )
+
+    assert field.probability.shape == (5, 7)
+    np.testing.assert_array_equal(field.probability, np.full((5, 7), 0.42))
+    assert len(fetched) == 1
+    assert len(scored_paths) == field.probability.size
+    (south, north, west, east), fetched_time = fetched[0]
+    assert fetched_time == target
+    samples = [sample for path in scored_paths for sample in path.samples]
+    assert all(south <= s.lat <= north and west <= s.lon <= east for s in samples)
+    # Summer sunward paths extend past northern New York into Canada. Sunrise
+    # additionally reaches the Atlantic east of the contiguous U.S. domain.
+    assert max(s.lat for s in samples) > 45.0
+    if event == "sunrise":
+        assert max(s.lon for s in samples) > -66.0
+    else:
+        assert min(s.lon for s in samples) < -82.0
 
 
 def test_local_field_cell_equals_standalone_single_point():
