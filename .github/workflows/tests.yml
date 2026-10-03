@@ -40,6 +40,8 @@ jobs:
         run: uv run --no-sync pytest
       - name: Verify archived example
         run: python examples/shanghai-sunset/verify.py
+      - name: Verify New York pilot example
+        run: python examples/new-york-sunset/verify.py
       - name: Build distributions
         run: uv build
       - name: Check CLI entry point

@@ -1,0 +1,71 @@
+{
+  "generation_started_utc": "2026-10-03T21:59:08.100373+00:00",
+  "generation_completed_utc": "2026-10-03T21:59:13.012817+00:00",
+  "generation_elapsed_seconds": 4.912321834010072,
+  "generation_gfs_network_bytes": {},
+  "prefetch": {
+    "request_time_utc": "2026-10-03T21:48:25.035157+00:00",
+    "target_event_utc": "2026-10-04T22:32:48.106674+00:00",
+    "source_label": "gfs@2026-10-03T12Z+f35",
+    "bbox": [
+      38.939703583065715,
+      41.412800000000004,
+      -84.04796723630102,
+      -73.306
+    ],
+    "grid_shape": [
+      5,
+      5
+    ],
+    "network_bytes": {
+      "pressure": 131479983
+    },
+    "elapsed_seconds": 19.666230458999053
+  },
+  "parameters": {
+    "region": "us-nyc",
+    "date": "2026-10-04",
+    "event": "sunset",
+    "latitude": 40.7128,
+    "longitude": -74.006,
+    "radius_km": 25,
+    "resolution_deg": 0.1,
+    "satellite": false
+  },
+  "observational_validation": false,
+  "raw_weather_inputs_archived": false,
+  "implementation_commit": "4e77971b8eefa11760a547b7273416d8d72d38dd",
+  "capture_recorded_utc": "2026-10-03T22:01:56.962004+00:00",
+  "gfs_pressure_levels_hpa": [
+    1000,
+    975,
+    950,
+    925,
+    900,
+    850,
+    800,
+    750,
+    700,
+    650,
+    600,
+    550,
+    500,
+    450,
+    400,
+    350,
+    300,
+    250,
+    200,
+    150
+  ],
+  "files": {
+    "metadata.json": {
+      "bytes": 4987,
+      "sha256": "ad096bbccb526a8fec81e46d2d00149f687d0a4cfec07b9de22d84071ce5fc66"
+    },
+    "point-40.7128_-74.006-sunset.png": {
+      "bytes": 194765,
+      "sha256": "8a392fbe799feed0dd52a23487803bdadb3af72b693db6d7859c3157f26437bd"
+    }
+  }
+}

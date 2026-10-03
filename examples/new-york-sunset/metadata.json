@@ -1,0 +1,169 @@
+{
+  "schema_version": "v4",
+  "product": "us_nyc_firecloud_local",
+  "region": "us-nyc",
+  "region_name": "New York City",
+  "timezone": "America/New_York",
+  "solar_event": "sunset",
+  "target_date": "2026-10-04",
+  "generated_utc": "2026-10-03T21:59:08.100373+00:00",
+  "image": "point-40.7128_-74.006-sunset.png",
+  "center": [
+    40.7128,
+    -74.006
+  ],
+  "radius_km": 25.0,
+  "valid_time_utc": "2026-10-04T22:32:48.106674+00:00",
+  "valid_time_semantics": "requested_solar_event",
+  "event_time_utc": "2026-10-04T22:32:48.106674+00:00",
+  "event_time_local": "2026-10-04T18:32:48.106674-04:00",
+  "event_timezone_abbreviation": "EDT",
+  "gfs_timing": {
+    "initialization_time_utc": "2026-10-03T12:00:00+00:00",
+    "forecast_hour": 35,
+    "valid_time_utc": "2026-10-04T23:00:00+00:00",
+    "source_label": "gfs@2026-10-03T12Z+f35",
+    "requested_time_utc": "2026-10-04T22:32:48.106674+00:00",
+    "selection_as_of_utc": "2026-10-03T21:48:25.035157+00:00",
+    "retrieved_utc": "2026-10-03T21:59:10.757212+00:00",
+    "missing_variables": []
+  },
+  "source_label": "gfs@2026-10-03T12Z+f35",
+  "grid_shape": [
+    5,
+    5
+  ],
+  "probability_range": {
+    "min": 0.0,
+    "max": 0.0
+  },
+  "condition_index": {
+    "calibrated_probability": false,
+    "range": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "favorable_threshold": 0.5,
+    "center_value": 0.0
+  },
+  "display": {
+    "metric": "uncalibrated_condition_index",
+    "favorable_threshold": 0.5,
+    "class_bounds": [
+      0.0,
+      0.2,
+      0.4,
+      0.5,
+      0.7,
+      0.85,
+      1.0
+    ],
+    "contour_levels": [
+      0.3,
+      0.5,
+      0.7,
+      0.9
+    ],
+    "field_alpha": 0.88,
+    "colormap": "firecloud_scientific_classes",
+    "font_family": "STIXGeneral",
+    "basemap": "white Natural Earth context",
+    "upsample_factor": 8,
+    "smoothing_passes": 2,
+    "evaluation_resolution_deg": 0.10000000000000142
+  },
+  "nowcast": {
+    "applied": false,
+    "source": "model",
+    "reason": "unsupported satellite coverage for region us-nyc",
+    "regime": null,
+    "confidence": null,
+    "motion_deg_per_hr": null,
+    "cells_corrected": 0,
+    "mean_abs_delta": 0.0,
+    "lead_hr_range": null,
+    "physics_probability_range": {
+      "min": 0.0,
+      "max": 0.0
+    }
+  },
+  "provenance": {
+    "requested_event_time_utc": "2026-10-04T22:32:48.106674+00:00",
+    "gfs": {
+      "initialization_time_utc": "2026-10-03T12:00:00+00:00",
+      "forecast_hour": 35,
+      "valid_time_utc": "2026-10-04T23:00:00+00:00",
+      "source_label": "gfs@2026-10-03T12Z+f35",
+      "requested_time_utc": "2026-10-04T22:32:48.106674+00:00",
+      "selection_as_of_utc": "2026-10-03T21:48:25.035157+00:00",
+      "retrieved_utc": "2026-10-03T21:59:10.757212+00:00",
+      "missing_variables": []
+    },
+    "weather_snapshots": {
+      "count": 25,
+      "source_labels": [
+        "open-meteo@2026-10-04T23Z"
+      ],
+      "selected_hourly_times_utc": [
+        "2026-10-04T23:00:00+00:00"
+      ],
+      "first_retrieved_utc": "2026-10-03T21:59:12.405814+00:00",
+      "last_retrieved_utc": "2026-10-03T21:59:12.406897+00:00",
+      "model_identity": "provider_default_unspecified"
+    },
+    "input_availability": {
+      "terrain_elevation_provider": false,
+      "per_column_aerosol_provider": false,
+      "snapshot_aod_cells": 0,
+      "snapshot_visibility_cells": 25
+    }
+  },
+  "center_diagnostics": {
+    "stage": "model_before_nowcast",
+    "grid_cell": {
+      "lat": 40.7128,
+      "lon": -74.006,
+      "row": 2,
+      "column": 2
+    },
+    "condition_index": 0.0,
+    "gate_score": 0.0,
+    "modifier_score": 0.7,
+    "components": {
+      "mid_high_cloud_presence": 1.0,
+      "low_cloud_obstruction": 0.2500008607316644,
+      "solar_angle": 1.0,
+      "clean_air": 1.0,
+      "humidity": 1.0,
+      "cloud_altitude_preference": 1.0,
+      "cloud_cover_sweet_spot": 0.0,
+      "sunward_illumination": 0.0
+    },
+    "explanation": "Composite=0.00 (gate=0.00 × modifier=0.70) from mid_high_cloud_presence=1.00, low_cloud_obstruction=0.25, solar_angle=1.00, clean_air=1.00, humidity=1.00, cloud_altitude_preference=1.00, cloud_cover_sweet_spot=0.00, sunward_illumination=0.00",
+    "inputs": {
+      "cloud_low_pct": 100.0,
+      "cloud_mid_pct": 0.0,
+      "cloud_high_pct": 100.0,
+      "humidity_pct": 77.0,
+      "source_label": "open-meteo@2026-10-04T23Z",
+      "retrieved_at": "2026-10-03T21:59:12.406457+00:00",
+      "visibility_m": 20300.0,
+      "cloud_base_m": null,
+      "sunset_time": "2026-10-04T22:32:00+00:00",
+      "aerosol_optical_depth": null,
+      "wind_speed_850_m_s": null,
+      "wind_direction_850_deg": null,
+      "wind_speed_700_m_s": null,
+      "wind_direction_700_deg": null,
+      "wind_speed_400_m_s": null,
+      "wind_direction_400_deg": null,
+      "sunward_profile": null
+    },
+    "geometry": {
+      "cloud_regime": "stratiform",
+      "lcl_m": 537.6976294680385,
+      "unstable_depth_m": 0.0,
+      "regime_marginal": false
+    }
+  }
+}
