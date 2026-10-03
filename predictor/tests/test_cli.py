@@ -29,6 +29,7 @@ def test_defaults_national_both_events_today():
     assert args.date is None            # resolved to today in main()
     assert args.output == Path("output")
     assert args.source == "auto"
+    assert args.scope == "all"
 
 
 def test_event_choice_rejects_junk():
@@ -63,6 +64,38 @@ def test_plan_with_coords_adds_point_products():
     point = [p for p in plan if p.scope == "point"]
     assert {p.solar_event for p in point} == {SolarEvent.SUNRISE, SolarEvent.SUNSET}
     assert all(p.lat == 31.2 and p.lon == 121.5 for p in point)
+
+
+def test_plan_local_scope_includes_only_requested_location_and_events(tmp_path):
+    plan = plan_products(
+        date(2026, 6, 29), "both", 31.2, 121.5,
+        output_base=tmp_path, scope="local",
+    )
+    assert [(p.scope, p.solar_event, p.lat, p.lon) for p in plan] == [
+        ("point", SolarEvent.SUNRISE, 31.2, 121.5),
+        ("point", SolarEvent.SUNSET, 31.2, 121.5),
+    ]
+    assert all(p.output_dir == tmp_path / "2026-06-29" for p in plan)
+
+
+def test_plan_national_scope_preserves_national_plan():
+    assert plan_products(date(2026, 6, 29), "both", None, None, scope="national") == (
+        plan_products(date(2026, 6, 29), "both", None, None)
+    )
+
+
+@pytest.mark.parametrize(
+    ("scope", "lat", "lon", "message"),
+    [
+        ("local", None, None, "requires --lat and --lon"),
+        ("local", 31.2, None, "must be given together"),
+        ("national", 31.2, 121.5, "does not accept coordinates"),
+        ("unsupported", None, None, "scope must be"),
+    ],
+)
+def test_plan_rejects_invalid_scope_coordinate_combinations(scope, lat, lon, message):
+    with pytest.raises(ValueError, match=message):
+        plan_products(date(2026, 6, 29), "sunset", lat, lon, scope=scope)
 
 
 # --- main orchestration (generation stubbed; offline) ---
@@ -118,6 +151,60 @@ def test_main_with_coords_generates_both_national_and_local(monkeypatch, tmp_pat
     assert rc == 0
     assert national == [SolarEvent.SUNSET]                          # national ran
     assert local == [(31.2, 121.5, SolarEvent.SUNSET, 120.0, 0.2)]  # local ran with flags
+
+
+@pytest.mark.parametrize("source", ["auto", "local"])
+def test_main_local_scope_computes_only_local_products(
+    monkeypatch, tmp_path, capsys, source
+):
+    local = []
+
+    def national_should_not_run(*args, **kwargs):
+        pytest.fail("location-only requests must not generate national maps")
+
+    def fake_local(target_date, output_dir, lat, lon, **kwargs):
+        local.append((lat, lon, kwargs["solar_event"], kwargs["satellite"]))
+        return _fake_artifact(tmp_path, f"point-{kwargs['solar_event'].value}")
+
+    monkeypatch.setattr(cli_mod, "generate_product", national_should_not_run)
+    monkeypatch.setattr(cli_mod, "generate_local_product", fake_local)
+    rc = main([
+        "--date", "2026-06-29", "--scope", "local", "--event", "both",
+        "--lat", "31.2", "--lon", "121.5", "--source", source,
+        "--no-satellite", "--output", str(tmp_path),
+    ])
+
+    assert rc == 0
+    assert local == [
+        (31.2, 121.5, SolarEvent.SUNRISE, False),
+        (31.2, 121.5, SolarEvent.SUNSET, False),
+    ]
+    out = capsys.readouterr().out
+    assert "sunrise + sunset · local" in out
+    assert "Summary: 2/2 products" in out
+    assert "National" not in out
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--scope", "local"], "--scope local requires --lat and --lon"),
+        (["--scope", "local", "--lat", "31.2"], "must be given together"),
+        (["--scope", "national", "--lat", "31.2", "--lon", "121.5"],
+         "does not accept coordinates"),
+    ],
+)
+def test_main_validates_scope_before_data_access(monkeypatch, capsys, arguments, message):
+    def should_not_run(*args, **kwargs):
+        pytest.fail("invalid requests must fail before any data access")
+
+    monkeypatch.setattr(cli_mod, "_fetch_remote_product", should_not_run)
+    monkeypatch.setattr(cli_mod, "generate_product", should_not_run)
+    monkeypatch.setattr(cli_mod, "generate_local_product", should_not_run)
+    with pytest.raises(SystemExit) as exc:
+        main(arguments)
+    assert exc.value.code == 2
+    assert message in capsys.readouterr().err
 
 
 def test_no_refine_flag_propagates(monkeypatch, tmp_path):
@@ -330,6 +417,61 @@ def test_remote_only_supports_published_point_product(monkeypatch, tmp_path):
     ])
 
     assert rc == 0
+
+
+@pytest.mark.parametrize("source", ["auto", "remote"])
+def test_local_scope_remote_hit_requests_only_point_products(monkeypatch, tmp_path, source):
+    scopes = []
+
+    def remote_hit(product, *args):
+        scopes.append(product.scope)
+        return _fake_artifact(tmp_path, "remote-point")
+
+    def should_not_compute(*args, **kwargs):
+        pytest.fail("a matching remote local product must skip local computation")
+
+    monkeypatch.setattr(cli_mod, "_fetch_remote_product", remote_hit)
+    monkeypatch.setattr(cli_mod, "generate_product", should_not_compute)
+    monkeypatch.setattr(cli_mod, "generate_local_product", should_not_compute)
+    rc = main([
+        "--scope", "local", "--date", "2026-06-29", "--event", "sunset",
+        "--lat", "31.23", "--lon", "121.47", "--source", source,
+        "--output", str(tmp_path),
+    ])
+    assert rc == 0
+    assert scopes == ["point"]
+
+
+def test_local_scope_remote_failure_never_computes(monkeypatch, tmp_path, capsys):
+    def should_not_compute(*args, **kwargs):
+        pytest.fail("remote-only mode must not compute missing local products")
+
+    monkeypatch.setattr(cli_mod, "generate_product", should_not_compute)
+    monkeypatch.setattr(cli_mod, "generate_local_product", should_not_compute)
+    rc = main([
+        "--scope", "local", "--date", "2026-06-29", "--event", "sunset",
+        "--lat", "31.23", "--lon", "121.47", "--source", "remote",
+        "--output", str(tmp_path),
+    ])
+    assert rc == 1
+    assert "Summary: 0/1 products" in capsys.readouterr().out
+
+
+def test_local_scope_data_failure_does_not_suggest_national_refinement_flag(
+    monkeypatch, tmp_path, capsys
+):
+    def unavailable(*args, **kwargs):
+        raise GFSUnavailable("no usable local cube")
+
+    monkeypatch.setattr(cli_mod, "generate_local_product", unavailable)
+    rc = main([
+        "--scope", "local", "--event", "sunset", "--source", "local",
+        "--lat", "31.23", "--lon", "121.47", "--output", str(tmp_path),
+    ])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "Retry later" in out
+    assert "--no-refine" not in out
 
 
 @pytest.mark.parametrize(

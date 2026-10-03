@@ -53,6 +53,22 @@ uses a longitude-based solar-day offset to choose that day. This fixes UTC rollo
 but does not provide civil-timezone lookup for political date-line exceptions.
 U.S. map coverage still requires the separate regional-support work.
 
+## Select products
+
+| Scope | Behavior |
+| --- | --- |
+| `all` (default) | National maps, plus local maps when coordinates are supplied |
+| `national` | National maps only; coordinates are rejected |
+| `local` | Local maps only; both `--lat` and `--lon` are required |
+
+Use `--scope local` for a location-focused forecast. This skips national maps and
+their computation. Source selection still applies: `auto` tries matching published
+local products before computing locally, and `remote` uses published products only.
+
+```bash
+uv run firecloud --scope local --lat 31.23 --lon 121.47 --event sunset --source remote
+uv run firecloud --scope local --lat 31.2 --lon 121.5 --event sunset --source local
+```
 
 ## Local detail
 
@@ -61,7 +77,8 @@ uv run firecloud --lat 31.23 --lon 121.47 --event sunset
 uv run firecloud --lat 31.2 --lon 121.5 --radius 120 --resolution 0.2 --source local
 ```
 
-Coordinates add local maps alongside the national maps. `--radius` is in km;
+With the default `--scope all`, coordinates add local maps alongside the national
+maps. `--scope local` produces only the requested local maps. `--radius` is in km;
 `--resolution` is grid spacing in degrees. Defaults are 150 km and 0.1°.
 A shared GFS cube supports detailed physics at each local evaluation point.
 This is not interpolation of the national score, but the input model still limits

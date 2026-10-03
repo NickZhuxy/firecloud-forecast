@@ -8,10 +8,12 @@ national firecloud potential for **both** events (sunrise + sunset) into a per-d
     firecloud --date 2026-06-29
     firecloud --event sunrise              # only the morning glow
     firecloud --lat 31.2 --lon 121.5       # + local fine product
+    firecloud --scope local --lat 31.2 --lon 121.5  # local products only
 
 Default ``--event both`` runs the national overview twice (one GFS read per event;
 that doubled fetch is intended). With ``--lat/--lon`` (or ``--lat/--long``), it also
-generates the local fine product for each selected event.
+generates the local fine product for each selected event. ``--scope local`` limits
+the request to local products; ``--scope national`` requests only national maps.
 """
 from __future__ import annotations
 
@@ -59,16 +61,30 @@ def plan_products(
     lon: float | None,
     *,
     output_base: str | Path = "output",
+    scope: str = "all",
 ) -> list[PlannedProduct]:
     """Pure plan: the products one invocation should produce (offline-testable).
 
-    National products always; when both ``lat`` and ``lon`` are given, a local
-    product per event is added. All land in ``{output_base}/{date}/``.
+    The default includes national maps and, when coordinates are supplied, local
+    maps. ``local`` requires coordinates; ``national`` rejects them so a location
+    request cannot be silently ignored. All land in ``{output_base}/{date}/``.
     """
+    if scope not in {"all", "national", "local"}:
+        raise ValueError("scope must be all, national, or local")
+    if (lat is None) != (lon is None):
+        raise ValueError("--lat and --lon must be given together")
+    if scope == "local" and lat is None:
+        raise ValueError("--scope local requires --lat and --lon")
+    if scope == "national" and lat is not None:
+        raise ValueError(
+            "--scope national does not accept coordinates; use --scope local or all"
+        )
     date_dir = Path(output_base) / target_date.isoformat()
     events = _events(event)
-    plan = [PlannedProduct("national", e, date_dir) for e in events]
-    if lat is not None and lon is not None:
+    plan = []
+    if scope != "local":
+        plan += [PlannedProduct("national", e, date_dir) for e in events]
+    if scope != "national" and lat is not None and lon is not None:
         plan += [PlannedProduct("point", e, date_dir, lat, lon) for e in events]
     return plan
 
@@ -85,6 +101,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--event", choices=["sunrise", "sunset", "both"], default="both",
         help="which solar event(s) to forecast (default: both)",
+    )
+    parser.add_argument(
+        "--scope", choices=["all", "national", "local"], default="all",
+        help="products to generate: all includes national maps plus local maps when "
+             "coordinates are supplied; local requires --lat and --lon (default: all)",
     )
     parser.add_argument("--lat", type=float, default=None, help="local product latitude")
     parser.add_argument(
@@ -209,8 +230,12 @@ def _plan_header(
     n: int,
     cold: bool,
     source: str,
+    scope: str = "all",
 ) -> str:
-    scope = "national + local" if lat is not None else "national"
+    if scope == "local":
+        display_scope = "local"
+    else:
+        display_scope = "national + local" if lat is not None else "national"
     cache = "cold (downloads required)" if cold else "warm (cached)"
     eta = "estimate ~10–20 min, depending on network speed" if cold else "estimate 1–3 min"
     if source == "remote":
@@ -220,7 +245,7 @@ def _plan_header(
     else:
         source_status = f"source: remote first · local fallback cache: {cache}"
     return (
-        f"firecloud · {target_date.isoformat()} · {_EVENT_LABELS[event]} · {scope}\n"
+        f"firecloud · {target_date.isoformat()} · {_EVENT_LABELS[event]} · {display_scope}\n"
         f"Plan: {n} products · {source_status}"
     )
 
@@ -269,11 +294,12 @@ def _run_product(product: PlannedProduct, target_date: date, args) -> object:
     )
 
 
-def _print_data_failure(i: int, n: int, label: str) -> None:
+def _print_data_failure(i: int, n: int, label: str, scope: str = "national") -> None:
     print(f"[{i}/{n}] ✗ {label} failed: data source unreachable (NOAA/network; retries exhausted)")
     print("  This is likely a temporary network or NOAA source issue, not your input.")
     print("  → Retry later (downloaded subsets will be reused)")
-    print("  → Or add --no-refine for a coarse national map (skips national pressure-cube refinement)")
+    if scope == "national":
+        print("  → Or add --no-refine for a coarse national map (skips national pressure-cube refinement)")
 
 
 def _print_unexpected_failure(i: int, n: int, label: str, verbose: bool) -> None:
@@ -301,13 +327,17 @@ def _national_product_mod():
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if (args.lat is None) != (args.lon is None):
-        parser.error("--lat and --lon must be given together")
     if args.dpi <= 0:
         parser.error("--dpi must be positive")
 
     target_date = args.date or date.today()
-    plan = plan_products(target_date, args.event, args.lat, args.lon, output_base=args.output)
+    try:
+        plan = plan_products(
+            target_date, args.event, args.lat, args.lon,
+            output_base=args.output, scope=args.scope,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     # Surface the GFS download progress so a slow multi-hour fetch reads as working.
     # --verbose lifts the veil (transient-retry detail, tracebacks); --quiet drops
@@ -316,7 +346,9 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=level, format="%(message)s")
 
     cold = _cache_is_cold(target_date)
-    print(_plan_header(target_date, args.event, args.lat, len(plan), cold, args.source))
+    print(_plan_header(
+        target_date, args.event, args.lat, len(plan), cold, args.source, args.scope,
+    ))
 
     n = len(plan)
     succeeded = 0
@@ -331,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
             _print_remote_failure(i, n, label)
             continue
         except GFSUnavailable:
-            _print_data_failure(i, n, label)
+            _print_data_failure(i, n, label, product.scope)
             continue
         except Exception:  # noqa: BLE001 — user-facing catch-all, one product only
             _print_unexpected_failure(i, n, label, args.verbose)

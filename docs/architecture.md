@@ -1,7 +1,8 @@
 # Architecture
 
 The public entry point is `predictor.cli:main`, installed as `firecloud`.
-It plans national and optional local products for the requested date and events.
+It plans national and optional local products for the requested date and events;
+`--scope local` limits the plan to the requested location.
 The default source policy tries published artifacts first, then computes locally.
 
 ## Package map
@@ -51,6 +52,7 @@ satellite stages depend on suitable data and an eligible event-time window.
 
 The wheel contains `predictor/` runtime modules; tests remain in the repository
 and source distribution. The source distribution includes docs, tests, and
-research sources through an explicit allowlist in `pyproject.toml`.
-Downloads, local output, private references, internal plans, and generated HTML
+research sources and the small documented forecast example through an explicit
+allowlist in `pyproject.toml`.
+Downloads, routine local output, private references, internal plans, and generated HTML
 are not distribution inputs. Keep `uv.lock` for reproducible contributor installs.

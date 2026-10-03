@@ -2,6 +2,9 @@
 
 **Explainable sunrise and sunset glow forecasts.**
 
+[![Tests](https://github.com/NickZhuxy/firecloud-forecast/actions/workflows/tests.yml/badge.svg)](https://github.com/NickZhuxy/firecloud-forecast/actions/workflows/tests.yml)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Firecloud combines public weather forecasts, cloud-layer diagnosis, and sunward
 illumination geometry to produce national and local maps with traceable metadata.
 Its output is a **condition index from 0 to 1**, not a calibrated probability:
@@ -12,6 +15,28 @@ precomputed maps can be distributed through a static GitHub Pages feed.
 
 **Current coverage:** China is the first supported region. Coverage will expand
 to additional regions in future releases.
+
+![Shanghai sunset condition-index forecast, October 4, 2026](examples/shanghai-sunset/forecast.png)
+
+*A published Shanghai forecast: GFS initialized October 3 at 12:00 UTC, targeting
+the following evening's sunset. Center index: 0.21. This is an archived forecast,
+not an observation or an accuracy claim. [Inspect the case and its provenance](examples/shanghai-sunset/README.md).*
+
+Weather data by [Open-Meteo.com](https://open-meteo.com/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)),
+alongside NOAA GFS; transformed into Firecloud's derived diagnostic.
+Map context made with Natural Earth.
+
+## The question behind the project
+
+Cloud cover alone cannot describe whether clouds can catch low-angle sunlight.
+Firecloud asks a more specific question: **is there a suitable cloud layer, and
+can sunlight reach it through the atmosphere toward the horizon?**
+
+The project has grown from a compact scoring prototype into cloud-profile
+diagnosis, sunward geometry, local and national products, and a published forecast
+feed. The [project story](docs/project-story.md) follows that development through
+concrete experiments, mistakes, and design decisions. The research sources remain
+available so contributors can inspect how the reasoning evolved.
 
 ## Quick start
 
@@ -28,6 +53,22 @@ uv run firecloud --source remote --event sunset
 The last command downloads a published map if one is available. It fails with
 an explanation if the feed is unavailable or stale, without starting a local
 weather-data download. The public feed is best-effort and may have coverage gaps.
+
+For a published location forecast without generating national maps:
+
+```bash
+uv run firecloud --scope local --source remote --event sunset --lat 31.23 --lon 121.47
+```
+
+For an offline introduction that requires only Python and no weather downloads:
+
+```bash
+python examples/shanghai-sunset/verify.py
+```
+
+This verifies the archived example's checksums and prints its event time, actual
+GFS forecast time, and condition index. It does not rerun the weather model or
+validate the forecast against observations.
 
 For local computation:
 
@@ -53,6 +94,7 @@ native GRIB or mapping libraries are missing, install `eccodes`, `geos`, and
 uv run firecloud                          # Today, both events; remote first
 uv run firecloud --event sunrise          # One event
 uv run firecloud --lat 31.23 --lon 121.47  # Add local products around Shanghai
+uv run firecloud --scope local --lat 31.23 --lon 121.47 --event sunset
 uv run firecloud --source local --no-refine --event sunset
 ```
 
@@ -78,6 +120,8 @@ output/YYYY-MM-DD/
 | Guide | Contents |
 | --- | --- |
 | [Usage](docs/usage.md) | Installation, CLI options, output interpretation, troubleshooting |
+| [Example forecast](examples/shanghai-sunset/README.md) | A real map, exact source times, and offline integrity verification |
+| [Project story](docs/project-story.md) | Development milestones, lessons, and evidence from repository history |
 | [Architecture](docs/architecture.md) | Data flow, package map, contributor invariants |
 | [Methodology](research/methodology.md) | Implemented assumptions, scoring, scientific limitations |
 | [Static publishing](docs/publishing.md) | Precomputation and GitHub Pages setup |
@@ -90,6 +134,7 @@ output/YYYY-MM-DD/
 predictor/              Forecast package and command-line entry points
   tests/                Synthetic, regression, and opt-in network tests
 docs/                   User and developer guides
+examples/               Small, documented forecast snapshots with provenance
 research/
   experiments/          Reproducible research scripts
   paper/                Historical LaTeX case study and figure sources
@@ -97,9 +142,9 @@ research/
 .github/                Test/publishing workflows and contribution templates
 ```
 
-Downloaded data, generated forecasts, private reference documents, and personal
-planning archives stay outside version control. The lockfile and small paper
-figures remain tracked for reproducibility. Internal implementation diaries have
+Downloaded grids, routine forecast output, private reference documents, and personal
+planning archives stay outside version control. The lockfile, small paper figures,
+and a bounded documented forecast example remain tracked for reproducibility. Internal implementation diaries have
 been replaced by focused public guides; their originals remain in Git history.
 
 ## Scientific status
@@ -122,8 +167,8 @@ independent validation are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md
 and the [issue tracker](https://github.com/NickZhuxy/firecloud-forecast/issues).
 Planning lives on the [project board](https://github.com/users/NickZhuxy/projects/2).
 
-The most useful next steps are an independent validation dataset, a small gallery
-of verified forecast examples, and a versioned release with clear data provenance.
+The most useful next steps are an independent validation dataset, additional
+documented forecast cases, and support for more regions.
 Algorithm changes should be evaluated separately from repository maintenance.
 
 ## License

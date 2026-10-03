@@ -1,0 +1,73 @@
+{
+  "schema_version": "v4",
+  "product": "china_firecloud_local",
+  "solar_event": "sunset",
+  "target_date": "2026-10-04",
+  "generated_utc": "2026-10-03T19:22:39.631870+00:00",
+  "image": "point-31.23_121.47-sunset.png",
+  "center": [
+    31.23,
+    121.47
+  ],
+  "radius_km": 150.0,
+  "valid_time_utc": "2026-10-04T09:35:49.260080+00:00",
+  "source_label": "gfs@2026-10-03T12Z+f22",
+  "grid_shape": [
+    27,
+    31
+  ],
+  "probability_range": {
+    "min": 0.0,
+    "max": 0.73
+  },
+  "condition_index": {
+    "calibrated_probability": false,
+    "range": {
+      "min": 0.0,
+      "max": 0.73
+    },
+    "favorable_threshold": 0.5,
+    "center_value": 0.20795369194323016
+  },
+  "display": {
+    "metric": "uncalibrated_condition_index",
+    "favorable_threshold": 0.5,
+    "class_bounds": [
+      0.0,
+      0.2,
+      0.4,
+      0.5,
+      0.7,
+      0.85,
+      1.0
+    ],
+    "contour_levels": [
+      0.3,
+      0.5,
+      0.7,
+      0.9
+    ],
+    "field_alpha": 0.88,
+    "colormap": "firecloud_scientific_classes",
+    "font_family": "STIXGeneral",
+    "basemap": "white Natural Earth context",
+    "upsample_factor": 8,
+    "smoothing_passes": 2,
+    "evaluation_resolution_deg": 0.10000000000000142
+  },
+  "nowcast": {
+    "applied": false,
+    "source": "model",
+    "reason": "no cells within nowcast window",
+    "regime": null,
+    "confidence": null,
+    "motion_deg_per_hr": null,
+    "cells_corrected": 0,
+    "mean_abs_delta": 0.0,
+    "lead_hr_range": null,
+    "physics_probability_range": {
+      "min": 0.0,
+      "max": 0.73
+    }
+  }
+}

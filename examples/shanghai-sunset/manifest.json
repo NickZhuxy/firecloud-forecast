@@ -1,0 +1,32 @@
+{
+  "schema_version": "v1",
+  "scope": "point",
+  "algorithm_version": "c61d87e61413",
+  "model_runs": [
+    "2026-10-03T12:00:00Z"
+  ],
+  "target_date": "2026-10-04",
+  "event": "sunset",
+  "generated_at": "2026-10-03T19:22:39.631870Z",
+  "valid_until": "2026-10-04T13:22:39.631870Z",
+  "location_name": "shanghai",
+  "location_slug": "shanghai",
+  "center": [
+    31.23,
+    121.47
+  ],
+  "radius_km": 150.0,
+  "resolution_deg": 0.1,
+  "artifacts": {
+    "image": {
+      "path": "../../../../runs/c61d87e61413/gfs-20261003T12Z/2026-10-04/sunset/points/31.2300_121.4700/point.png",
+      "bytes": 226996,
+      "sha256": "db7836823b3063206945fc6f5e3605998da7a76fb855a8c8117e539e1c94ec14"
+    },
+    "metadata": {
+      "path": "../../../../runs/c61d87e61413/gfs-20261003T12Z/2026-10-04/sunset/points/31.2300_121.4700/point.json",
+      "bytes": 1564,
+      "sha256": "50c0a714d0ef0533922fc29d0a6b7cd5aef47940f704795adc4649397fa1bd09"
+    }
+  }
+}

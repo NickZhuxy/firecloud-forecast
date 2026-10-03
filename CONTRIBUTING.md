@@ -60,7 +60,8 @@ fixtures and paper figures are appropriate when their provenance is clear.
 
 Be respectful, explain disagreements with evidence, and distinguish observations
 from assumptions. The issue tracker holds durable requirements; personal execution
-notes stay local. Agents sharing a checkout follow [AGENTS.md](AGENTS.md).
+notes stay local. Agents sharing a checkout follow
+[AGENTS.md](https://github.com/NickZhuxy/firecloud-forecast/blob/main/AGENTS.md).
 
 Contributions are provided under the repository's [MIT License](LICENSE). Ensure
 you have the right to contribute any code, data, or documentation you submit.

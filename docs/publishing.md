@@ -1,6 +1,6 @@
 # Static forecast publishing
 
-The [precompute workflow](../.github/workflows/precompute-pages.yml) runs local
+The [precompute workflow](https://github.com/NickZhuxy/firecloud-forecast/blob/main/.github/workflows/precompute-pages.yml) runs local
 forecast computation on a GitHub runner, then deploys a complete static snapshot
 to GitHub Pages. It publishes data and images, not an interactive application or API.
 
