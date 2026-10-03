@@ -10,8 +10,10 @@ pure and offline-testable.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
@@ -19,8 +21,9 @@ from matplotlib.figure import Figure
 from matplotlib.patches import PathPatch
 from matplotlib.ticker import FuncFormatter
 
-from predictor.local_field import build_local_field
-from predictor.nowcast import apply_nowcast, stage_block
+from predictor.local_field import _gfs_timing, build_local_field, local_grid
+from predictor.local_map_context import load_local_map_context
+from predictor.nowcast import NowcastStageResult, apply_nowcast, stage_block
 from predictor.national_product import (
     DISPLAY_CONTOUR_LEVELS,
     DISPLAY_FIELD_ALPHA,
@@ -44,15 +47,16 @@ from predictor.national_product import (
     load_map_context,
 )
 from predictor.solar_event import SolarEvent, spec_for
+from predictor.regions import get_region
 
-def _format_local_lon(value, _position) -> str:
+def _format_local_lon(value, _position, *, precision: int = 1) -> str:
     suffix = "E" if value >= 0 else "W"
-    return f"{abs(value):.1f}°{suffix}"
+    return f"{abs(value):.{precision}f}°{suffix}"
 
 
-def _format_local_lat(value, _position) -> str:
+def _format_local_lat(value, _position, *, precision: int = 1) -> str:
     suffix = "N" if value >= 0 else "S"
-    return f"{abs(value):.1f}°{suffix}"
+    return f"{abs(value):.{precision}f}°{suffix}"
 
 
 def _draw_land(ax, geom, *, facecolor: str, edgecolor: str, linewidth: float, zorder: float) -> None:
@@ -94,10 +98,14 @@ def plot_local_product(
     generated_at: datetime | None = None,
     context: MapContext | None = None,
     figure: Figure | None = None,
+    region: str = "china",
 ) -> Figure:
     """Render a publication-style local condition-index analysis."""
     spec = spec_for(solar_event)
     generated = _utc(generated_at or datetime.now(timezone.utc))
+    profile = get_region(region)
+    event_local = _utc(field.valid_time).astimezone(ZoneInfo(profile.timezone_name))
+    model_timing = _model_timing(field)
     clat, clon = field.center
 
     fig = figure or Figure(figsize=(11.5, 8.6), facecolor="white")
@@ -108,8 +116,14 @@ def plot_local_product(
     ax.set_xlim(float(field.lons[0]), float(field.lons[-1]))
     ax.set_ylim(float(field.lats[0]), float(field.lats[-1]))
     ax.set_aspect("equal", adjustable="box")
-    ax.xaxis.set_major_formatter(FuncFormatter(_format_local_lon))
-    ax.yaxis.set_major_formatter(FuncFormatter(_format_local_lat))
+    lon_precision = 2 if float(field.lons[-1] - field.lons[0]) < 1.0 else 1
+    lat_precision = 2 if float(field.lats[-1] - field.lats[0]) < 1.0 else 1
+    ax.xaxis.set_major_formatter(FuncFormatter(
+        lambda value, position: _format_local_lon(value, position, precision=lon_precision)
+    ))
+    ax.yaxis.set_major_formatter(FuncFormatter(
+        lambda value, position: _format_local_lat(value, position, precision=lat_precision)
+    ))
     ax.tick_params(labelsize=8.5)
     for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
         label.set_fontfamily(SCIENTIFIC_FONT_FAMILY)
@@ -191,7 +205,10 @@ def plot_local_product(
     fig.text(
         0.065,
         0.93,
-        "Firecloud Condition Index — Local Detail",
+        (
+            "Firecloud Condition Index — Local Detail"
+            if region == "china" else f"Firecloud Condition Index — {profile.name}"
+        ),
         ha="left",
         va="center",
         fontsize=19,
@@ -220,7 +237,8 @@ def plot_local_product(
         0.065,
         0.875,
         f"GFS initialized {_initialized_label(field.source_label)}  →  "
-        f"{spec.label_en.lower()} {target_date:%d %b %Y} | {field.valid_time:%H:%M UTC}",
+        f"{spec.label_en.lower()} {event_local:%d %b %Y %H:%M %Z} "
+        f"({field.valid_time:%d %b %H:%M UTC})",
         ha="left",
         va="center",
         fontsize=9.5,
@@ -250,7 +268,7 @@ def plot_local_product(
     fig.text(
         0.80,
         0.49,
-        "LOCAL ANALYSIS",
+        "LOCAL ANALYSIS" if region == "china" else "LOCAL PILOT",
         ha="left",
         va="bottom",
         fontsize=8,
@@ -259,10 +277,12 @@ def plot_local_product(
         color="#303030",
     )
     details = (
-        ("Center", f"{clat:.2f}°N, {clon:.2f}°E"),
+        ("Center", f"{abs(clat):.2f}°{'N' if clat >= 0 else 'S'}, "
+                   f"{abs(clon):.2f}°{'E' if clon >= 0 else 'W'}"),
         ("Radius", f"{field.radius_km:g} km"),
         ("Grid", f"{grid_spacing:g}° evaluation"),
-        ("Valid", f"{field.valid_time:%H:%M UTC}"),
+        ("Event", f"{event_local:%H:%M %Z}"),
+        ("GFS valid", _model_time_label(model_timing["valid_time_utc"])),
         ("Center index", center_value),
     )
     for row, (label, value) in enumerate(details):
@@ -328,7 +348,38 @@ def _stem(center: tuple[float, float], solar_event: SolarEvent | str) -> str:
     return f"point-{clat:g}_{clon:g}-{SolarEvent(solar_event).value}"
 
 
-def _metadata(field, target_date: date, image_name: str, generated_at: datetime, solar_event) -> dict:
+def _model_timing(field) -> dict:
+    provenance = getattr(field, "provenance", None) or {}
+    return provenance.get("gfs") or _gfs_timing(field.source_label)
+
+
+def _model_time_label(value: str | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"{datetime.fromisoformat(value):%d %b %H:%M UTC}"
+
+
+def _json_value(value):
+    """Keep optional diagnostic data compatible with strict JSON."""
+    if isinstance(value, dict):
+        return {key: _json_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return [_json_value(item) for item in value]
+    if isinstance(value, datetime):
+        return _utc(value).isoformat()
+    if isinstance(value, (float, np.floating)):
+        return float(value) if np.isfinite(value) else None
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.bool_):
+        return bool(value)
+    return value
+
+
+def _metadata(
+    field, target_date: date, image_name: str, generated_at: datetime, solar_event,
+    *, region: str = "china",
+) -> dict:
     prob = np.asarray(field.probability, dtype=float)
     finite = prob[np.isfinite(prob)]
     lats = np.asarray(field.lats, dtype=float)
@@ -338,9 +389,15 @@ def _metadata(field, target_date: date, image_name: str, generated_at: datetime,
     center_raw = float(prob[center_j, center_i])
     center_value = center_raw if np.isfinite(center_raw) else None
     resolution_deg = float(np.median(np.diff(lats))) if lats.size > 1 else None
+    profile = get_region(region)
+    event_utc = _utc(field.valid_time)
+    event_local = event_utc.astimezone(ZoneInfo(profile.timezone_name))
     metadata = {
         "schema_version": PRODUCT_SCHEMA_VERSION,
-        "product": "china_firecloud_local",
+        "product": profile.local_product_name,
+        "region": profile.key,
+        "region_name": profile.name,
+        "timezone": profile.timezone_name,
         "solar_event": SolarEvent(solar_event).value,
         "target_date": target_date.isoformat(),
         "generated_utc": _utc(generated_at).isoformat(),
@@ -348,6 +405,11 @@ def _metadata(field, target_date: date, image_name: str, generated_at: datetime,
         "center": [float(field.center[0]), float(field.center[1])],
         "radius_km": float(field.radius_km),
         "valid_time_utc": _utc(field.valid_time).isoformat(),
+        "valid_time_semantics": "requested_solar_event",
+        "event_time_utc": event_utc.isoformat(),
+        "event_time_local": event_local.isoformat(),
+        "event_timezone_abbreviation": event_local.tzname(),
+        "gfs_timing": _model_timing(field),
         "source_label": field.source_label,
         "grid_shape": [int(np.asarray(field.lats).size), int(np.asarray(field.lons).size)],
         "probability_range": {
@@ -380,6 +442,10 @@ def _metadata(field, target_date: date, image_name: str, generated_at: datetime,
     nowcast = getattr(field, "nowcast", None)
     if nowcast is not None:
         metadata["nowcast"] = nowcast
+    for name in ("provenance", "center_diagnostics"):
+        value = getattr(field, name, None)
+        if value is not None:
+            metadata[name] = _json_value(value)
     return metadata
 
 
@@ -392,6 +458,7 @@ def save_local_product(
     generated_at: datetime | None = None,
     context: MapContext | None = None,
     dpi: int = 160,
+    region: str = "china",
 ) -> ProductArtifacts:
     """Atomically write ``point-{lat}_{lon}-{event}.png`` and its JSON sidecar."""
     if dpi <= 0:
@@ -405,14 +472,16 @@ def save_local_product(
 
     figure = plot_local_product(
         field, target_date, solar_event=solar_event,
-        generated_at=generated, context=context,
+        generated_at=generated, context=context, region=region,
     )
     image_tmp = directory / f".{stem}.png.tmp"
     figure.savefig(image_tmp, format="png", dpi=dpi, facecolor="white")
     image_tmp.replace(image_path)
     figure.clear()
 
-    metadata = _metadata(field, target_date, image_path.name, generated, solar_event)
+    metadata = _metadata(
+        field, target_date, image_path.name, generated, solar_event, region=region,
+    )
     metadata_tmp = directory / f".{stem}.json.tmp"
     metadata_tmp.write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
@@ -438,6 +507,7 @@ def generate_local_product(
     satellite: bool = True,
     satellite_source=None,
     now: datetime | None = None,
+    region: str = "china",
 ) -> ProductArtifacts:
     """Fetch, run the full single-point physics over the local grid, render and save.
 
@@ -451,22 +521,44 @@ def generate_local_product(
     from predictor.gfs import GFSSource
     from predictor.rules import standard_predictor
 
+    profile = get_region(region)
+    profile.validate_center(lat, lon)
     weather = source if source is not None else OpenMeteoSource(solar_event=solar_event)
     pred = predictor if predictor is not None else standard_predictor(weather)
-    cubes = cube_source if cube_source is not None else GFSSource()
-    context = load_map_context()
+    cubes = cube_source if cube_source is not None else GFSSource(as_of=now)
+    if region == "china":
+        context = load_map_context()
+    else:
+        lats, lons = local_grid(lat, lon, radius_km=radius_km, resolution_deg=resolution_deg)
+        context = load_local_map_context(
+            profile.country_code,
+            (float(lats[0]), float(lats[-1]), float(lons[0]), float(lons[-1])),
+        )
 
-    event_time = event_time_utc(target_date, lat, lon, solar_event)
+    event_time = event_time_utc(
+        target_date, lat, lon, solar_event,
+        timezone_name=profile.timezone_name if region != "china" else None,
+    )
 
     field = build_local_field(
         pred, cubes, lat, lon, event_time,
         radius_km=radius_km, resolution_deg=resolution_deg,
     )
-    if satellite:
+    if not profile.satellite_enabled:
+        probability = np.asarray(field.probability, dtype=float)
+        skipped = NowcastStageResult(
+            corrected_probability=probability,
+            corrected_mask=np.zeros(probability.shape, dtype=bool),
+            motion=None, applied=False, source="model",
+            reason=f"unsupported satellite coverage for region {profile.key}",
+            lead_hr_range=None,
+        )
+        field = replace(field, nowcast=stage_block(skipped, probability))
+    elif satellite:
         field = _with_nowcast(field, event_time, satellite_source, now)
     return save_local_product(
         field, target_date, output_dir, solar_event=solar_event, dpi=dpi,
-        generated_at=now, context=context,
+        generated_at=now, context=context, region=region,
     )
 
 

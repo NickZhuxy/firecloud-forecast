@@ -95,6 +95,26 @@ def test_plot_local_product_draws_map_context_and_center():
 def test_local_axis_labels_show_decimal_degrees():
     assert _format_local_lon(121.5, None) == "121.5°E"
     assert _format_local_lat(31.5, None) == "31.5°N"
+    assert _format_local_lon(-74.006, None) == "74.0°W"
+    assert _format_local_lat(-31.5, None) == "31.5°S"
+
+
+@pytest.mark.parametrize("span, precision", [(0.4, 2), (2.0, 1)])
+def test_local_axis_precision_keeps_small_area_ticks_distinct(span, precision):
+    import dataclasses
+
+    field = _field((40.7128, -74.006))
+    field = dataclasses.replace(
+        field,
+        lats=np.linspace(field.center[0] - span / 2, field.center[0] + span / 2, 5),
+        lons=np.linspace(field.center[1] - span / 2, field.center[1] + span / 2, 5),
+    )
+    ax = plot_local_product(field, _DATE, region="us-nyc").axes[0]
+    assert ax.xaxis.get_major_formatter()(-74.05, None) == f"{74.05:.{precision}f}°W"
+    assert ax.yaxis.get_major_formatter()(40.75, None) == f"{40.75:.{precision}f}°N"
+    for labels in (ax.get_xticklabels(), ax.get_yticklabels()):
+        texts = [label.get_text() for label in labels]
+        assert len(texts) == len(set(texts))
 
 
 def test_save_local_product_names_by_coords_and_event(tmp_path):
@@ -262,3 +282,143 @@ def test_local_product_los_angeles_uses_requested_evening(monkeypatch, tmp_path)
     expected = sun(Observer(34.05, -118.24), date=target_date,
                    tzinfo=ZoneInfo("America/Los_Angeles"))["sunset"]
     assert captured["event_time"] == expected
+
+
+@pytest.mark.parametrize(
+    "instant, abbreviation",
+    [
+        (datetime(2026, 7, 4, 0, 30, tzinfo=timezone.utc), "EDT"),
+        (datetime(2026, 12, 3, 21, 30, tzinfo=timezone.utc), "EST"),
+    ],
+)
+def test_nyc_caption_has_local_date_timezone_and_west_longitude(instant, abbreviation):
+    from dataclasses import replace
+    from zoneinfo import ZoneInfo
+
+    field = replace(_field((40.7128, -74.006)), valid_time=instant)
+    local = instant.astimezone(ZoneInfo("America/New_York"))
+    fig = plot_local_product(field, local.date(), generated_at=instant, region="us-nyc")
+    texts = [t.get_text() for t in fig.texts]
+    assert any("New York City" in text for text in texts)
+    assert any("40.71°N, 74.01°W" in text for text in texts)
+    assert any(local.strftime("%d %b %Y %H:%M") in text and abbreviation in text for text in texts)
+    assert any(instant.strftime("%d %b %H:%M UTC") in text for text in texts)
+    fig.clear()
+
+
+def test_nyc_metadata_separates_event_and_discrete_weather_times():
+    from dataclasses import replace
+    import predictor.local_product as mod
+
+    event = datetime(2026, 10, 3, 22, 34, tzinfo=timezone.utc)
+    field = replace(
+        _field((40.7128, -74.006)), valid_time=event,
+        source_label="gfs@2026-10-03T12Z+f11",
+        provenance={"weather_snapshots": {"selected_hourly_times_utc": ["2026-10-03T23:00:00+00:00"]}},
+        center_diagnostics={
+            "stage": "model_before_nowcast",
+            "grid_cell": {"lat": 40.7128, "lon": -74.006, "row": np.int64(2), "column": np.int64(2)},
+            "components": {"sunward_illumination": np.float64(0.4)},
+            "geometry": {"missing": np.nan},
+        },
+    )
+    md = mod._metadata(field, event.date(), "nyc.png", event, "sunset", region="us-nyc")
+    assert md["product"] == "us_nyc_firecloud_local"
+    assert md["region"] == "us-nyc"
+    assert md["timezone"] == "America/New_York"
+    assert md["event_timezone_abbreviation"] == "EDT"
+    assert md["event_time_local"] == "2026-10-03T18:34:00-04:00"
+    assert md["valid_time_semantics"] == "requested_solar_event"
+    assert md["gfs_timing"]["initialization_time_utc"] == "2026-10-03T12:00:00+00:00"
+    assert md["gfs_timing"]["forecast_hour"] == 11
+    assert md["gfs_timing"]["valid_time_utc"] == "2026-10-03T23:00:00+00:00"
+    assert md["event_time_utc"] != md["gfs_timing"]["valid_time_utc"]
+    assert md["center_diagnostics"]["stage"] == "model_before_nowcast"
+    assert md["center_diagnostics"]["grid_cell"] == {"lat": 40.7128, "lon": -74.006, "row": 2, "column": 2}
+    assert md["center_diagnostics"]["geometry"]["missing"] is None
+    json.dumps(md, allow_nan=False)
+
+
+@pytest.mark.parametrize("satellite", [True, False])
+def test_nyc_generation_skips_unsupported_satellite_and_preserves_scores(monkeypatch, tmp_path, satellite):
+    from dataclasses import replace
+    from zoneinfo import ZoneInfo
+    from astral import Observer
+    from astral.sun import sun
+    import predictor.local_product as mod
+
+    built = replace(_field((40.7128, -74.006)), radius_km=25)
+    captured = {}
+
+    def fake_build(pred, cubes, lat, lon, event_time, **kwargs):
+        captured["event_time"] = event_time
+        return built
+
+    def fake_context(country_code, bbox):
+        captured["map_country"] = country_code
+        captured["map_bbox"] = bbox
+        return None
+
+    def fake_save(field, *args, **kwargs):
+        captured["field"] = field
+        captured["region"] = kwargs["region"]
+        return None
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Unsupported satellite or China map IO must not run")
+
+    monkeypatch.setattr(mod, "build_local_field", fake_build)
+    monkeypatch.setattr(mod, "load_local_map_context", fake_context)
+    monkeypatch.setattr(mod, "load_map_context", forbidden)
+    monkeypatch.setattr(mod, "_with_nowcast", forbidden)
+    monkeypatch.setattr(mod, "save_local_product", fake_save)
+    mod.generate_local_product(
+        date(2026, 10, 3), tmp_path, 40.7128, -74.006,
+        source=object(), cube_source=object(), predictor=object(),
+        satellite=satellite, satellite_source=object(), region="us-nyc",
+        radius_km=25, resolution_deg=.1,
+    )
+    expected = sun(Observer(40.7128, -74.006), date=date(2026, 10, 3),
+                   tzinfo=ZoneInfo("America/New_York"))["sunset"]
+    assert captured["event_time"] == expected
+    assert captured["map_country"] == "USA"
+    assert captured["map_bbox"][2] < -74.006 < captured["map_bbox"][3]
+    assert captured["region"] == "us-nyc"
+    assert np.array_equal(captured["field"].probability, built.probability)
+    assert captured["field"].nowcast["applied"] is False
+    assert "unsupported satellite coverage" in captured["field"].nowcast["reason"]
+    assert captured["field"].nowcast["cells_corrected"] == 0
+
+
+def test_nyc_invalid_center_fails_before_product_io(monkeypatch, tmp_path):
+    import predictor.local_product as mod
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Invalid pilot centers must fail before IO")
+
+    monkeypatch.setattr(mod, "load_local_map_context", forbidden)
+    monkeypatch.setattr(mod, "build_local_field", forbidden)
+    with pytest.raises(ValueError, match="pilot centers"):
+        mod.generate_local_product(date(2026, 10, 3), tmp_path, 34.05, -118.24, region="us-nyc")
+
+
+def test_generation_freezes_gfs_availability_to_request_time(monkeypatch, tmp_path):
+    import predictor.local_product as mod
+    import predictor.gfs as gfs
+
+    captured = {}
+
+    def fake_cube_source(*, as_of):
+        captured["as_of"] = as_of
+        return object()
+
+    monkeypatch.setattr(gfs, "GFSSource", fake_cube_source)
+    monkeypatch.setattr(mod, "load_local_map_context", lambda *args: None)
+    monkeypatch.setattr(mod, "build_local_field", lambda *args, **kwargs: _field((40.7128, -74.006)))
+    monkeypatch.setattr(mod, "save_local_product", lambda *args, **kwargs: None)
+    request = datetime(2026, 10, 3, 20, tzinfo=timezone.utc)
+    mod.generate_local_product(
+        date(2026, 10, 3), tmp_path, 40.7128, -74.006,
+        source=object(), predictor=object(), now=request, region="us-nyc",
+    )
+    assert captured["as_of"] == request

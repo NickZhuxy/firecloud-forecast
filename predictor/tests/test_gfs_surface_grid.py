@@ -51,6 +51,35 @@ def test_surface_grid_full_region_shape():
     assert grid.visibility_m.shape == (3, 3)
 
 
+@pytest.mark.parametrize("longitude_axis", [(-80.0, -74.0, -68.0), (280.0, 286.0, 292.0)])
+@pytest.mark.parametrize("longitude_bounds", [(-80.5, -67.5), (279.5, 292.5)])
+def test_nyc_surface_crop_and_cover_lookup_preserve_varying_western_columns(
+    longitude_axis, longitude_bounds,
+):
+    ds = _surface_ds().assign_coords(
+        latitude=[42.0, 41.0, 40.0], longitude=list(longitude_axis),
+    )
+    grid = GFSSource._surface_grid_from_dataset(
+        ds, bbox=(40.5, 41.5, *longitude_bounds),
+        run_time=_T0, valid_time=_T6, source_label="synthetic-nyc",
+    )
+
+    assert grid.lats.tolist() == [41.0]
+    assert grid.lons.tolist() == list(longitude_axis)
+    np.testing.assert_array_equal(grid.cloud_low_pct, [[13.0, 14.0, 15.0]])
+    np.testing.assert_array_equal(grid.cloud_mid_pct, [[23.0, 24.0, 25.0]])
+    np.testing.assert_array_equal(grid.cloud_high_pct, [[33.0, 34.0, 35.0]])
+    np.testing.assert_array_equal(grid.humidity_pct, [[53.0, 54.0, 55.0]])
+    np.testing.assert_array_equal(grid.visibility_m, [[20000.0, 25000.0, 30000.0]])
+    for lon, base in [(-79.9, 3.0), (-74.006, 4.0), (-68.1, 5.0)]:
+        signed = GFSSource._cover_from_dataset(ds, 40.7128, lon)
+        wrapped = GFSSource._cover_from_dataset(ds, 40.7128, lon % 360.0)
+        assert signed == wrapped
+        assert (signed.low_pct, signed.mid_pct, signed.high_pct) == (
+            base + 10.0, base + 20.0, base + 30.0,
+        )
+
+
 def test_missing_field_defaults_and_recorded():
     grid = GFSSource._surface_grid_from_dataset(
         _surface_ds(drop=("vis", "r2")), bbox=(15.0, 45.0, 117.0, 123.0),

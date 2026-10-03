@@ -9,6 +9,7 @@ national firecloud potential for **both** events (sunrise + sunset) into a per-d
     firecloud --event sunrise              # only the morning glow
     firecloud --lat 31.2 --lon 121.5       # + local fine product
     firecloud --scope local --lat 31.2 --lon 121.5  # local products only
+    firecloud --region us-nyc --scope local --lat 40.71 --lon -74.01
 
 Default ``--event both`` runs the national overview twice (one GFS read per event;
 that doubled fetch is intended). With ``--lat/--lon`` (or ``--lat/--long``), it also
@@ -29,6 +30,7 @@ from zoneinfo import ZoneInfo
 from predictor.gfs import GFSSource, GFSUnavailable
 from predictor.local_product import generate_local_product
 from predictor.national_product import generate_product
+from predictor.regions import REGION_KEYS, get_region
 from predictor.remote_product import (
     RemoteProductClient,
     RemoteProductUnavailable,
@@ -45,6 +47,7 @@ class PlannedProduct:
     output_dir: Path           # the per-date folder the artifact lands in
     lat: float | None = None
     lon: float | None = None
+    region: str = "china"
 
 
 def _events(event: str) -> list[SolarEvent]:
@@ -62,15 +65,20 @@ def plan_products(
     *,
     output_base: str | Path = "output",
     scope: str = "all",
+    region: str = "china",
 ) -> list[PlannedProduct]:
     """Pure plan: the products one invocation should produce (offline-testable).
 
     The default includes national maps and, when coordinates are supplied, local
     maps. ``local`` requires coordinates; ``national`` rejects them so a location
-    request cannot be silently ignored. All land in ``{output_base}/{date}/``.
+    request cannot be silently ignored. China keeps ``{output_base}/{date}/``;
+    pilot products use ``{output_base}/{region}/{date}/``.
     """
+    selected_region = get_region(region)
     if scope not in {"all", "national", "local"}:
         raise ValueError("scope must be all, national, or local")
+    if not selected_region.national_enabled and scope != "local":
+        raise ValueError(f"{selected_region.name} only supports --scope local")
     if (lat is None) != (lon is None):
         raise ValueError("--lat and --lon must be given together")
     if scope == "local" and lat is None:
@@ -79,24 +87,40 @@ def plan_products(
         raise ValueError(
             "--scope national does not accept coordinates; use --scope local or all"
         )
-    date_dir = Path(output_base) / target_date.isoformat()
+    if lat is not None and lon is not None:
+        selected_region.validate_center(lat, lon)
+    root = Path(output_base)
+    if selected_region.key != "china":
+        root /= selected_region.key
+    date_dir = root / target_date.isoformat()
     events = _events(event)
     plan = []
     if scope != "local":
-        plan += [PlannedProduct("national", e, date_dir) for e in events]
+        plan += [
+            PlannedProduct("national", e, date_dir, region=selected_region.key)
+            for e in events
+        ]
     if scope != "national" and lat is not None and lon is not None:
-        plan += [PlannedProduct("point", e, date_dir, lat, lon) for e in events]
+        plan += [
+            PlannedProduct("point", e, date_dir, lat, lon, selected_region.key)
+            for e in events
+        ]
     return plan
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="firecloud",
-        description="Generate firecloud (sunrise/sunset glow) forecast products. Current coverage: China; additional regions are planned.",
+        description="Generate firecloud (sunrise/sunset glow) forecast products. "
+                    "China is supported; New York City is a local pilot.",
+    )
+    parser.add_argument(
+        "--region", choices=REGION_KEYS, default="china",
+        help="coverage profile: china or the local-only us-nyc pilot (default: china)",
     )
     parser.add_argument(
         "--date", type=date.fromisoformat, default=None,
-        help="YYYY-MM-DD (default: today)",
+        help="YYYY-MM-DD local event date (default: today; us-nyc uses New York time)",
     )
     parser.add_argument(
         "--event", choices=["sunrise", "sunset", "both"], default="both",
@@ -122,7 +146,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output", type=Path, default=Path("output"),
-        help="output base directory; products land in {output}/{date}/ (default: output)",
+        help="output base directory; China uses {output}/{date}/ and the NYC pilot "
+             "uses {output}/us-nyc/{date}/ (default: output)",
     )
     parser.add_argument("--dpi", type=int, default=160)
     parser.add_argument(
@@ -231,6 +256,7 @@ def _plan_header(
     cold: bool,
     source: str,
     scope: str = "all",
+    region: str = "china",
 ) -> str:
     if scope == "local":
         display_scope = "local"
@@ -244,13 +270,19 @@ def _plan_header(
         source_status = f"source: local computation · cache: {cache} · {eta}"
     else:
         source_status = f"source: remote first · local fallback cache: {cache}"
+    region_label = "" if region == "china" else f" · {get_region(region).name}"
     return (
-        f"firecloud · {target_date.isoformat()} · {_EVENT_LABELS[event]} · {display_scope}\n"
+        f"firecloud · {target_date.isoformat()} · {_EVENT_LABELS[event]} · {display_scope}{region_label}\n"
         f"Plan: {n} products · {source_status}"
     )
 
 
 def _fetch_remote_product(product: PlannedProduct, target_date: date, args):
+    region = get_region(product.region)
+    if not region.remote_enabled:
+        raise RemoteProductUnavailable(
+            f"{region.name} has no published remote feed; use --source local"
+        )
     client = RemoteProductClient(base_url=args.remote_base_url)
     if product.scope == "point":
         result = client.fetch_point(
@@ -286,11 +318,14 @@ def _run_product(product: PlannedProduct, target_date: date, args) -> object:
             solar_event=product.solar_event, refine=not args.no_refine,
             satellite=not args.no_satellite,
         )
+    region = get_region(product.region)
+    region_options = {"region": region.key} if region.key != "china" else {}
     return generate_local_product(
         target_date, product.output_dir, product.lat, product.lon,
         dpi=args.dpi, solar_event=product.solar_event,
         radius_km=args.radius, resolution_deg=args.resolution,
-        satellite=not args.no_satellite,
+        satellite=not args.no_satellite and region.satellite_enabled,
+        **region_options,
     )
 
 
@@ -311,10 +346,18 @@ def _print_unexpected_failure(i: int, n: int, label: str, verbose: bool) -> None
         print("  (Add --verbose for full technical details)")
 
 
-def _print_remote_failure(i: int, n: int, label: str) -> None:
+def _print_remote_failure(
+    i: int, n: int, label: str, reason: str | None = None,
+    *, remote_enabled: bool = True,
+) -> None:
     print(f"[{i}/{n}] ✗ {label} failed: Remote precomputed product unavailable")
     print("  --source remote prevents local weather-data downloads.")
-    print("  → Retry later, or use --source local to compute locally")
+    if reason:
+        print(f"  {reason}")
+    if remote_enabled:
+        print("  → Retry later, or use --source local to compute locally")
+    else:
+        print("  → Use --source local to compute locally")
 
 
 def _national_product_mod():
@@ -330,11 +373,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.dpi <= 0:
         parser.error("--dpi must be positive")
 
-    target_date = args.date or date.today()
+    region = get_region(args.region)
+    default_date = (
+        datetime.now(ZoneInfo(region.timezone_name)).date()
+        if region.key != "china" else date.today()
+    )
+    target_date = args.date or default_date
     try:
         plan = plan_products(
             target_date, args.event, args.lat, args.lon,
-            output_base=args.output, scope=args.scope,
+            output_base=args.output, scope=args.scope, region=region.key,
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -347,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
 
     cold = _cache_is_cold(target_date)
     print(_plan_header(
-        target_date, args.event, args.lat, len(plan), cold, args.source, args.scope,
+        target_date, args.event, args.lat, len(plan), cold, args.source, args.scope, region.key,
     ))
 
     n = len(plan)
@@ -359,8 +407,10 @@ def main(argv: list[str] | None = None) -> int:
         started = time.perf_counter()
         try:
             artifacts = _run_product(product, target_date, args)
-        except RemoteProductUnavailable:
-            _print_remote_failure(i, n, label)
+        except RemoteProductUnavailable as exc:
+            _print_remote_failure(
+                i, n, label, str(exc), remote_enabled=region.remote_enabled,
+            )
             continue
         except GFSUnavailable:
             _print_data_failure(i, n, label, product.scope)

@@ -16,10 +16,13 @@ from predictor.solar_event import SolarEvent
 
 @pytest.fixture(autouse=True)
 def _remote_feed_is_offline_by_default(monkeypatch):
+    original = cli_mod._fetch_remote_product
+
     def unavailable(*args, **kwargs):
         raise RemoteProductUnavailable("test feed offline")
 
     monkeypatch.setattr(cli_mod, "_fetch_remote_product", unavailable)
+    return original
 
 
 def test_defaults_national_both_events_today():
@@ -30,6 +33,7 @@ def test_defaults_national_both_events_today():
     assert args.output == Path("output")
     assert args.source == "auto"
     assert args.scope == "all"
+    assert args.region == "china"
 
 
 def test_event_choice_rejects_junk():
@@ -96,6 +100,26 @@ def test_plan_national_scope_preserves_national_plan():
 def test_plan_rejects_invalid_scope_coordinate_combinations(scope, lat, lon, message):
     with pytest.raises(ValueError, match=message):
         plan_products(date(2026, 6, 29), "sunset", lat, lon, scope=scope)
+
+
+def test_nyc_plan_is_local_only_and_uses_a_region_directory(tmp_path):
+    plan = plan_products(
+        date(2026, 10, 4), "sunset", 40.7128, -74.0060,
+        scope="local", region="us-nyc", output_base=tmp_path,
+    )
+    assert plan == [PlannedProduct(
+        "point", SolarEvent.SUNSET, tmp_path / "us-nyc" / "2026-10-04",
+        40.7128, -74.0060, "us-nyc",
+    )]
+
+
+@pytest.mark.parametrize("scope", ["all", "national"])
+def test_nyc_plan_rejects_national_scope(scope):
+    with pytest.raises(ValueError, match="only supports --scope local"):
+        plan_products(
+            date(2026, 10, 4), "sunset", 40.7128, -74.0060,
+            scope=scope, region="us-nyc",
+        )
 
 
 # --- main orchestration (generation stubbed; offline) ---
@@ -474,6 +498,128 @@ def test_local_scope_data_failure_does_not_suggest_national_refinement_flag(
     assert "--no-refine" not in out
 
 
+@pytest.mark.parametrize("source", ["local", "auto"])
+def test_nyc_cli_computes_only_local_preserving_region_and_disabling_satellite(
+    monkeypatch, tmp_path, capsys, source, _remote_feed_is_offline_by_default
+):
+    calls = []
+    monkeypatch.setattr(
+        cli_mod, "_fetch_remote_product", _remote_feed_is_offline_by_default
+    )
+
+    def forbidden_source(*args, **kwargs):
+        pytest.fail("the NYC pilot must not fetch China maps or the remote feed")
+
+    def fake_local(target_date, output_dir, lat, lon, **kwargs):
+        calls.append((target_date, Path(output_dir), lat, lon, kwargs))
+        return _fake_artifact(tmp_path, "nyc-sunset")
+
+    monkeypatch.setattr(cli_mod, "RemoteProductClient", forbidden_source)
+    monkeypatch.setattr(cli_mod, "generate_product", forbidden_source)
+    monkeypatch.setattr(cli_mod, "generate_local_product", fake_local)
+    rc = main([
+        "--region", "us-nyc", "--scope", "local", "--date", "2026-10-04",
+        "--lat", "40.7128", "--lon", "-74.0060", "--event", "sunset",
+        "--source", source, "--output", str(tmp_path), "--radius", "25",
+    ])
+    assert rc == 0
+    assert calls == [(
+        date(2026, 10, 4), tmp_path / "us-nyc" / "2026-10-04", 40.7128, -74.0060,
+        {"dpi": 160, "solar_event": SolarEvent.SUNSET, "radius_km": 25.0,
+         "resolution_deg": 0.1, "satellite": False, "region": "us-nyc"},
+    )]
+    out = capsys.readouterr().out
+    assert "local · New York City" in out
+    assert "Summary: 1/1 products" in out
+
+
+def test_nyc_remote_only_fails_before_client_or_local_computation(
+    monkeypatch, tmp_path, capsys, _remote_feed_is_offline_by_default
+):
+    monkeypatch.setattr(
+        cli_mod, "_fetch_remote_product", _remote_feed_is_offline_by_default
+    )
+
+    def forbidden_source(*args, **kwargs):
+        pytest.fail("unsupported NYC remote-only requests must not access sources")
+
+    monkeypatch.setattr(cli_mod, "RemoteProductClient", forbidden_source)
+    monkeypatch.setattr(cli_mod, "generate_product", forbidden_source)
+    monkeypatch.setattr(cli_mod, "generate_local_product", forbidden_source)
+    rc = main([
+        "--region", "us-nyc", "--scope", "local", "--date", "2026-10-04",
+        "--lat", "40.7128", "--lon", "-74.0060", "--event", "sunset",
+        "--source", "remote", "--output", str(tmp_path),
+    ])
+    assert rc == 1
+    out = capsys.readouterr().out
+    assert "New York City has no published remote feed" in out
+    assert "→ Use --source local to compute locally" in out
+    assert "Retry later" not in out
+    assert "Summary: 0/1 products" in out
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--region", "us-nyc"],
+        ["--region", "us-nyc", "--scope", "national"],
+        ["--region", "us-nyc", "--scope", "local"],
+        ["--region", "us-nyc", "--scope", "local", "--lat", "40.7"],
+        ["--region", "us-nyc", "--scope", "local", "--lat", "35", "--lon", "-74"],
+        ["--region", "us-nyc", "--scope", "local", "--lat", "40.7", "--lon", "nan"],
+        ["--lat", "nan", "--lon", "121.5"],
+        ["--lat", "31.2", "--lon", "241.75"],
+    ],
+)
+def test_region_coordinate_validation_precedes_all_sources(monkeypatch, arguments):
+    def forbidden_source(*args, **kwargs):
+        pytest.fail("invalid regional requests must fail before any source access")
+
+    monkeypatch.setattr(cli_mod, "_fetch_remote_product", forbidden_source)
+    monkeypatch.setattr(cli_mod, "generate_product", forbidden_source)
+    monkeypatch.setattr(cli_mod, "generate_local_product", forbidden_source)
+    with pytest.raises(SystemExit) as exc:
+        main(arguments)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("region", "expected_date"),
+    [("us-nyc", date(2026, 10, 3)), ("china", date(2026, 10, 4))],
+)
+def test_default_date_uses_new_york_timezone_and_preserves_china_host_date(
+    monkeypatch, tmp_path, region, expected_date
+):
+    selected_dates = []
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            frozen = cls(2026, 10, 4, 2, tzinfo=timezone.utc)
+            return frozen.astimezone(tz) if tz is not None else frozen.replace(tzinfo=None)
+
+    class FrozenDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 4)
+
+    def fake_local(target_date, *args, **kwargs):
+        selected_dates.append(target_date)
+        return _fake_artifact(tmp_path, "dated-point")
+
+    monkeypatch.setattr(cli_mod, "datetime", FrozenDateTime)
+    monkeypatch.setattr(cli_mod, "date", FrozenDate)
+    monkeypatch.setattr(cli_mod, "generate_local_product", fake_local)
+    lat, lon = ("40.7128", "-74.0060") if region == "us-nyc" else ("31.23", "121.47")
+    rc = main([
+        "--region", region, "--scope", "local", "--lat", lat, "--lon", lon,
+        "--source", "local", "--event", "sunset", "--output", str(tmp_path),
+    ])
+    assert rc == 0
+    assert selected_dates == [expected_date]
+
+
 @pytest.mark.parametrize(
     ("cached", "heading"),
     [(False, "Remote precomputed product found"), (True, "Cached remote product found")],
@@ -511,3 +657,4 @@ def test_remote_source_failure_never_starts_large_local_download(
 
     assert rc == 1
     assert "Remote precomputed product unavailable" in out
+    assert "Retry later, or use --source local" in out

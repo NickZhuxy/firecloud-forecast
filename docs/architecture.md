@@ -15,6 +15,7 @@ The default source policy tries published artifacts first, then computes locally
 | Features and scoring | `features`, `illumination`, `rules`, `score`, `grid_score`, `sunward_section` |
 | National computation | `national_field`, `national_physics`, `national_refine` |
 | Local computation | `local_field`, `local_product` |
+| Product coverage policy | `regions`, `local_map_context` |
 | Satellite experiments | `cloud_top`, `cloud_motion`, `nowcast` |
 | Rendering and delivery | `national_product`, `sounding_plot`, `cross_section_plot`, `precompute`, `remote_product`, `cli` |
 
@@ -31,6 +32,20 @@ National computation uses vectorized scoring and a sunward screen, with selectiv
 pressure-cube ray-trace refinement. Local products evaluate detailed point physics
 on a smaller grid using a shared cube and batched weather snapshots. Optional
 satellite stages depend on suitable data and an eligible event-time window.
+
+The `china` profile preserves the existing national, local, and remote contracts.
+The `us-nyc` profile supports local generation only. Its observer bounds do not
+clip the shared atmospheric cube or the 800 km sunward paths. It uses an explicit
+`America/New_York` civil calendar and U.S. map context. The CLI rejects unsupported
+scope and remote requests before accessing providers; local fallback retains the
+selected region. Himawari correction is skipped for this profile before IO.
+
+Local metadata distinguishes the requested event from the discrete GFS forecast
+hour and retains the selected hourly snapshot labels. Existing internal
+`LocalField.valid_time` remains the requested scoring instant. This provenance
+change does not move the ray geometry to a different hour or change scoring.
+The default local call supplies neither terrain elevations nor per-column AOD
+(aerosol optical depth); metadata records this input limitation.
 
 ## Contracts to preserve
 

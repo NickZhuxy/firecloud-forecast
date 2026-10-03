@@ -105,6 +105,38 @@ def test_cube_from_datasets_records_missing_variable_as_nan():
     assert not np.isnan(cube.temperature_k).any()
 
 
+@pytest.mark.parametrize("longitude_axis", [(-80.0, -74.0, -68.0), (280.0, 286.0, 292.0)])
+@pytest.mark.parametrize("longitude_bounds", [(-80.5, -67.5), (279.5, 292.5)])
+def test_nyc_pressure_crop_and_lookup_preserve_varying_western_columns(
+    longitude_axis, longitude_bounds,
+):
+    # Distinct columns expose a wrong hemisphere or a signed/0–360 lookup that
+    # silently snaps to the crop's edge. A constant field would hide either bug.
+    ds = _synthetic_gfs_ds().assign_coords(
+        latitude=[42.0, 41.0, 40.0], longitude=list(longitude_axis),
+    )
+    valid = datetime(2026, 10, 4, 22, tzinfo=timezone.utc)
+    cube = GFSSource._cube_from_datasets(
+        ds, bbox=(40.5, 41.5, *longitude_bounds),
+        levels=GFSSource.DEFAULT_LEVELS_HPA, run_time=valid, valid_time=valid,
+        source_label="synthetic-nyc", retrieved_at=valid,
+    )
+
+    assert cube.lats.tolist() == [41.0]
+    assert cube.lons.tolist() == list(longitude_axis)
+    np.testing.assert_array_equal(cube.temperature_k[:, 0, :], [
+        [3.0, 4.0, 5.0], [12.0, 13.0, 14.0], [21.0, 22.0, 23.0],
+    ])
+    for lon, expected in [(-79.9, [3.0, 12.0, 21.0]),
+                          (-74.006, [4.0, 13.0, 22.0]),
+                          (-68.1, [5.0, 14.0, 23.0])]:
+        signed = cube.profile_at(40.7128, lon)
+        wrapped = cube.profile_at(40.7128, lon % 360.0)
+        assert signed.lat == wrapped.lat == 41.0
+        np.testing.assert_array_equal(signed.temperature_k, expected)
+        np.testing.assert_array_equal(wrapped.temperature_k, expected)
+
+
 def test_cube_from_datasets_treats_sparse_field_levels_as_missing():
     src = GFSSource(cache_dir="/tmp/gfs-test")
     base = _synthetic_gfs_ds(drop=("icmr",))

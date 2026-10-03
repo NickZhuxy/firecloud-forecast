@@ -56,6 +56,7 @@ include = [
     "/predictor",
     "/docs/*.md",
     "/examples/shanghai-sunset",
+    "/examples/new-york-sunset",
     "/research/README.md",
     "/research/methodology.md",
     "/research/experiments",

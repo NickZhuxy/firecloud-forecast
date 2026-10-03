@@ -13,8 +13,8 @@ Its output is a **condition index from 0 to 1**, not a calibrated probability:
 This is research software. It provides a Python package and command-line tools;
 precomputed maps can be distributed through a static GitHub Pages feed.
 
-**Current coverage:** China is the first supported region. Coverage will expand
-to additional regions in future releases.
+**Current coverage:** China has national maps and local maps. New York City has
+an experimental local pilot. Coverage will expand to other regions.
 
 ![Shanghai sunset condition-index forecast, October 4, 2026](examples/shanghai-sunset/forecast.png)
 
@@ -76,6 +76,19 @@ For local computation:
 uv run firecloud --source local --event sunset
 ```
 
+For a New York City sunset forecast:
+
+```bash
+uv run firecloud --region us-nyc --scope local --source local --event sunset \
+  --lat 40.7128 --lon -74.0060 --radius 25 --resolution 0.1
+```
+
+These are public example coordinates. Select your location with `--lat` and
+`--lon`. The pilot accepts centers from 40.0 to 41.5°N and 75.0 to 72.5°W.
+It uses the `America/New_York` calendar date, including daylight saving time.
+It has no published feed or satellite correction. Its weather path can extend
+into Canada and over the ocean. See [the pilot limits](docs/usage.md#new-york-city-pilot).
+
 The first local run downloads GFS subsets and Cartopy map data. Downloads can be
 large, and full refinement can take tens of minutes or longer. On macOS, if
 native GRIB or mapping libraries are missing, install `eccodes`, `geos`, and
@@ -89,6 +102,10 @@ native GRIB or mapping libraries are missing, install `eccodes`, `geos`, and
 - Combines necessary conditions and quality modifiers into an explainable index.
 - Saves PNG maps and JSON provenance, timing, and algorithm metadata.
 - Supports remote downloads with checksum verification and valid-cache fallback.
+
+The default local path uses GFS profiles and Open-Meteo cloud, humidity, and
+visibility forecasts. It does not supply terrain heights or aerosol fields along
+each path. These input limits apply to the New York City pilot.
 
 ```bash
 uv run firecloud                          # Today, both events; remote first
@@ -115,12 +132,16 @@ output/YYYY-MM-DD/
 └── point-31.23_121.47-sunset.png   # Plus JSON, when coordinates are supplied
 ```
 
+New York City products use `output/us-nyc/YYYY-MM-DD/`. The JSON file records
+the event time in local time and UTC. It records the GFS forecast hour separately.
+
 ## Documentation
 
 | Guide | Contents |
 | --- | --- |
 | [Usage](docs/usage.md) | Installation, CLI options, output interpretation, troubleshooting |
 | [Example forecast](examples/shanghai-sunset/README.md) | A real map, exact source times, and offline integrity verification |
+| [New York City pilot](examples/new-york-sunset/README.md) | A local forecast, model times, input limits, and download measurements |
 | [Project story](docs/project-story.md) | Development milestones, lessons, and evidence from repository history |
 | [Architecture](docs/architecture.md) | Data flow, package map, contributor invariants |
 | [Methodology](research/methodology.md) | Implemented assumptions, scoring, scientific limitations |
