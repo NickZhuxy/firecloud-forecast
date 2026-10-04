@@ -633,14 +633,14 @@ def test_plot_uses_original_grid_cells_without_interpolation_or_contours():
     assert len(ax.images) == 0
     mesh = ax.collections[0]
     np.testing.assert_array_equal(mesh.get_array(), _field().probability)
-    assert mesh.cmap.name == "firecloud_index_blues"
+    assert mesh.cmap.name == "firecloud_index_warm"
     assert tuple(mesh.norm.boundaries) == DISPLAY_INDEX_BOUNDS
     assert mesh.get_alpha() == pytest.approx(1.0)
     assert not any("Isolines" in text.get_text() for text in fig.texts)
     assert not any("FAVORABLE" in text.get_text() for text in fig.texts)
 
 
-def test_plot_uses_publication_typography_and_legible_admin_lines():
+def test_plot_uses_clear_sans_typography_and_legible_admin_lines():
     context = MapContext(
         country=box(73.0, 17.0, 136.0, 54.0),
         surrounding=(),
@@ -660,6 +660,7 @@ def test_plot_uses_publication_typography_and_legible_admin_lines():
     from cartopy.mpl.gridliner import Gridliner
     fig.canvas.draw()
     gridliner = next(item for item in ax.get_children() if isinstance(item, Gridliner))
+    assert gridliner.rotate_labels is False
     assert all(
         label.get_fontfamily() == [SCIENTIFIC_FONT_FAMILY]
         for label in gridliner.label_artists
@@ -668,6 +669,28 @@ def test_plot_uses_publication_typography_and_legible_admin_lines():
     assert admin_line.get_color() == "#30383f"
     assert admin_line.get_linewidth() == pytest.approx(0.5)
     assert admin_line.get_alpha() == pytest.approx(0.9)
+
+
+def test_national_coordinates_and_scale_stay_separate_and_captions_fit_canvas():
+    from cartopy.mpl.gridliner import Gridliner
+    from dataclasses import replace
+
+    field = replace(_field(), probability=np.full_like(_field().probability, np.nan),
+                    refined_mask=np.ones_like(_field().probability, dtype=bool),
+                    nowcast={"applied": True, "cells_corrected": 12345})
+    fig = plot_sunsetwx_product(field, _DATE, _context(), generated_at=_GENERATED,
+                               solar_event="sunrise")
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    for text in fig.texts:
+        bounds = text.get_window_extent(renderer)
+        assert 0 <= bounds.x0 < bounds.x1 <= fig.bbox.width
+        assert 0 <= bounds.y0 < bounds.y1 <= fig.bbox.height
+    gridliner = next(item for item in fig.axes[0].get_children() if isinstance(item, Gridliner))
+    scale_title = fig.axes[1]._left_title.get_window_extent(renderer)
+    for label in gridliner.xlabel_artists:
+        if label.get_visible():
+            assert not label.get_window_extent(renderer).overlaps(scale_title)
 
 
 def test_metadata_probability_levels_three_cases():

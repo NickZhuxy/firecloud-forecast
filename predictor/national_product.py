@@ -25,7 +25,7 @@ from matplotlib.patches import PathPatch
 from matplotlib.path import Path as MplPath
 from matplotlib.ticker import FuncFormatter
 
-from predictor.map_style import raw_grid_mesh, horizontal_scale, sampling_text, display_metadata
+from predictor.map_style import FONT_FAMILY, raw_grid_mesh, horizontal_scale, sampling_text, display_metadata
 from predictor.gfs import GFSSource
 from predictor.national_field import NationalField, build_national_field
 from predictor.national_physics import NationalPhysicsConfig
@@ -41,7 +41,7 @@ DISPLAY_UPSAMPLE_FACTOR = 8
 DISPLAY_INDEX_BOUNDS = (0.0, 0.2, 0.4, 0.5, 0.7, 0.85, 1.0)
 DISPLAY_CONTOUR_LEVELS = (0.3, 0.5, 0.7, 0.9)
 DISPLAY_FIELD_ALPHA = 0.88
-SCIENTIFIC_FONT_FAMILY = "STIXGeneral"
+SCIENTIFIC_FONT_FAMILY = FONT_FAMILY
 SCIENTIFIC_MONO_FONT_FAMILY = "DejaVu Sans Mono"
 _QUALITY_CMAP = ListedColormap(
     ["#f1f3f5", "#c7dce5", "#7fb6c5", "#f2ce62", "#e8783e", "#8f2145"],
@@ -367,11 +367,13 @@ def plot_sunsetwx_product(
     geographic = ccrs.PlateCarree()
     projection = ccrs.LambertConformal(central_longitude=105, central_latitude=35,
                                      standard_parallels=(25, 47))
-    fig = figure or Figure(figsize=(12, 8.8), facecolor="white")
+    fig = figure or Figure(figsize=(12, 8.6), facecolor="white")
     FigureCanvasAgg(fig)
     fig.patch.set_alpha(1.0)
-    ax = fig.add_axes([0.06, 0.25, 0.88, 0.57], projection=projection)
+    ax = fig.add_axes([0.055, 0.235, 0.90, 0.65], projection=projection)
     ax.set_facecolor("white")
+    ax.spines["geo"].set_edgecolor("#ded9d4")
+    ax.spines["geo"].set_linewidth(0.7)
     geo_transform = geographic._as_mpl_transform(ax)
     mesh, lat_edges, lon_edges = raw_grid_mesh(ax, field, DISPLAY_INDEX_BOUNDS,
                                               transform=geographic)
@@ -398,20 +400,21 @@ def plot_sunsetwx_product(
                             x_inline=False, y_inline=False)
     gridlines.top_labels = False
     gridlines.right_labels = False
-    gridlines.xlabel_style = {"size": 8, "fontfamily": SCIENTIFIC_FONT_FAMILY}
-    gridlines.ylabel_style = {"size": 8, "fontfamily": SCIENTIFIC_FONT_FAMILY}
+    gridlines.rotate_labels = False
+    gridlines.xlabel_style = {"size": 8, "fontfamily": SCIENTIFIC_FONT_FAMILY, "color": "#766e68"}
+    gridlines.ylabel_style = {"size": 8, "fontfamily": SCIENTIFIC_FONT_FAMILY, "color": "#766e68"}
     horizontal_scale(fig, mesh, DISPLAY_INDEX_BOUNDS)
     event = spec_for(solar_event)
     event_start, event_end = map(_utc, field.sunset_range_utc)
     local_start = event_start.astimezone(ZoneInfo("Asia/Shanghai"))
     local_end = event_end.astimezone(ZoneInfo("Asia/Shanghai"))
-    fig.text(0.06, 0.94, f"{event.label_en} condition index — China", ha="left", va="center",
-             fontsize=18, fontfamily=SCIENTIFIC_FONT_FAMILY, fontweight="semibold")
-    fig.text(0.06, 0.885,
+    fig.text(0.06, 0.947, f"{event.label_en} condition index — China", ha="left", va="center",
+             fontsize=19, fontfamily=SCIENTIFIC_FONT_FAMILY, fontweight="bold", color="#312824")
+    fig.text(0.06, 0.902,
              f"{target_date:%d %b %Y} · per-cell {event.label_en.lower()} "
              f"{local_start:%H:%M}–{local_end:%H:%M %Z} "
              f"({_utc_range_label(event_start, event_end)})",
-             fontsize=10, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#333333")
+             fontsize=9.5, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#766e68")
     weather_times = [_utc(value) for value in field.valid_times]
     weather_label = (
         _utc_range_label(min(weather_times), max(weather_times))
@@ -422,14 +425,14 @@ def plot_sunsetwx_product(
         note += f" · {int(field.refined_mask.sum()):,} cells ray-trace refined"
     if field.nowcast and field.nowcast.get("applied"):
         note += f" · {field.nowcast.get('cells_corrected', 0):,} cells satellite-nudged"
-    fig.text(0.06, 0.095, note, fontsize=7.8, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#555555")
+    fig.text(0.06, 0.095, note, fontsize=8, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#766e68")
     fig.text(0.06, 0.065,
              f"GFS 0.25° initialized {_initialized_label(field.source_label)} · weather hours {weather_label}",
-             fontsize=8, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#333333")
+             fontsize=8, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#766e68")
     fig.text(0.06, 0.035,
              f"{field.n_points:,} evaluated cells · {sampling_text(field)} · raw values, no spatial interpolation · "
              f"product timestamp {generated:%Y-%m-%d %H:%M UTC}",
-             fontsize=7.5, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#555555")
+             fontsize=7.5, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#766e68")
     return fig
 
 

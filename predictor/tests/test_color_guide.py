@@ -65,7 +65,7 @@ def test_literal_fixtures_cover_every_band_and_preserve_selected_location_meanin
 
 
 @pytest.mark.parametrize("case_index", range(4))
-def test_individual_figures_use_original_mesh_and_remove_forecast_provenance(monkeypatch, case_index):
+def test_individual_figures_preserve_values_selected_point_and_synthetic_provenance(monkeypatch, case_index):
     _forbid_external_inputs(monkeypatch)
     generator = _generator()
     data = generator.load_fixtures()
@@ -78,22 +78,32 @@ def test_individual_figures_use_original_mesh_and_remove_forecast_provenance(mon
     assert tuple(mesh.norm.boundaries) == DISPLAY_INDEX_BOUNDS
     assert mesh.cmap is INDEX_CMAP
     labels = " ".join(text.get_text() for text in fig.texts)
-    assert generator.BANNER in labels and "manually constructed values" in labels
-    assert "no weather inputs or observations" in labels
-    assert "Illustrative coordinates 40.7128°N, 74.0060°W" in labels
+    assert generator.BANNER in labels and "Manually constructed scores." in labels
+    assert "No weather inputs or observations." in labels
+    assert "uncalibrated index" in labels
     for forbidden in ("2000", "UTC", "EDT", "EST", "GFS", "generated", "product timestamp"):
         assert forbidden not in labels
+    center_j, center_i = 3, 3
     for callout in case["callouts"]:
-        assert any(text.get_text() == callout["label"] for text in fig.axes[0].texts)
+        if (callout["row"], callout["column"]) == (center_j, center_i):
+            # The chosen cell is identified by the crosshair; its exact number
+            # sits in the prominent selected-point readout, not under the marker.
+            assert callout["label"] in labels
+            continue
+        expected_label = "—" if callout["label"] == "No data" else callout["label"]
+        matches = [text for text in fig.axes[0].texts if text.get_text() == expected_label
+                   and tuple(text.xy) == (data["lons"][callout["column"]],
+                                          data["lats"][callout["row"]])]
+        assert len(matches) == 1
     fig.canvas.draw()
     renderer = fig.canvas.get_renderer()
     for text in fig.texts:
         bounds = text.get_window_extent(renderer)
         assert 0 <= bounds.x0 <= bounds.x1 <= fig.bbox.width
         assert 0 <= bounds.y0 <= bounds.y1 <= fig.bbox.height
-    center = next(text for text in fig.texts if text.get_text().startswith("Center index"))
-    caption = next(text for text in fig.texts if text.get_text().startswith("Constructed numeric"))
-    assert not center.get_window_extent(renderer).overlaps(caption.get_window_extent(renderer))
+    selected = next(text for text in fig.texts if text.get_text() == f"{original[3, 3]:.2f}")
+    description = next(text for text in fig.texts if text.get_text() == case["lesson"])
+    assert not selected.get_window_extent(renderer).overlaps(description.get_window_extent(renderer))
     assert json.dumps(data, sort_keys=True, allow_nan=False) == before
 
 
@@ -131,3 +141,68 @@ def test_bad_fixture_fails_before_an_illustration_can_misrepresent_values(proble
     path.write_text(json.dumps(data))
     with pytest.raises(ValueError):
         generator.load_fixtures(path)
+
+
+def test_comparison_keeps_shared_extent_scale_and_readable_selected_values(monkeypatch, tmp_path):
+    _forbid_external_inputs(monkeypatch)
+    generator = _generator()
+    data = generator.load_fixtures()
+    layout = generator._load_layout()
+    captured = []
+    monkeypatch.setattr(layout, "_save", lambda figure, output: captured.append(figure))
+    layout.render_comparison_sheet(data["cases"], data["lats"], data["lons"], data["center"],
+                                   tmp_path / "comparison.png")
+    fig = captured[0]
+    axes = fig.axes[:4]
+    assert len({tuple(ax.get_xlim()) for ax in axes}) == 1
+    assert len({tuple(ax.get_ylim()) for ax in axes}) == 1
+    for case, ax in zip(data["cases"], axes):
+        mesh = ax.collections[0]
+        np.testing.assert_equal(np.ma.filled(mesh.get_array(), np.nan),
+                                np.asarray(case["values"], dtype=float))
+        assert mesh.cmap is INDEX_CMAP
+        assert tuple(mesh.norm.boundaries) == DISPLAY_INDEX_BOUNDS
+    labels = [text.get_text() for text in fig.texts]
+    assert "Synthetic examples" in labels
+    for value in ("0.60", "1.00", "0.10", "0.00"):
+        assert value in labels
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    for text in fig.texts:
+        extent = text.get_window_extent(renderer)
+        assert 0 <= extent.x0 <= extent.x1 <= fig.bbox.width
+        assert 0 <= extent.y0 <= extent.y1 <= fig.bbox.height
+    # Cell labels need to remain separated when the gallery is used at README
+    # width. Testing in physical units also covers any proportional DPI export.
+    for ax in axes:
+        labels = list(ax.texts)
+        for i, label in enumerate(labels):
+            extent = label.get_window_extent(renderer)
+            assert not any(extent.overlaps(other.get_window_extent(renderer))
+                           for other in labels[i + 1:])
+    # The selected values are a separate channel from the colors and cannot
+    # collide with their panel titles or descriptive notes.
+    readouts = [text for text in fig.texts if text.get_text() in ("0.60", "1.00", "0.10", "0.00")]
+    for readout in readouts:
+        assert not any(readout.get_window_extent(renderer).overlaps(text.get_window_extent(renderer))
+                       for text in fig.texts if text is not readout)
+
+
+def test_reference_has_exact_intervals_and_distinct_zero_missing_example(monkeypatch, tmp_path):
+    generator = _generator()
+    layout = generator._load_layout()
+    captured = []
+    monkeypatch.setattr(layout, "_save", lambda figure, output: captured.append(figure))
+    layout.render_color_reference(tmp_path / "reference.png")
+    fig = captured[0]
+    labels = [text.get_text() for text in fig.texts]
+    for interval in ("[0.00, 0.20)", "[0.20, 0.40)", "[0.40, 0.50)",
+                     "[0.50, 0.70)", "[0.70, 0.85)", "[0.85, 1.00]"):
+        assert interval in labels
+    assert {"0.51", "0.69", "0.00", "Valid zero", "Missing data", "Synthetic examples"} <= set(labels)
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    for text in fig.texts:
+        extent = text.get_window_extent(renderer)
+        assert 0 <= extent.x0 <= extent.x1 <= fig.bbox.width
+        assert 0 <= extent.y0 <= extent.y1 <= fig.bbox.height

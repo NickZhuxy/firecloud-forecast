@@ -1,30 +1,13 @@
-# Forecast color guide
+# Read the forecast colors
 
-These are **synthetic illustrations, not forecasts**.
-The values are constructed numbers. No weather data were used.
-The examples use the same palette and grid display as the forecast maps.
+These are **synthetic examples, not forecasts**. They use constructed numbers
+and the same color scale as the forecast maps. No weather data were used.
 
-The colors show **score intervals**. Darker blue means a higher condition index.
+The colors show **score intervals**. Ivory, amber, orange, and deep red show
+increasing condition indices.
 Gray means that no score is available.
 The colors do not show physical cloud layers, cloud amount, or sky colors.
 The index is an uncalibrated heuristic. It is not an event probability.
-
-## Read the scale
-
-![Six score intervals with exact values, zero, and missing data](color-reference.png)
-
-| Example value | Score interval |
-| ---: | --- |
-| 0.10 | `0.00 ≤ index < 0.20` |
-| 0.30 | `0.20 ≤ index < 0.40` |
-| 0.45 | `0.40 ≤ index < 0.50` |
-| 0.60 | `0.50 ≤ index < 0.70` |
-| 0.78 | `0.70 ≤ index < 0.85` |
-| 0.93 | `0.85 ≤ index ≤ 1.00` |
-
-An exact boundary uses the darker interval. The last interval includes 1.00.
-Different values can have the same color. For example, 0.51 and 0.69 use the
-same shade. Read the numbers when you need an exact comparison.
 
 ## Compare four examples
 
@@ -42,6 +25,15 @@ grid, and scale. They do not describe the weather at those coordinates.
 The maps preserve the input cells without smoothing or interpolation.
 For real forecast cases, see [Shanghai](../shanghai-sunset/README.md) and
 [New York City](../new-york-sunset/README.md).
+
+## Read the scale
+
+![Warm score intervals with exact values, zero, and missing data](color-reference.png)
+
+The six intervals start at 0.00, 0.20, 0.40, 0.50, 0.70, and 0.85.
+An exact boundary uses the darker interval. The last interval includes 1.00.
+Different values can have the same color. For example, 0.51 and 0.69 use the
+same shade. Read the numbers when you need an exact comparison.
 
 ## Generate the examples
 

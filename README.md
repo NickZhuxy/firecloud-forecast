@@ -18,9 +18,8 @@ an experimental local pilot. Coverage will expand to other regions.
 
 ![Four synthetic examples of the condition-index colors](examples/color-guide/comparison-sheet.png)
 
-*Synthetic illustrations, not forecasts. The colors show score intervals.
-They do not show physical cloud layers or sky colors.
-[Read the color guide](examples/color-guide/README.md).*
+*Synthetic examples of the condition index.
+[Read the four cases and the color scale](examples/color-guide/README.md).*
 
 For real forecasts and recorded source times, see the archived
 [Shanghai case](examples/shanghai-sunset/README.md) and

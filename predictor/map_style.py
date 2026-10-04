@@ -5,11 +5,11 @@ import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.patches import Rectangle
 
-FONT_FAMILY = "STIXGeneral"
+FONT_FAMILY = "DejaVu Sans"
 NO_DATA_COLOR = "#a8adb3"
 INDEX_CMAP = ListedColormap(
-    ["#f7fbff", "#dbe9f6", "#adcde5", "#6fa9d2", "#377eb8", "#084b80"],
-    name="firecloud_index_blues",
+    ["#fff8ec", "#fee6be", "#f9be79", "#ee8753", "#cc4e40", "#7e293a"],
+    name="firecloud_index_warm",
 )
 INDEX_CMAP.set_bad(NO_DATA_COLOR, alpha=1.0)
 
@@ -50,19 +50,20 @@ def raw_grid_mesh(ax, field, bounds, *, transform=None, singleton_steps=(0.25, 0
 
 def horizontal_scale(fig, mesh, bounds) -> None:
     """Use one compact, shared index scale with an explicit missing-data swatch."""
-    colorbar_ax = fig.add_axes([0.21, 0.15, 0.50, 0.025])
+    colorbar_ax = fig.add_axes([0.17, 0.15, 0.54, 0.022])
     colorbar = fig.colorbar(mesh, cax=colorbar_ax, orientation="horizontal",
                           boundaries=bounds, ticks=bounds, spacing="proportional")
-    colorbar.ax.tick_params(labelsize=8, length=3)
+    colorbar.outline.set_visible(False)
+    colorbar.ax.tick_params(labelsize=8.5, length=0, pad=5, colors="#68615d")
     for label in colorbar.ax.get_xticklabels():
         label.set_fontfamily(FONT_FAMILY)
-    colorbar.set_label("Condition index (0–1)",
-                       fontsize=8.5, fontfamily=FONT_FAMILY, labelpad=7)
-    fig.add_artist(Rectangle((0.77, 0.15), 0.021, 0.025,
+    colorbar.ax.set_title("Condition index (0–1)", loc="left",
+                         fontsize=8.5, fontfamily=FONT_FAMILY, color="#4c4541", pad=7)
+    fig.add_artist(Rectangle((0.78, 0.15), 0.019, 0.022,
                              transform=fig.transFigure, facecolor=NO_DATA_COLOR,
-                             edgecolor="#72777d", linewidth=0.5))
-    fig.text(0.80, 0.162, "No data", va="center", fontsize=8.5,
-             fontfamily=FONT_FAMILY, color="#333333")
+                             edgecolor="none"))
+    fig.text(0.81, 0.161, "No data", va="center", fontsize=8.5,
+             fontfamily=FONT_FAMILY, color="#68615d")
 
 
 def sampling_text(field) -> str:

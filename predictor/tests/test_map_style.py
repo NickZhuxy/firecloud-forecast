@@ -64,15 +64,17 @@ def test_nonuniform_edges_and_explicit_single_sample_footprint():
         sample_edges([40.], singleton_step=0)
 
 
-def test_sequential_palette_has_ordered_lightness_and_distinct_opaque_no_data():
+def test_warm_sequential_palette_has_ordered_lightness_and_distinct_opaque_no_data():
     rgb = np.array([to_rgba(color)[:3] for color in INDEX_CMAP.colors])
     linear_rgb = np.where(rgb <= .04045, rgb / 12.92, ((rgb + .055) / 1.055) ** 2.4)
     luminance = linear_rgb @ np.array([.2126, .7152, .0722])
     assert np.all(np.diff(luminance) < 0)
+    assert np.all(rgb[:, 0] > rgb[:, 1])
+    assert np.all(rgb[:, 0] > rgb[:, 2])
     missing = INDEX_CMAP(np.ma.masked)
     assert missing == pytest.approx(to_rgba(NO_DATA_COLOR))
     assert missing[3] == 1
-    assert np.linalg.norm(np.array(missing[:3]) - rgb[0]) > .4
+    assert np.all(np.linalg.norm(np.array(missing[:3]) - rgb, axis=1) > .35)
 
 
 def _canvas_pixel(fig, ax, lon, lat):
@@ -96,7 +98,9 @@ def test_national_projection_clips_both_valid_and_missing_cells_and_polygon_hole
     assert isinstance(ax.projection, ccrs.LambertConformal)
     fig.canvas.draw()
     np.testing.assert_allclose(_canvas_pixel(fig, ax, 105, 35), [1, 1, 1], atol=.02)
-    np.testing.assert_allclose(_canvas_pixel(fig, ax, 76, 35), [1, 1, 1], atol=.02)
+    # Sample away from the 35° gridline so antialiasing cannot obscure the
+    # coverage-clipping check when the physical map size changes.
+    np.testing.assert_allclose(_canvas_pixel(fig, ax, 76, 34), [1, 1, 1], atol=.02)
     np.testing.assert_allclose(_canvas_pixel(fig, ax, 84, 34), to_rgba(NO_DATA_COLOR)[:3], atol=.02)
     np.testing.assert_allclose(_canvas_pixel(fig, ax, 124, 34), to_rgba(INDEX_CMAP.colors[-1])[:3], atol=.02)
     np.testing.assert_equal(field.probability, values)

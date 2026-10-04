@@ -4,23 +4,15 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
-import matplotlib.patheffects as path_effects
 import numpy as np
 
-from predictor.local_field import LocalField
-from predictor.local_product import plot_local_product
-from predictor.map_style import FONT_FAMILY
 
 DIRECTORY = Path(__file__).resolve().parent
 CASE_IDS = ("01-score-bands", "02-isolated-peak", "03-nearby-patch", "04-zero-and-missing")
-BANNER = "Synthetic illustration — not a forecast"
-# The production renderer requires a datetime. It is not source data, and every
-# date/model/generation caption is replaced before any illustration is saved.
-_RENDERER_TIME = datetime(2000, 1, 1, tzinfo=timezone.utc)
+BANNER = "Synthetic example"
 
 
 def _reject_constant(value):
@@ -65,48 +57,8 @@ def load_fixtures(path: Path = DIRECTORY / "values.json") -> dict:
 
 
 def render_case(case: dict, data: dict):
-    """Use the unchanged production map, replacing only illustration captions."""
-    field = LocalField(
-        lats=np.asarray(data["lats"], dtype=float),
-        lons=np.asarray(data["lons"], dtype=float),
-        probability=np.asarray(case["values"], dtype=float),
-        center=tuple(data["center"]), radius_km=35,
-        valid_time=_RENDERER_TIME, source_label="synthetic numeric fixture",
-    )
-    fig = plot_local_product(field, _RENDERER_TIME.date(), generated_at=_RENDERER_TIME,
-                             context=None, region="us-nyc")
-    for text in fig.texts:
-        current = text.get_text()
-        if " condition index — " in current:
-            text.set_text(f"{case['id'][:2]} · {case['title']}")
-        elif " · event " in current:
-            text.set_text("Constructed numeric field · fixed 0–1 color scale")
-        elif current.startswith("Observer "):
-            text.set_text(case["lesson"])
-        elif current.startswith("GFS "):
-            text.set_text("Source: manually constructed values · no weather inputs or observations")
-        elif "evaluated cells" in current:
-            lat, lon = data["center"]
-            text.set_text(f"Illustrative coordinates {lat:.4f}°N, {abs(lon):.4f}°W · "
-                          "49 fixture cells · 0.1° spacing · raw values")
-        elif current.startswith("Uncalibrated diagnostic"):
-            text.set_text("Index colors are display bins. They do not represent predicted sky colors.")
-    fig.text(.075, .992, BANNER, va="top", fontsize=10, fontweight="bold",
-             fontfamily=FONT_FAMILY, color="#263849",
-             bbox={"facecolor": "#edf2f7", "edgecolor": "#b8c4cf", "pad": 4})
-    ax = fig.axes[0]
-    halo = [path_effects.withStroke(linewidth=3, foreground="white")]
-    for callout in case["callouts"]:
-        row, column = callout["row"], callout["column"]
-        point = (field.lons[column], field.lats[row])
-        offset = callout["offset_points"]
-        arrow = ({"arrowstyle": "-", "color": "#333333", "linewidth": .8,
-                  "path_effects": halo} if any(offset) else None)
-        ax.annotate(callout["label"], xy=point, xytext=offset,
-                    textcoords="offset points", ha="center", va="center",
-                    fontsize=8.5, fontfamily=FONT_FAMILY, color="#111111",
-                    path_effects=halo, arrowprops=arrow, zorder=10)
-    return fig
+    """Draw one literal illustration with the shared production raw-cell style."""
+    return _load_layout().render_case(case, data["lats"], data["lons"], data["center"])
 
 
 def _load_layout():

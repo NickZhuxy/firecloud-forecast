@@ -27,7 +27,8 @@ centers. Missing values remain masked. An isolated high value stays high; a zero
 surrounded by larger values stays zero. This avoids visual changes to peaks,
 gates, and missing-data coverage.
 
-The sequential blue scale uses the existing class boundaries:
+The warm sequential scale moves from ivory through amber and orange to deep red.
+It uses the existing class boundaries:
 `0, 0.20, 0.40, 0.50, 0.70, 0.85, 1.00`. These are display bins, not calibrated
 forecast categories. The legacy 0.50 reference remains in compatible metadata;
 it is not an established threshold for a visible event. A small difference across

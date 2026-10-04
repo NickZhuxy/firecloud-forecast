@@ -19,7 +19,7 @@ import numpy as np
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import PathPatch
-from matplotlib.ticker import FuncFormatter
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 from predictor.local_field import _gfs_timing, build_local_field, local_grid
 from predictor.map_style import raw_grid_mesh, horizontal_scale, sampling_text, display_metadata
@@ -109,10 +109,10 @@ def plot_local_product(
     model_timing = _model_timing(field)
     clat, clon = field.center
     cos_lat = max(float(np.cos(np.deg2rad(clat))), 1e-6)
-    fig = figure or Figure(figsize=(8.5, 8.4), facecolor="white")
+    fig = figure or Figure(figsize=(8.2, 8.4), facecolor="white")
     FigureCanvasAgg(fig)
     fig.patch.set_alpha(1.0)
-    ax = fig.add_axes([0.075, 0.22, 0.85, 0.59])
+    ax = fig.add_axes([0.095, 0.22, 0.83, 0.62])
     _draw_local_map_context(ax, context)
     mesh, lat_edges, lon_edges = raw_grid_mesh(
         ax, field, DISPLAY_INDEX_BOUNDS,
@@ -128,7 +128,12 @@ def plot_local_product(
         lambda value, position: _format_local_lon(value, position, precision=lon_precision)))
     ax.yaxis.set_major_formatter(FuncFormatter(
         lambda value, position: _format_local_lat(value, position, precision=lat_precision)))
-    ax.tick_params(labelsize=8.5)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
+    ax.tick_params(labelsize=8, length=0, pad=7, colors="#766e68")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#ded9d4")
+        spine.set_linewidth(0.7)
     for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
         label.set_fontfamily(SCIENTIFIC_FONT_FAMILY)
     ax.grid(color="#8d8d8d", linewidth=0.35, alpha=0.25, zorder=1)
@@ -143,12 +148,12 @@ def plot_local_product(
     center_raw = float(np.ma.filled(np.ma.asarray(field.probability, dtype=float), np.nan)[center_j, center_i])
     center_value = f"{center_raw:.2f}" if np.isfinite(center_raw) else "No data"
     texts = (
-        (0.075, 0.94, f"{spec.label_en} condition index — {profile.name}", 17, "left", "semibold"),
-        (0.075, 0.885, f"{event_local:%d %b %Y %H:%M %Z} · "
-         f"event {_utc(field.valid_time):%d %b %H:%M UTC}", 10, "left", "normal"),
-        (0.925, 0.89, f"Center index  {center_value}", 15, "right", "semibold"),
-        (0.075, 0.845, f"Observer {abs(clat):.2f}°{'N' if clat >= 0 else 'S'}, "
-         f"{abs(clon):.2f}°{'E' if clon >= 0 else 'W'} · requested radius {field.radius_km:g} km", 8.5, "left", "normal"),
+        (0.075, 0.947, f"{spec.label_en} condition index", 17, "left", "bold"),
+        (0.075, 0.902, f"{event_local:%d %b %Y %H:%M %Z} · "
+         f"event {_utc(field.valid_time):%d %b %H:%M UTC}", 9, "left", "normal"),
+        (0.925, 0.947, f"Center index  {center_value}", 11, "right", "semibold"),
+        (0.075, 0.867, f"Observer {abs(clat):.2f}°{'N' if clat >= 0 else 'S'}, "
+         f"{abs(clon):.2f}°{'E' if clon >= 0 else 'W'} · {profile.name} · radius {field.radius_km:g} km", 8, "left", "normal"),
         (0.075, 0.065, f"GFS 0.25° initialized {_initialized_label(field.source_label)} · "
          f"weather valid {_model_time_label(model_timing['valid_time_utc'])}", 8, "left", "normal"),
         (0.075, 0.035, f"{np.asarray(field.probability).size:,} evaluated cells · {sampling_text(field)} · "
@@ -156,12 +161,13 @@ def plot_local_product(
     )
     for x, y, text, size, align, weight in texts:
         fig.text(x, y, text, ha=align, va="center", fontsize=size,
-                 fontfamily=SCIENTIFIC_FONT_FAMILY, fontweight=weight, color="#222222")
+                 fontfamily=SCIENTIFIC_FONT_FAMILY, fontweight=weight,
+                 color="#312824" if weight != "normal" else "#766e68")
     nowcast = getattr(field, "nowcast", None)
     note = "Uncalibrated diagnostic; not a calibrated occurrence probability"
     if nowcast and nowcast.get("applied"):
         note += f" · {nowcast.get('cells_corrected', 0):,} cells satellite-nudged"
-    fig.text(0.075, 0.095, note, fontsize=8, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#555555")
+    fig.text(0.075, 0.095, note, fontsize=8, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#766e68")
     return fig
 
 

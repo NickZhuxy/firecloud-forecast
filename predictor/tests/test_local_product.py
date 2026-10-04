@@ -74,7 +74,7 @@ def test_local_display_uses_the_full_scientific_condition_index():
         _field(), _DATE, solar_event=SolarEvent.SUNRISE, generated_at=_GEN
     )
     image = fig.axes[0].collections[0]
-    assert image.cmap.name == "firecloud_index_blues"
+    assert image.cmap.name == "firecloud_index_warm"
     assert tuple(image.norm.boundaries) == DISPLAY_INDEX_BOUNDS
     assert image.get_alpha() == pytest.approx(1.0)
     assert image.get_array().count() == image.get_array().size
