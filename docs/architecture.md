@@ -17,6 +17,7 @@ The default source policy tries published artifacts first, then computes locally
 | Local computation | `local_field`, `local_product` |
 | Product coverage policy | `regions`, `local_map_context` |
 | Manual forecast logging | `observation_pilot` |
+| Automatic forecast scheduling | `forecast_runner`, `forecast_service` |
 | Satellite experiments | `cloud_top`, `cloud_motion`, `nowcast` |
 | Rendering and delivery | `national_product`, `sounding_plot`, `cross_section_plot`, `precompute`, `remote_product`, `cli` |
 
@@ -47,6 +48,25 @@ hour and retains the selected hourly snapshot labels. Existing internal
 change does not move the ray geometry to a different hour or change scoring.
 The default local call supplies neither terrain elevations nor per-column AOD
 (aerosol optical depth); metadata records this input limitation.
+
+## Automatic local delivery
+
+`forecast_runner` applies a deterministic schedule around the existing local
+generator. It uses the configured region's civil date and subtracts elapsed lead
+time in UTC. A per-site process lock protects persistent event slots. Successful
+slots are not generated again; bounded retries retain their actual request times.
+Missed windows and interrupted attempts remain distinguishable from forecasts.
+
+The runner reuses `observation_pilot.capture_forecast` for separate attempt
+directories and source provenance. A started-path callback links an attempt to
+its slot before weather work. Delivery verifies artifacts and updates local latest
+files without replacing the original products. Preview requests use separate
+delivery files and do not satisfy the scheduled slot.
+
+`forecast_service` writes a macOS LaunchAgent configuration for periodic ticks.
+The operating system invokes the Python runner; no AI call or webcam is involved.
+This local service depends on the logged-in host, network and installed runtime.
+See [automatic forecasts](automatic-forecasts.md) for setup and recovery limits.
 
 ## Contracts to preserve
 

@@ -179,11 +179,14 @@ def _write_attempt(path: Path, attempt: dict) -> None:
 def capture_forecast(
     config: dict, target_date: date | None = None,
     output_root: str | Path = DEFAULT_OUTPUT, *, now: datetime | None = None,
+    on_started=None,
 ) -> Path:
     """Save a unique attempt; interruptions can leave an incomplete started record.
 
     Completion uses the actual wall clock, independently of any injected request
     time. Atomic state replacement does not guarantee crash-safe disk persistence.
+    An optional ``on_started(path)`` callback runs after the initial attempt is
+    saved and before providers start, so a runner can bind its recovery record.
     """
     config = _validate_viewpoint(config)
     request = now or _utc_now()
@@ -224,6 +227,8 @@ def capture_forecast(
     }
     path = directory / "attempt.json"
     _write_attempt(path, attempt)
+    if on_started is not None:
+        on_started(path)
     try:
         artifacts = _generate_product(
             target, directory, config["latitude"], config["longitude"],
