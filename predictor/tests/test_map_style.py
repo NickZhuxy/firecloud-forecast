@@ -1,8 +1,11 @@
 """Scientific display regressions using synthetic grids and geometry only."""
 from dataclasses import replace
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import cartopy.crs as ccrs
+from matplotlib import font_manager
+from matplotlib.ft2font import FT2Font
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.colors import to_rgba
 from matplotlib.figure import Figure
@@ -10,13 +13,27 @@ import numpy as np
 import pytest
 from shapely.geometry import Polygon, box
 
-from predictor.map_style import INDEX_CMAP, NO_DATA_COLOR, raw_grid_mesh, sample_edges
+from predictor.map_style import FONT_FAMILY, INDEX_CMAP, NO_DATA_COLOR, raw_grid_mesh, sample_edges
 from predictor.national_product import DISPLAY_INDEX_BOUNDS, MapContext, plot_sunsetwx_product
 from predictor.tests.test_local_product import _field as local_field
 from predictor.tests.test_national_product import _field as national_field
 
 DATE = date(2026, 10, 4)
 GENERATED = datetime(2026, 10, 4, 17, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize('weight, filename', [(400, 'Inter-Regular.ttf'), (600, 'Inter-SemiBold.ttf')])
+def test_figure_fonts_resolve_to_bundled_faces_with_required_glyphs(weight, filename):
+    # Resolve real font bytes, rather than checking a requested family string
+    # that Matplotlib could silently replace with an installed default.
+    path = Path(font_manager.findfont(
+        font_manager.FontProperties(family=FONT_FAMILY, weight=weight),
+        fallback_to_default=False))
+    assert path.name == filename
+    assert path.parent == Path(__file__).resolve().parents[1] / 'assets' / 'fonts'
+    face = FT2Font(str(path))
+    assert all(face.get_char_index(ord(char)) for char in '°×–—·+0123456789')
+    assert (path.parent / 'OFL.txt').is_file()
 
 
 @pytest.mark.parametrize('values', [

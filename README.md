@@ -213,5 +213,6 @@ Algorithm changes need a separate review.
 ## License
 
 Licensed under the [MIT License](LICENSE).
+The included Inter font files use the [SIL Open Font License 1.1](predictor/assets/fonts/OFL.txt).
 Weather data, maps, and third-party references have their own terms; see
 [data sources](docs/data-sources.md).

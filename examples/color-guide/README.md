@@ -63,4 +63,8 @@ metadata. The scripts do not request weather or map data.
 The layout uses clear priorities, consistent spacing, and numbers with colors.
 These design methods come from the
 [GPUI Kit Design Guides](https://gpui-kit.com/docs/design-guides/).
+The figures use Inter, the font in the
+[GPUI Kit web gallery](https://github.com/longbridge/gpui-kit/blob/4c7f1350331562436df868c55ac33bebc4c6406c/crates/story-web/src/lib.rs#L30-L34).
+The package includes regular and semibold font files.
+See the [font source and license](../../predictor/assets/fonts/README.md).
 The figures use Python and Matplotlib. GPUI Kit is not a runtime dependency.

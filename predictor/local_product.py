@@ -148,7 +148,7 @@ def plot_local_product(
     center_raw = float(np.ma.filled(np.ma.asarray(field.probability, dtype=float), np.nan)[center_j, center_i])
     center_value = f"{center_raw:.2f}" if np.isfinite(center_raw) else "No data"
     texts = (
-        (0.075, 0.947, f"{spec.label_en} condition index", 17, "left", "bold"),
+        (0.075, 0.947, f"{spec.label_en} condition index", 17, "left", "semibold"),
         (0.075, 0.902, f"{event_local:%d %b %Y %H:%M %Z} · "
          f"event {_utc(field.valid_time):%d %b %H:%M UTC}", 9, "left", "normal"),
         (0.925, 0.947, f"Center index  {center_value}", 11, "right", "semibold"),

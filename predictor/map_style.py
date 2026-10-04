@@ -1,11 +1,25 @@
 """Shared presentation for faithful, unsmoothed forecast grids."""
 from __future__ import annotations
 
+import atexit
+from contextlib import ExitStack
+from importlib.resources import as_file, files
+
 import numpy as np
+from matplotlib import font_manager
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.patches import Rectangle
 
-FONT_FAMILY = "DejaVu Sans"
+# Keep extracted resources alive when the package is imported from an archive.
+# Registration is local to this process; it does not install system fonts.
+_FONT_RESOURCES = ExitStack()
+atexit.register(_FONT_RESOURCES.close)
+for _face in ("Inter-Regular.ttf", "Inter-SemiBold.ttf"):
+    _resource = files("predictor").joinpath("assets", "fonts", _face)
+    _font_path = _FONT_RESOURCES.enter_context(as_file(_resource))
+    font_manager.fontManager.addfont(_font_path)
+
+FONT_FAMILY = "Inter Variable"
 NO_DATA_COLOR = "#a8adb3"
 INDEX_CMAP = ListedColormap(
     ["#fff8ec", "#fee6be", "#f9be79", "#ee8753", "#cc4e40", "#7e293a"],

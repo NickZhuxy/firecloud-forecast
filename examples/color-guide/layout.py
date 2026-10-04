@@ -170,7 +170,7 @@ def render_comparison_sheet(cases, lats, lons, center, output_path):
         raise ValueError("the comparison sheet requires exactly four cases")
     fig = Figure(figsize=(14.2, 6.9), facecolor="white")
     FigureCanvasAgg(fig)
-    _text(fig, .055, .941, "Forecast map · color guide", size=19, weight="semibold")
+    _text(fig, .055, .941, "Forecast map · color guide", size=19)
     _text(fig, .945, .944, _BANNER, size=9, color=_MUTED, ha="right")
     _text(fig, .055, .901, "Four patterns on the same grid. Each + marks the selected point.",
           size=12, color=_MUTED)
@@ -180,7 +180,7 @@ def render_comparison_sheet(cases, lats, lons, center, output_path):
         left = .055 + index * .235
         _, _, selected = _selected(case, lats, lons, center)
         _text(fig, left, .821, f"{index + 1:02d}  {case['title']}", size=12.5, weight="semibold")
-        _text(fig, left, .767, selected, size=25, weight="semibold")
+        _text(fig, left, .767, selected, size=25)
         _text(fig, left + .09, .763, "selected point", size=10.5, color=_MUTED)
         _, mesh = _grid(fig, case, lats, lons, center, [left, .229, .20, .487],
                         latitude_labels=index == 0, label_size=12)
@@ -201,8 +201,8 @@ def render_case(case, lats, lons, center):
     _rule(fig, .888)
     _, mesh = _grid(fig, case, lats, lons, center, [.074, .211, .44, .607], label_size=10)
     _, _, selected = _selected(case, lats, lons, center)
-    _text(fig, .615, .779, "SELECTED POINT", size=8.5, weight="semibold", color=_MUTED)
-    _text(fig, .615, .701, selected, size=34, weight="semibold")
+    _text(fig, .615, .779, "Selected point", size=8.5, color=_MUTED)
+    _text(fig, .615, .701, selected, size=34)
     _text(fig, .615, .559, str(case["lesson"]), size=11, color=_MUTED, va="top")
     _text(fig, .615, .355, "Manually constructed scores.\nNo weather inputs or observations.",
           size=9, color=_MUTED, va="top")

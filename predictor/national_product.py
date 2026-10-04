@@ -409,7 +409,7 @@ def plot_sunsetwx_product(
     local_start = event_start.astimezone(ZoneInfo("Asia/Shanghai"))
     local_end = event_end.astimezone(ZoneInfo("Asia/Shanghai"))
     fig.text(0.06, 0.947, f"{event.label_en} condition index — China", ha="left", va="center",
-             fontsize=19, fontfamily=SCIENTIFIC_FONT_FAMILY, fontweight="bold", color="#312824")
+             fontsize=19, fontfamily=SCIENTIFIC_FONT_FAMILY, fontweight="semibold", color="#312824")
     fig.text(0.06, 0.902,
              f"{target_date:%d %b %Y} · per-cell {event.label_en.lower()} "
              f"{local_start:%H:%M}–{local_end:%H:%M %Z} "
