@@ -34,6 +34,25 @@ it is not an established threshold for a visible event. A small difference acros
 a bin boundary can change the color, so use numeric values for precise comparisons.
 Index colors do not represent predicted sky colors.
 
+The [color guide](../examples/color-guide/README.md) shows every interval with
+exact example values and four constructed fields. These are synthetic illustrations,
+not weather forecasts. Pale and dark areas show smaller and larger scores;
+they do not identify physical cloud layers. Gray is outside the numeric scale.
+
+| Example value | Display interval |
+| ---: | --- |
+| 0.10 | `0.00 ≤ index < 0.20` |
+| 0.30 | `0.20 ≤ index < 0.40` |
+| 0.45 | `0.40 ≤ index < 0.50` |
+| 0.60 | `0.50 ≤ index < 0.70` |
+| 0.78 | `0.70 ≤ index < 0.85` |
+| 0.93 | `0.85 ≤ index ≤ 1.00` |
+
+An exact boundary enters the darker interval. Two different values can share a
+color: 0.51 and 0.69 are both in the fourth interval. Numbers are needed for exact
+comparison. The selected location's score is separate from nearby cells; a dark
+patch nearby does not assign its score to the observer crosshair.
+
 The map is the main panel. A compact scale and source footer replace the former
 threshold headline, repeated city table, and multiple contour-label families.
 National city sample values remain available in metadata.

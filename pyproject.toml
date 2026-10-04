@@ -59,6 +59,7 @@ include = [
     "/docs/templates/*.csv",
     "/examples/shanghai-sunset",
     "/examples/new-york-sunset",
+    "/examples/color-guide",
     "/research/README.md",
     "/research/methodology.md",
     "/research/experiments",

@@ -16,11 +16,15 @@ precomputed maps can be distributed through a static GitHub Pages feed.
 **Current coverage:** China has national maps and local maps. New York City has
 an experimental local pilot. Coverage will expand to other regions.
 
-![Shanghai sunset condition-index forecast, October 4, 2026](examples/shanghai-sunset/forecast.png)
+![Four synthetic examples of the condition-index colors](examples/color-guide/comparison-sheet.png)
 
-*A published Shanghai forecast: GFS initialized October 3 at 12:00 UTC, targeting
-the following evening's sunset. Center index: 0.21. This is an archived forecast,
-not an observation or an accuracy claim. [Inspect the case and its provenance](examples/shanghai-sunset/README.md).*
+*Synthetic illustrations, not forecasts. The colors show score intervals.
+They do not show physical cloud layers or sky colors.
+[Read the color guide](examples/color-guide/README.md).*
+
+For real forecasts and recorded source times, see the archived
+[Shanghai case](examples/shanghai-sunset/README.md) and
+[New York City case](examples/new-york-sunset/README.md).
 
 Weather data by [Open-Meteo.com](https://open-meteo.com/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)),
 alongside NOAA GFS; transformed into Firecloud's derived diagnostic.
@@ -152,6 +156,7 @@ Archived examples retain their original map style.
 | [New York City pilot](examples/new-york-sunset/README.md) | A local forecast, model times, input limits, and download measurements |
 | [Automatic forecasts](docs/automatic-forecasts.md) | Schedule local forecasts, keep source records, and read the latest result |
 | [Read the maps](docs/scientific-figures.md) | Index scale, missing data, map geometry, and source times |
+| [Color examples](examples/color-guide/README.md) | Six score intervals, nearby values, zero, and missing data |
 | [Optional observations](docs/observation-pilot.md) | Save forecasts and record observations for an optional comparison |
 | [Project story](docs/project-story.md) | Development milestones, lessons, and evidence from repository history |
 | [Product roadmap](docs/roadmap.md) | Product priorities and checks for each next step |
