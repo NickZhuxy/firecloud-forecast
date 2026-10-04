@@ -16,6 +16,7 @@ The default source policy tries published artifacts first, then computes locally
 | National computation | `national_field`, `national_physics`, `national_refine` |
 | Local computation | `local_field`, `local_product` |
 | Product coverage policy | `regions`, `local_map_context` |
+| Manual forecast logging | `observation_pilot` |
 | Satellite experiments | `cloud_top`, `cloud_motion`, `nowcast` |
 | Rendering and delivery | `national_product`, `sounding_plot`, `cross_section_plot`, `precompute`, `remote_product`, `cli` |
 
