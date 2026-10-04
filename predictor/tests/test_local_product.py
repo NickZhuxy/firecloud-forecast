@@ -64,19 +64,19 @@ def _context() -> MapContext:
 def test_plot_local_product_returns_figure_with_event_title():
     fig = plot_local_product(_field(), _DATE, solar_event=SolarEvent.SUNRISE, generated_at=_GEN)
     assert any("sunrise" in t.get_text().lower() for t in fig.texts)
-    # The generated timestamp is drawn (caption parity with the national figure).
-    assert any("generated 2026-06-29" in t.get_text() for t in fig.texts)
-    assert any("UNCALIBRATED DIAGNOSTIC" in t.get_text() for t in fig.texts)
+    # This is the recorded product timestamp, not the PNG write completion time.
+    assert any("product timestamp 2026-06-29" in t.get_text() for t in fig.texts)
+    assert any("Uncalibrated diagnostic" in t.get_text() for t in fig.texts)
 
 
 def test_local_display_uses_the_full_scientific_condition_index():
     fig = plot_local_product(
         _field(), _DATE, solar_event=SolarEvent.SUNRISE, generated_at=_GEN
     )
-    image = fig.axes[0].images[0]
-    assert image.cmap.name == "firecloud_scientific_classes"
+    image = fig.axes[0].collections[0]
+    assert image.cmap.name == "firecloud_index_warm"
     assert tuple(image.norm.boundaries) == DISPLAY_INDEX_BOUNDS
-    assert image.get_alpha() == pytest.approx(DISPLAY_FIELD_ALPHA)
+    assert image.get_alpha() == pytest.approx(1.0)
     assert image.get_array().count() == image.get_array().size
 
 
@@ -422,3 +422,90 @@ def test_generation_freezes_gfs_availability_to_request_time(monkeypatch, tmp_pa
         source=object(), predictor=object(), now=request, region="us-nyc",
     )
     assert captured["as_of"] == request
+
+
+def test_masked_center_is_no_data_in_label_mesh_and_strict_metadata():
+    from dataclasses import replace
+    import predictor.local_product as mod
+
+    source = np.ma.array(np.ones((5, 5)), mask=np.zeros((5, 5), dtype=bool))
+    source.mask[2, 2] = True
+    field = replace(_field((40.7128, -74.006)), probability=source)
+    fig = plot_local_product(field, _DATE, generated_at=_GEN, region="us-nyc")
+    md = mod._metadata(field, _DATE, "test.png", _GEN, "sunset", region="us-nyc")
+    assert any("Center index  No data" == text.get_text() for text in fig.texts)
+    assert fig.axes[0].collections[0].get_array().mask[2, 2]
+    assert md["condition_index"]["center_value"] is None
+    assert md["condition_index"]["range"] == {"min": 1.0, "max": 1.0}
+    assert md["probability_range"] == {"min": 1.0, "max": 1.0}
+    json.dumps(md, allow_nan=False)
+    assert source.data[2, 2] == 1.0 and source.mask[2, 2]
+
+
+def test_local_geographic_aspect_is_set_after_raw_mesh_and_preserved_in_metadata():
+    import predictor.local_product as mod
+
+    field = _field((40.7128, -74.006))
+    fig = plot_local_product(field, _DATE, region="us-nyc", generated_at=_GEN)
+    ax = fig.axes[0]
+    expected = 1 / np.cos(np.deg2rad(field.center[0]))
+    assert ax.get_aspect() == pytest.approx(expected)
+    np.testing.assert_allclose(ax.get_xlim(), field.lons[[0, -1]] + [-.05, .05])
+    np.testing.assert_allclose(ax.get_ylim(), field.lats[[0, -1]] + [-.05, .05])
+    md = mod._metadata(field, _DATE, "test.png", _GEN, "sunset", region="us-nyc")
+    assert md["display"]["projection"]["aspect"] == pytest.approx(expected)
+    assert md["display"]["method"] == "raw_grid_cells"
+    assert md["display"]["smoothing_passes"] == 0
+    assert md["display"]["upsample_factor"] == 1
+    assert md["display"]["sampling"]["latitude_spacing_deg"] == pytest.approx(.1)
+    assert md["condition_index"]["center_value"] == field.probability[2, 2]
+    assert md["condition_index"]["range"] == {"min": 0.0, "max": 1.0}
+
+
+def test_local_caption_separates_exact_event_from_model_hour_and_converts_offsets():
+    from dataclasses import replace
+    import predictor.local_product as mod
+
+    event = datetime(2026, 10, 4, 22, 32, tzinfo=timezone.utc)
+    field = replace(_field((40.7128, -74.006)), valid_time=event,
+                    provenance={"gfs": {"valid_time_utc": "2026-10-04T19:00:00-04:00"}})
+    fig = plot_local_product(field, event.date(), generated_at=_GEN, region="us-nyc")
+    text = " ".join(item.get_text() for item in fig.texts)
+    assert "04 Oct 2026 18:32 EDT" in text
+    assert "event 04 Oct 22:32 UTC" in text
+    assert "weather valid 04 Oct 23:00 UTC" in text
+    assert "GFS 0.25°" in text and "0.1° evaluation spacing" in text
+    assert mod._model_time_label("2026-10-04T19:00:00-04:00") == "04 Oct 23:00 UTC"
+
+
+def test_saving_raw_local_grid_preserves_input_values_and_missing_mask(tmp_path):
+    from dataclasses import replace
+
+    source = np.ma.array(_field().probability.copy(), mask=np.zeros((5, 5), dtype=bool))
+    source[0, 0] = np.nan
+    source.mask[2, 2] = True
+    before_data, before_mask = source.data.copy(), source.mask.copy()
+    artifact = save_local_product(replace(_field(), probability=source), _DATE, tmp_path,
+                                  generated_at=_GEN, dpi=50)
+    np.testing.assert_equal(source.data, before_data)
+    np.testing.assert_equal(source.mask, before_mask)
+    metadata = json.loads(artifact.metadata_path.read_text())
+    assert metadata["condition_index"]["center_value"] is None
+    assert metadata["condition_index"]["range"] == {"min": float(source[0, 1]), "max": 1.0}
+
+
+def test_compact_local_layout_keeps_missing_center_header_and_footer_inside_canvas():
+    from dataclasses import replace
+
+    field = replace(_field((40.7128, -74.006)), probability=np.full((5, 5), np.nan),
+                    nowcast={"applied": True, "cells_corrected": 12345})
+    fig = plot_local_product(field, _DATE, generated_at=_GEN, region="us-nyc")
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    for text in fig.texts:
+        bounds = text.get_window_extent(renderer)
+        assert bounds.x0 >= 0 and bounds.x1 <= fig.bbox.width
+        assert bounds.y0 >= 0 and bounds.y1 <= fig.bbox.height
+    center = next(text for text in fig.texts if text.get_text().startswith("Center index"))
+    event = next(text for text in fig.texts if " · event " in text.get_text())
+    assert not center.get_window_extent(renderer).overlaps(event.get_window_extent(renderer))

@@ -101,15 +101,15 @@ def test_plot_is_complete_sunsetwx_scientific_product():
     )
 
     text = " ".join(item.get_text() for item in fig.texts)
-    assert "Firecloud Condition Index" in text
+    assert "Sunset condition index" in text
     assert "GFS 0.25" in text
     assert "initialized" in text
     # Caption shows the true per-cell sunset range (sunset_range_utc), not the
     # wider snapped GFS hourly bracket (valid_times 10:00–15:00).
     assert "10:53–14:36 UTC" in text
-    assert "UNCALIBRATED DIAGNOSTIC" in text
+    assert "Uncalibrated diagnostic" in text
     assert "not a calibrated occurrence probability" in text
-    assert len(fig.axes) == 2  # map + vertical colorbar
+    assert len(fig.axes) == 2  # map + horizontal colorbar
     assert fig.get_facecolor()[-1] == 1.0
 
 
@@ -151,19 +151,18 @@ def test_save_product_writes_png_and_metadata(tmp_path):
     assert metadata["condition_index"]["favorable_threshold"] == 0.5
     assert len(metadata["condition_index"]["reference_locations"]) == 10
     assert metadata["performance"]["download_bytes"] == 35_191_577
-    assert metadata["display"] == {
-        "metric": "uncalibrated_condition_index",
-        "favorable_threshold": DISPLAY_PROBABILITY_THRESHOLD,
-        "class_bounds": list(DISPLAY_INDEX_BOUNDS),
-        "contour_levels": list(DISPLAY_CONTOUR_LEVELS),
-        "field_alpha": DISPLAY_FIELD_ALPHA,
-        "colormap": "firecloud_scientific_classes",
-        "font_family": SCIENTIFIC_FONT_FAMILY,
-        "basemap": "white",
-        "boundary_resolution": "Natural Earth 10m",
-        "upsample_factor": DISPLAY_UPSAMPLE_FACTOR,
-        "smoothing_passes": DISPLAY_SMOOTH_PASSES,
-    }
+    display = metadata["display"]
+    assert display["metric"] == "uncalibrated_condition_index"
+    assert display["favorable_threshold"] == DISPLAY_PROBABILITY_THRESHOLD
+    assert display["class_bounds"] == list(DISPLAY_INDEX_BOUNDS)
+    assert display["contour_levels"] == []
+    assert display["upsample_factor"] == 1
+    assert display["smoothing_passes"] == 0
+    assert display["method"] == "raw_grid_cells"
+    assert display["projection"]["name"] == "LambertConformal"
+    assert display["projection"]["source_crs"] == "PlateCarree"
+    assert display["sampling"]["changes_model_resolution"] is False
+
 
 
 # --- #60 PR-3 / #63: event-aware label, metadata and filename ---
@@ -628,23 +627,20 @@ def test_display_quality_ignores_nan_without_filling_all_nan_cells():
     assert np.isnan(all_nan).all()
 
 
-def test_plot_uses_classified_full_domain_raster_and_isolines():
-    fig = plot_sunsetwx_product(
-        _field(), _DATE, _context(), generated_at=_GENERATED
-    )
+def test_plot_uses_original_grid_cells_without_interpolation_or_contours():
+    fig = plot_sunsetwx_product(_field(), _DATE, _context(), generated_at=_GENERATED)
     ax = fig.axes[0]
-    assert len(ax.images) == 1
-    image = ax.images[0]
-    assert image.get_array().shape[0] > _field().probability.shape[0]
-    assert image.get_array().shape[1] > _field().probability.shape[1]
-    assert image.get_interpolation() == "nearest"
-    assert image.cmap.name == "firecloud_scientific_classes"
-    assert tuple(image.norm.boundaries) == DISPLAY_INDEX_BOUNDS
-    assert image.get_alpha() == pytest.approx(DISPLAY_FIELD_ALPHA)
-    assert any("Isolines" in text.get_text() for text in fig.texts)
+    assert len(ax.images) == 0
+    mesh = ax.collections[0]
+    np.testing.assert_array_equal(mesh.get_array(), _field().probability)
+    assert mesh.cmap.name == "firecloud_index_warm"
+    assert tuple(mesh.norm.boundaries) == DISPLAY_INDEX_BOUNDS
+    assert mesh.get_alpha() == pytest.approx(1.0)
+    assert not any("Isolines" in text.get_text() for text in fig.texts)
+    assert not any("FAVORABLE" in text.get_text() for text in fig.texts)
 
 
-def test_plot_uses_publication_typography_and_legible_admin_lines():
+def test_plot_uses_clear_sans_typography_and_legible_admin_lines():
     context = MapContext(
         country=box(73.0, 17.0, 136.0, 54.0),
         surrounding=(),
@@ -656,18 +652,45 @@ def test_plot_uses_publication_typography_and_legible_admin_lines():
     )
     ax = fig.axes[0]
     title = next(
-        text for text in fig.texts if "Firecloud Condition Index" in text.get_text()
+        text for text in fig.texts if "Sunset condition index" in text.get_text()
     )
     admin_line = next(line for line in ax.lines if line.get_zorder() == 5)
 
     assert title.get_fontfamily() == [SCIENTIFIC_FONT_FAMILY]
+    from cartopy.mpl.gridliner import Gridliner
+    fig.canvas.draw()
+    gridliner = next(item for item in ax.get_children() if isinstance(item, Gridliner))
+    assert gridliner.rotate_labels is False
     assert all(
         label.get_fontfamily() == [SCIENTIFIC_FONT_FAMILY]
-        for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]
+        for label in gridliner.label_artists
     )
+    assert gridliner.label_artists
     assert admin_line.get_color() == "#30383f"
     assert admin_line.get_linewidth() == pytest.approx(0.5)
     assert admin_line.get_alpha() == pytest.approx(0.9)
+
+
+def test_national_coordinates_and_scale_stay_separate_and_captions_fit_canvas():
+    from cartopy.mpl.gridliner import Gridliner
+    from dataclasses import replace
+
+    field = replace(_field(), probability=np.full_like(_field().probability, np.nan),
+                    refined_mask=np.ones_like(_field().probability, dtype=bool),
+                    nowcast={"applied": True, "cells_corrected": 12345})
+    fig = plot_sunsetwx_product(field, _DATE, _context(), generated_at=_GENERATED,
+                               solar_event="sunrise")
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
+    for text in fig.texts:
+        bounds = text.get_window_extent(renderer)
+        assert 0 <= bounds.x0 < bounds.x1 <= fig.bbox.width
+        assert 0 <= bounds.y0 < bounds.y1 <= fig.bbox.height
+    gridliner = next(item for item in fig.axes[0].get_children() if isinstance(item, Gridliner))
+    scale_title = fig.axes[1]._left_title.get_window_extent(renderer)
+    for label in gridliner.xlabel_artists:
+        if label.get_visible():
+            assert not label.get_window_extent(renderer).overlaps(scale_title)
 
 
 def test_metadata_probability_levels_three_cases():
@@ -858,3 +881,49 @@ def test_metadata_and_caption_carry_nowcast(monkeypatch):
 def test_metadata_has_no_nowcast_block_when_absent():
     meta = product_mod._metadata(_field(), _DATE, "x.png", _GENERATED)
     assert "nowcast" not in meta
+
+
+def test_masked_national_samples_are_missing_in_reference_values_and_ranges():
+    from dataclasses import replace
+
+    source = np.ma.array(np.ones((3, 4)), mask=np.ones((3, 4), dtype=bool))
+    field = replace(_field(), probability=source)
+    metadata = product_mod._metadata(field, _DATE, "test.png", _GENERATED)
+    assert metadata["condition_index"]["range"] == {"min": None, "max": None}
+    assert metadata["probability_range"] == {"min": None, "max": None}
+    assert all(row["condition_index"] is None for row in reference_location_values(field))
+    json.dumps(metadata, allow_nan=False)
+    np.testing.assert_equal(source.data, np.ones((3, 4)))
+    assert source.mask.all()
+
+
+def test_national_geographic_layers_use_source_crs_in_projected_axes():
+    import cartopy.crs as ccrs
+
+    context = MapContext(country=box(73, 17, 136, 54), surrounding=(),
+                         admin1=(LineString([(80, 25), (125, 45)]),))
+    fig = plot_sunsetwx_product(_field(), _DATE, context, generated_at=_GENERATED)
+    ax = fig.axes[0]
+    line = next(item for item in ax.lines if item.get_zorder() == 5)
+    source_transform = ccrs.PlateCarree()._as_mpl_transform(ax)
+    points = np.array([[80., 25.], [125., 45.]])
+    np.testing.assert_allclose(line.get_transform().transform(points), source_transform.transform(points))
+    mesh = ax.collections[0]
+    np.testing.assert_allclose(mesh.get_transform().transform(points), source_transform.transform(points))
+    assert mesh.get_clip_path() is not None
+
+
+def test_sunrise_caption_keeps_both_dates_for_utc_midnight_event_and_weather_ranges():
+    from dataclasses import replace
+
+    event_start = datetime(2026, 10, 3, 21, 53, tzinfo=timezone.utc)
+    event_end = datetime(2026, 10, 4, 2, 36, tzinfo=timezone.utc)
+    field = replace(_field(), sunset_range_utc=(event_start, event_end),
+                    valid_times=(datetime(2026, 10, 3, 21, tzinfo=timezone.utc),
+                                 datetime(2026, 10, 4, 3, tzinfo=timezone.utc)))
+    fig = plot_sunsetwx_product(field, date(2026, 10, 4), _context(),
+                               solar_event="sunrise", generated_at=_GENERATED)
+    text = " ".join(item.get_text() for item in fig.texts)
+    assert "04 Oct 2026 · per-cell sunrise 05:53–10:36 CST" in text
+    assert "03 Oct 21:53–04 Oct 02:36 UTC" in text
+    assert "weather hours 03 Oct 21:00–04 Oct 03:00 UTC" in text

@@ -1,4 +1,4 @@
-"""Local SunsetWx-style national forecast product generator (#45).
+"""National forecast product generator with faithful raw-cell geographic maps.
 
 This is deliberately a batch artifact workflow, not a web application.  The
 renderer consumes an already-scored ``NationalField`` and writes one canonical,
@@ -25,6 +25,7 @@ from matplotlib.patches import PathPatch
 from matplotlib.path import Path as MplPath
 from matplotlib.ticker import FuncFormatter
 
+from predictor.map_style import FONT_FAMILY, raw_grid_mesh, horizontal_scale, sampling_text, display_metadata
 from predictor.gfs import GFSSource
 from predictor.national_field import NationalField, build_national_field
 from predictor.national_physics import NationalPhysicsConfig
@@ -40,7 +41,7 @@ DISPLAY_UPSAMPLE_FACTOR = 8
 DISPLAY_INDEX_BOUNDS = (0.0, 0.2, 0.4, 0.5, 0.7, 0.85, 1.0)
 DISPLAY_CONTOUR_LEVELS = (0.3, 0.5, 0.7, 0.9)
 DISPLAY_FIELD_ALPHA = 0.88
-SCIENTIFIC_FONT_FAMILY = "STIXGeneral"
+SCIENTIFIC_FONT_FAMILY = FONT_FAMILY
 SCIENTIFIC_MONO_FONT_FAMILY = "DejaVu Sans Mono"
 _QUALITY_CMAP = ListedColormap(
     ["#f1f3f5", "#c7dce5", "#7fb6c5", "#f2ce62", "#e8783e", "#8f2145"],
@@ -48,10 +49,8 @@ _QUALITY_CMAP = ListedColormap(
 )
 _QUALITY_CMAP.set_bad(alpha=0.0)
 _QUALITY_NORM = BoundaryNorm(DISPLAY_INDEX_BOUNDS, _QUALITY_CMAP.N, clip=True)
-# Rendering-only smoothing: the scored 0.25° grid can be speckled because many
-# gates are intentionally local. The product should read as a coherent weather
-# field, so the figure uses a tiny nan-aware binomial blur while metadata and
-# downstream algorithm values keep the original unsmoothed probabilities.
+# Retained defaults for legacy, opt-in display helpers. Current product maps use
+# the original cells directly and do not use smoothing or display upsampling.
 DISPLAY_SMOOTH_PASSES = 2
 
 
@@ -93,10 +92,8 @@ REFERENCE_LOCATIONS = (
 
 
 def _geom_to_path(geom) -> MplPath:
-    # NOTE: interior rings are appended as additional closed subpaths but are not
-    # oriented to cut holes, so lakes/holes are filled rather than excluded. The
-    # production 110 m China outline has no interior rings, so this is currently
-    # latent; revisit if a higher-resolution outline with lakes is adopted.
+    # Preserve each ring's winding. Callers that fill or clip compound polygon
+    # paths must normalize exterior/interior directions; the national clip does.
     polygons = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
     vertices: list[tuple[float, float]] = []
     codes: list[int] = []
@@ -114,13 +111,13 @@ def _geom_to_path(geom) -> MplPath:
     return MplPath(vertices, codes)
 
 
-def _draw_polygon_boundary(ax, geom, *, color: str, linewidth: float) -> None:
+def _draw_polygon_boundary(ax, geom, *, color: str, linewidth: float, transform=None) -> None:
     if geom.geom_type not in ("Polygon", "MultiPolygon"):
         return
     ax.add_patch(
         PathPatch(
             _geom_to_path(geom),
-            transform=ax.transData,
+            transform=transform if transform is not None else ax.transData,
             facecolor="none",
             edgecolor=color,
             linewidth=linewidth,
@@ -137,7 +134,7 @@ def _line_parts(geom):
             yield from _line_parts(part)
 
 
-def _draw_admin_lines(ax, geometries: tuple[object, ...]) -> None:
+def _draw_admin_lines(ax, geometries: tuple[object, ...], *, transform=None) -> None:
     for geometry in geometries:
         for line in _line_parts(geometry):
             xy = np.asarray(line.coords, dtype=float)
@@ -149,6 +146,7 @@ def _draw_admin_lines(ax, geometries: tuple[object, ...]) -> None:
                     linewidth=0.5,
                     alpha=0.9,
                     zorder=5,
+                    **({"transform": transform} if transform is not None else {}),
                 )
 
 
@@ -273,7 +271,7 @@ def display_index_field(
     passes: int = DISPLAY_SMOOTH_PASSES,
     upscale: int = DISPLAY_UPSAMPLE_FACTOR,
 ) -> np.ma.MaskedArray:
-    """Full diagnostic index field used by the scientific national product."""
+    """Legacy, opt-in smoothed display field; current maps draw raw cells."""
     quality = upsample_display_quality(
         display_quality(probability, passes=passes),
         factor=upscale,
@@ -323,7 +321,7 @@ def reference_location_values(field: NationalField) -> list[dict]:
     """Sample representative cities from the nearest scored model grid cell."""
     lats = np.asarray(field.lats, dtype=float)
     lons = np.asarray(field.lons, dtype=float)
-    values = np.asarray(field.probability, dtype=float)
+    values = np.ma.filled(np.ma.asarray(field.probability, dtype=float), np.nan)
     rows: list[dict] = []
     for location in REFERENCE_LOCATIONS:
         j = int(np.argmin(np.abs(lats - location.lat)))
@@ -343,6 +341,13 @@ def reference_location_values(field: NationalField) -> list[dict]:
     return rows
 
 
+def _utc_range_label(start: datetime, end: datetime) -> str:
+    """Keep both UTC civil dates visible when a time range crosses midnight."""
+    start, end = _utc(start), _utc(end)
+    end_format = "%d %b %H:%M" if start.date() != end.date() else "%H:%M"
+    return f"{start:%d %b %H:%M}–{end:{end_format}} UTC"
+
+
 def plot_sunsetwx_product(
     field: NationalField,
     target_date: date,
@@ -352,282 +357,82 @@ def plot_sunsetwx_product(
     figure: Figure | None = None,
     solar_event: SolarEvent | str = SolarEvent.SUNSET,
 ) -> Figure:
-    """Build one complete, opaque scientific forecast figure."""
+    """Draw original grid cells on a Lambert conformal map, clipped to coverage."""
+    import cartopy.crs as ccrs
+    from shapely.geometry import MultiPolygon
+    from shapely.geometry.polygon import orient
+    from zoneinfo import ZoneInfo
+
     generated = _utc(generated_at or datetime.now(timezone.utc))
-    fig = figure or Figure(figsize=(14, 9.6), facecolor="white")
+    geographic = ccrs.PlateCarree()
+    projection = ccrs.LambertConformal(central_longitude=105, central_latitude=35,
+                                     standard_parallels=(25, 47))
+    fig = figure or Figure(figsize=(12, 8.6), facecolor="white")
     FigureCanvasAgg(fig)
     fig.patch.set_alpha(1.0)
-
-    ax = fig.add_axes([0.045, 0.14, 0.75, 0.68])
+    ax = fig.add_axes([0.055, 0.235, 0.90, 0.65], projection=projection)
     ax.set_facecolor("white")
-    ax.set_xlim(float(field.lons[0]), float(field.lons[-1]))
-    ax.set_ylim(float(field.lats[0]), float(field.lats[-1]))
-    ax.set_aspect("equal", adjustable="box")
-    ax.xaxis.set_major_formatter(FuncFormatter(_format_lon))
-    ax.yaxis.set_major_formatter(FuncFormatter(_format_lat))
-    ax.set_xticks(np.arange(np.ceil(field.lons[0] / 10) * 10, field.lons[-1] + 1, 10))
-    ax.set_yticks(np.arange(np.ceil(field.lats[0] / 5) * 5, field.lats[-1] + 1, 5))
-    ax.tick_params(labelsize=9)
-    for label in [*ax.get_xticklabels(), *ax.get_yticklabels()]:
-        label.set_fontfamily(SCIENTIFIC_FONT_FAMILY)
-    ax.grid(color="#8d8d8d", linewidth=0.35, alpha=0.35, zorder=1)
-
-    for geometry in context.surrounding:
-        _draw_polygon_boundary(ax, geometry, color="#777777", linewidth=0.45)
-
-    country_path = PathPatch(
-        _geom_to_path(context.country),
-        transform=ax.transData,
-        facecolor="none",
-        edgecolor="none",
-    )
+    ax.spines["geo"].set_edgecolor("#ded9d4")
+    ax.spines["geo"].set_linewidth(0.7)
+    geo_transform = geographic._as_mpl_transform(ax)
+    mesh, lat_edges, lon_edges = raw_grid_mesh(ax, field, DISPLAY_INDEX_BOUNDS,
+                                              transform=geographic)
+    ax.set_extent((lon_edges[0], lon_edges[-1], lat_edges[0], lat_edges[-1]), crs=geographic)
+    # Opposite ring directions preserve holes in the coverage clipping path.
+    geometry = context.country
+    if geometry.geom_type == "Polygon":
+        geometry = orient(geometry, sign=1.0)
+    elif geometry.geom_type == "MultiPolygon":
+        geometry = MultiPolygon([orient(part, sign=1.0) for part in geometry.geoms])
+    country_path = PathPatch(_geom_to_path(geometry), transform=geo_transform,
+                             facecolor="none", edgecolor="none")
     ax.add_patch(country_path)
-
-    index_field = display_index_field(field.probability)
-    image = ax.imshow(
-        index_field,
-        extent=(
-            float(field.lons[0]),
-            float(field.lons[-1]),
-            float(field.lats[0]),
-            float(field.lats[-1]),
-        ),
-        origin="lower",
-        cmap=_QUALITY_CMAP,
-        norm=_QUALITY_NORM,
-        alpha=DISPLAY_FIELD_ALPHA,
-        interpolation="nearest",
-        zorder=2,
+    mesh.set_clip_path(country_path)
+    for geometry in context.surrounding:
+        _draw_polygon_boundary(ax, geometry, color="#a5abb0", linewidth=0.45,
+                               transform=geo_transform)
+    _draw_admin_lines(ax, context.admin1, transform=geographic)
+    _draw_polygon_boundary(ax, context.country, color="#41484e", linewidth=0.7,
+                           transform=geo_transform)
+    gridlines = ax.gridlines(crs=geographic, draw_labels=True,
+                            xlocs=np.arange(70, 141, 10), ylocs=np.arange(15, 61, 5),
+                            linewidth=0.3, color="#8d959c", alpha=0.3,
+                            x_inline=False, y_inline=False)
+    gridlines.top_labels = False
+    gridlines.right_labels = False
+    gridlines.rotate_labels = False
+    gridlines.xlabel_style = {"size": 8, "fontfamily": SCIENTIFIC_FONT_FAMILY, "color": "#766e68"}
+    gridlines.ylabel_style = {"size": 8, "fontfamily": SCIENTIFIC_FONT_FAMILY, "color": "#766e68"}
+    horizontal_scale(fig, mesh, DISPLAY_INDEX_BOUNDS)
+    event = spec_for(solar_event)
+    event_start, event_end = map(_utc, field.sunset_range_utc)
+    local_start = event_start.astimezone(ZoneInfo("Asia/Shanghai"))
+    local_end = event_end.astimezone(ZoneInfo("Asia/Shanghai"))
+    fig.text(0.06, 0.947, f"{event.label_en} condition index — China", ha="left", va="center",
+             fontsize=19, fontfamily=SCIENTIFIC_FONT_FAMILY, fontweight="semibold", color="#312824")
+    fig.text(0.06, 0.902,
+             f"{target_date:%d %b %Y} · per-cell {event.label_en.lower()} "
+             f"{local_start:%H:%M}–{local_end:%H:%M %Z} "
+             f"({_utc_range_label(event_start, event_end)})",
+             fontsize=9.5, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#766e68")
+    weather_times = [_utc(value) for value in field.valid_times]
+    weather_label = (
+        _utc_range_label(min(weather_times), max(weather_times))
+        if weather_times else "unknown"
     )
-    image.set_clip_path(country_path)
-
-    display_lats = np.linspace(field.lats[0], field.lats[-1], index_field.shape[0])
-    display_lons = np.linspace(field.lons[0], field.lons[-1], index_field.shape[1])
-    finite = index_field.compressed()
-    contour_levels = [
-        level
-        for level in DISPLAY_CONTOUR_LEVELS
-        if finite.size and float(finite.min()) < level < float(finite.max())
-    ]
-    if contour_levels:
-        contours = ax.contour(
-            display_lons,
-            display_lats,
-            index_field,
-            levels=contour_levels,
-            colors="#343a40",
-            linewidths=[
-                1.6 if level == DISPLAY_PROBABILITY_THRESHOLD else 0.75
-                for level in contour_levels
-            ],
-            linestyles=[
-                "solid" if level >= DISPLAY_PROBABILITY_THRESHOLD else "dashed"
-                for level in contour_levels
-            ],
-            zorder=3,
-        )
-        if hasattr(contours, "set_clip_path"):
-            contours.set_clip_path(country_path)
-        else:  # pragma: no cover - matplotlib < 3.8 compatibility
-            for collection in contours.collections:
-                collection.set_clip_path(country_path)
-        contour_labels = ax.clabel(
-            contours,
-            fmt="%.1f",
-            fontsize=6.5,
-            inline=True,
-            inline_spacing=2,
-        )
-        for label in contour_labels:
-            label.set_fontfamily(SCIENTIFIC_FONT_FAMILY)
-
-    _draw_admin_lines(ax, context.admin1)
-    _draw_polygon_boundary(ax, context.country, color="#151515", linewidth=1.0)
-
-    location_rows = reference_location_values(field)
-    for row in location_rows:
-        ax.scatter(
-            row["lon"],
-            row["lat"],
-            s=12,
-            marker="o",
-            facecolor="#111111",
-            edgecolor="white",
-            linewidth=0.45,
-            zorder=6,
-        )
-        ax.annotate(
-            row["code"],
-            (row["lon"], row["lat"]),
-            xytext=(3, 3),
-            textcoords="offset points",
-            fontsize=6.5,
-            fontweight="bold",
-            fontfamily=SCIENTIFIC_FONT_FAMILY,
-            color="#111111",
-            zorder=6,
-        )
-
-    colorbar_ax = fig.add_axes([0.82, 0.54, 0.024, 0.25])
-    colorbar = fig.colorbar(
-        image,
-        cax=colorbar_ax,
-        orientation="vertical",
-        boundaries=DISPLAY_INDEX_BOUNDS,
-        ticks=DISPLAY_INDEX_BOUNDS,
-        spacing="proportional",
-    )
-    colorbar.ax.tick_params(labelsize=7.5, length=3)
-    colorbar.ax.set_yticklabels(["0", "0.2", "0.4", "0.5", "0.7", "0.85", "1.0"])
-    for label in colorbar.ax.get_yticklabels():
-        label.set_fontfamily(SCIENTIFIC_FONT_FAMILY)
-    colorbar.set_label(
-        "Condition index",
-        fontsize=9,
-        fontfamily=SCIENTIFIC_FONT_FAMILY,
-    )
-
-    # The caption reflects the true per-cell event window, not the (wider)
-    # snapped GFS hourly bracket in field.valid_times.
-    event_label = spec_for(solar_event).label_en
-    event_start, event_end = field.sunset_range_utc
-    valid_label = f"{event_start:%H:%M}–{event_end:%H:%M} UTC"
-    fig.text(
-        0.045,
-        0.925,
-        "Firecloud Condition Index — China",
-        ha="left",
-        va="center",
-        fontsize=20,
-        fontfamily=SCIENTIFIC_FONT_FAMILY,
-        fontweight="semibold",
-        color="#101010",
-    )
-    fig.text(
-        0.955,
-        0.925,
-        "UNCALIBRATED DIAGNOSTIC  |  FAVORABLE ≥ 0.50",
-        ha="right",
-        va="center",
-        fontsize=9,
-        fontfamily=SCIENTIFIC_FONT_FAMILY,
-        color="#444444",
-    )
-    fig.text(
-        0.045,
-        0.875,
-        f"GFS 0.25° initialized {_initialized_label(field.source_label)}  →  "
-        f"per-cell {event_label.lower()} {target_date:%d %b %Y} | {valid_label}",
-        ha="left",
-        va="center",
-        fontsize=10,
-        fontfamily=SCIENTIFIC_FONT_FAMILY,
-        color="#202020",
-    )
-
-    fig.text(
-        0.82,
-        0.815,
-        "CLASSIFIED SCALE",
-        ha="left",
-        va="bottom",
-        fontsize=8,
-        fontweight="bold",
-        fontfamily=SCIENTIFIC_FONT_FAMILY,
-        color="#303030",
-    )
-    fig.text(
-        0.82,
-        0.49,
-        "REFERENCE LOCATIONS",
-        ha="left",
-        va="bottom",
-        fontsize=8,
-        fontweight="bold",
-        fontfamily=SCIENTIFIC_FONT_FAMILY,
-        color="#303030",
-    )
-    fig.text(
-        0.82,
-        0.47,
-        "nearest 0.25° grid cell",
-        ha="left",
-        va="bottom",
-        fontsize=7,
-        fontfamily=SCIENTIFIC_FONT_FAMILY,
-        color="#666666",
-    )
-    for row_index, row in enumerate(location_rows):
-        y = 0.445 - row_index * 0.027
-        value = (
-            "—"
-            if row["condition_index"] is None
-            else f"{row['condition_index']:.2f}"
-        )
-        fig.text(
-            0.82,
-            y,
-            f"{row['code']}  {row['name']}",
-            ha="left",
-            va="center",
-            fontsize=7.4,
-            fontfamily=SCIENTIFIC_FONT_FAMILY,
-            color="#303030",
-        )
-        fig.text(
-            0.955,
-            y,
-            value,
-            ha="right",
-            va="center",
-            fontsize=7.4,
-            fontfamily=SCIENTIFIC_MONO_FONT_FAMILY,
-            color="#111111",
-        )
-    fig.text(
-        0.82,
-        0.145,
-        "Isolines  0.3 · 0.5 · 0.7 · 0.9\nBold 0.5 = favorable threshold",
-        ha="left",
-        va="top",
-        fontsize=7,
-        fontfamily=SCIENTIFIC_FONT_FAMILY,
-        color="#555555",
-        linespacing=1.35,
-    )
-    refined_note = (
-        f" · {int(field.refined_mask.sum()):,} cells ray-trace refined"
-        if field.refined_mask is not None and field.refined_mask.any()
-        else ""
-    )
-    nowcast_note = ""
-    if field.nowcast and field.nowcast.get("applied") and field.nowcast.get("cells_corrected"):
-        nowcast_note = (
-            f" · {field.nowcast['cells_corrected']:,} cells satellite-nudged "
-            f"({field.nowcast['regime']}, conf {field.nowcast['confidence']:.1f})"
-        )
-    fig.text(
-        0.045,
-        0.068,
-        f"{field.n_points:,} grid cells · gate × modifier algorithm{refined_note}{nowcast_note} · "
-        "display-only smoothing/interpolation; scored grid remains 0.25°",
-        ha="left",
-        va="center",
-        fontsize=8,
-        fontfamily=SCIENTIFIC_FONT_FAMILY,
-        color="#555555",
-    )
-    fig.text(
-        0.045,
-        0.038,
-        "Relative diagnostic index, not a calibrated occurrence probability · "
-        f"generated {generated.isoformat()}",
-        ha="left",
-        va="center",
-        fontsize=7.5,
-        fontfamily=SCIENTIFIC_FONT_FAMILY,
-        color="#666666",
-    )
+    note = "Uncalibrated diagnostic; not a calibrated occurrence probability"
+    if field.refined_mask is not None and field.refined_mask.any():
+        note += f" · {int(field.refined_mask.sum()):,} cells ray-trace refined"
+    if field.nowcast and field.nowcast.get("applied"):
+        note += f" · {field.nowcast.get('cells_corrected', 0):,} cells satellite-nudged"
+    fig.text(0.06, 0.095, note, fontsize=8, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#766e68")
+    fig.text(0.06, 0.065,
+             f"GFS 0.25° initialized {_initialized_label(field.source_label)} · weather hours {weather_label}",
+             fontsize=8, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#766e68")
+    fig.text(0.06, 0.035,
+             f"{field.n_points:,} evaluated cells · {sampling_text(field)} · raw values, no spatial interpolation · "
+             f"product timestamp {generated:%Y-%m-%d %H:%M UTC}",
+             fontsize=7.5, fontfamily=SCIENTIFIC_FONT_FAMILY, color="#766e68")
     return fig
 
 
@@ -650,7 +455,7 @@ def _metadata(
     *,
     solar_event: SolarEvent | str = SolarEvent.SUNSET,
 ) -> dict:
-    probability = np.asarray(field.probability, dtype=float)
+    probability = np.ma.filled(np.ma.asarray(field.probability, dtype=float), np.nan)
     finite = probability[np.isfinite(probability)]
     # An all-NaN grid would make nanmin/nanmax return NaN, which json.dumps emits
     # as a bare `NaN` token (invalid JSON). Fall back to null instead.
@@ -694,17 +499,15 @@ def _metadata(
             "peak_mem_mb": field.peak_mem_mb,
         },
         "display": {
-            "metric": "uncalibrated_condition_index",
+            **display_metadata(field, DISPLAY_INDEX_BOUNDS, projection={
+                "name": "LambertConformal", "central_longitude": 105.0,
+                "central_latitude": 35.0, "standard_parallels": [25.0, 47.0],
+                "source_crs": "PlateCarree",
+            }),
             "favorable_threshold": DISPLAY_PROBABILITY_THRESHOLD,
-            "class_bounds": list(DISPLAY_INDEX_BOUNDS),
-            "contour_levels": list(DISPLAY_CONTOUR_LEVELS),
-            "field_alpha": DISPLAY_FIELD_ALPHA,
-            "colormap": "firecloud_scientific_classes",
-            "font_family": SCIENTIFIC_FONT_FAMILY,
-            "basemap": "white",
-            "boundary_resolution": "Natural Earth 10m",
-            "upsample_factor": DISPLAY_UPSAMPLE_FACTOR,
-            "smoothing_passes": DISPLAY_SMOOTH_PASSES,
+            "threshold_semantics": "legacy_display_reference_only",
+            "basemap": "white", "boundary_resolution": "Natural Earth 10m",
+            "coverage_clip": "country_polygon_with_interior_rings",
         },
     }
     if field.physics is not None:

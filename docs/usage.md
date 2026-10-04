@@ -140,6 +140,37 @@ the default grid. An arbitrary point will usually need local computation.
 separate sunrise/sunset PNGs and JSON sidecars. Metadata carries source, model run,
 solar event, event-time range, processing options, and performance information.
 Inspect metadata before comparing products from different runs or methods.
+See [how to read the maps](scientific-figures.md) for the index scale, missing
+cells, map projection, and event-versus-model timing. New maps preserve computed
+grid values; archived and downloaded products can retain an earlier map style.
+
+## Saved-location workflow
+
+After the [automatic runner](automatic-forecasts.md) is configured, use the same
+configuration and output paths to read its current status:
+
+```bash
+uv run firecloud status --config .local/forecast-service/viewpoint.json --output output/forecasts
+```
+
+This command is read-only. It prints a readable report without starting weather
+downloads or a scheduled run. Use `--format json` for scripts. The older
+`python -m predictor.forecast_runner status` interface still defaults to JSON.
+The service also saves a dated `status.md` page on each unlocked tick.
+
+To make an extra forecast request, use:
+
+```bash
+uv run firecloud preview --config .local/forecast-service/viewpoint.json --output output/forecasts
+```
+
+An omitted preview date selects the location's current civil day.
+Use `--date YYYY-MM-DD` to select another supported event day. A preview uses real weather
+sources and saves separate attempt records. It does not satisfy the daily
+scheduled slot. These commands do not infer a private service's paths; supply
+its actual configuration and output directory.
+
+## Advanced diagnostics
 
 Useful flags:
 
