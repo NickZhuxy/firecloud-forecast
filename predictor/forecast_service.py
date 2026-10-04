@@ -93,6 +93,8 @@ def build_service_plan(
     if not config.is_file() or not os.access(config, os.R_OK):
         raise ValueError("config must be a readable file")
     site = validate_runner_config(load_viewpoint(config))
+    if site["lead_tolerance_minutes"] < 5:
+        raise ValueError("lead_tolerance_minutes must be at least 5 for the five-minute service schedule")
     executable = _absolute(python_path or sys.executable, "python")
     if (_PYTHON_NAME.fullmatch(executable.name) is None
             or not executable.is_file() or not os.access(executable, os.X_OK)):

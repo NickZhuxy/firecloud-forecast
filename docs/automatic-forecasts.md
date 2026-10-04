@@ -120,7 +120,8 @@ Then run the printed `activate` command. Inspect the printed `status` command an
 actual service logs to confirm the launched interpreter can read the config and
 write state. A successful plist preparation alone does not verify execution.
 
-The service checks every five minutes and once when loaded. `--module-path` and
+The service checks every five minutes and once when loaded. Its request tolerance
+must be at least five minutes; the example uses fifteen minutes. `--module-path` and
 `--working-directory` select a pinned installed package and separate operational
 data directory. The working directory must not shadow that package with another
 `predictor` directory. Stop the job with the printed `deactivate` command before

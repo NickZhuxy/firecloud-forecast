@@ -68,6 +68,24 @@ def test_plan_is_read_only_and_preserves_exact_arguments(inputs):
     assert set(environment) == {"PYTHONPATH", "MPLBACKEND", "PYTHONUNBUFFERED", "MPLCONFIGDIR", "PATH"}
 
 
+@pytest.mark.parametrize("tolerance", [0, 4.9])
+def test_service_rejects_windows_shorter_than_its_tick_cadence(inputs, tolerance):
+    config = json.loads(inputs["config_path"].read_text())
+    config["lead_tolerance_minutes"] = tolerance
+    inputs["config_path"].write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="lead_tolerance_minutes must be at least 5"):
+        service.build_service_plan(**inputs)
+    assert not inputs["output_root"].exists()
+    assert not inputs["launch_agents_directory"].exists()
+
+
+def test_service_accepts_a_five_minute_request_window(inputs):
+    config = json.loads(inputs["config_path"].read_text())
+    config["lead_tolerance_minutes"] = 5
+    inputs["config_path"].write_text(json.dumps(config))
+    assert service.build_service_plan(**inputs).label == "org.firecloud.forecast.example-city"
+
+
 def test_xml_round_trip_handles_spaces_and_shell_metacharacters(inputs):
     output = inputs["output_root"].parent / "<&>$(`literal`)' archive"
     inputs["output_root"] = output
