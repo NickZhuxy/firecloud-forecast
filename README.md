@@ -145,6 +145,7 @@ the event time in local time and UTC. It records the GFS forecast hour separatel
 | [Automatic forecasts](docs/automatic-forecasts.md) | Schedule local forecasts, keep source records, and read the latest result |
 | [Optional observations](docs/observation-pilot.md) | Save forecasts and record observations for an optional comparison |
 | [Project story](docs/project-story.md) | Development milestones, lessons, and evidence from repository history |
+| [Product roadmap](docs/roadmap.md) | Product priorities and checks for each next step |
 | [Architecture](docs/architecture.md) | Data flow, package map, contributor invariants |
 | [Methodology](research/methodology.md) | Implemented assumptions, scoring, scientific limitations |
 | [Static publishing](docs/publishing.md) | Precomputation and GitHub Pages setup |
@@ -190,9 +191,11 @@ independent validation are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md
 and the [issue tracker](https://github.com/NickZhuxy/firecloud-forecast/issues).
 Planning lives on the [project board](https://github.com/users/NickZhuxy/projects/2).
 
-The most useful next steps are an independent validation dataset, additional
-documented forecast cases, and support for more regions.
-Algorithm changes should be evaluated separately from repository maintenance.
+Current product work focuses on automatic local forecasts and clear result reports.
+See the [product roadmap](docs/roadmap.md) for the next steps and acceptance criteria.
+Independent forecast evaluation remains a research goal.
+Webcam collection and machine-learning validation are on hold.
+Algorithm changes need a separate review.
 
 ## License
 

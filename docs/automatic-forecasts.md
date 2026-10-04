@@ -101,6 +101,23 @@ uv run python -m predictor.forecast_runner status \
   --config .local/forecast-service/viewpoint.json --output output/forecasts
 ```
 
+For a readable report, add `--format text` to the status command. JSON remains
+the default for scripts. Neither format starts weather downloads.
+
+Each unlocked command-line tick also writes `<output>/<site-id>/status.md`.
+This is a dated status snapshot, separate from the canonical `latest.md` forecast
+and original attempts. It shows the runner's last tick, the event's recorded
+state, request and event times, and any verified scheduled result. Its check time
+is explicit: a page saved yesterday does not establish today's service health.
+An expired pending window is identified even if the runner has not recorded the
+miss yet. A setup preview does not become the scheduled forecast.
+
+Where retained, the report explains model diagnostics and input availability.
+These are model results, not observed sky conditions. Missing diagnostics remain
+unknown. Detailed weather-valid times stay separate from the exact event time.
+If report rendering or writing fails, the command preserves the forecast result
+and logs the report error; a later tick can try again.
+
 ## Prepare a macOS service
 
 First verify the real preview. Use absolute service paths. This example prepares

@@ -14,6 +14,7 @@ import json
 import math
 from pathlib import Path
 import shutil
+import sys
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -510,7 +511,7 @@ def tick(config: dict, output_root: str | Path = DEFAULT_OUTPUT, *,
                 "state": str(_state_path(directory))}
 
 
-def _checked_latest(directory: Path, state: dict) -> dict:
+def _checked_latest(directory: Path, state: dict, *, include_record: bool = False):
     candidate = _load_json(directory / "latest.json")
     selected = state["slots"][_key(date.fromisoformat(candidate["target_date"]), state["site"])]
     entry = next(item for item in selected["attempts"] if item["attempt_path"] == candidate["attempt"])
@@ -523,17 +524,21 @@ def _checked_latest(directory: Path, state: dict) -> dict:
         raise ValueError("latest pointer differs from the original forecast and delivery record")
     if (directory / "latest.md").read_text(encoding="utf-8") != _summary_text(directory, expected):
         raise ValueError("latest Markdown delivery is missing or differs from its forecast")
-    return candidate
+    return (candidate, record) if include_record else candidate
 
 
-def status(config: dict, output_root: str | Path = DEFAULT_OUTPUT, *, now: datetime | None = None) -> dict:
+def status(config: dict, output_root: str | Path = DEFAULT_OUTPUT, *,
+           now: datetime | None = None, include_details: bool = False) -> dict:
     """Read scheduling and delivery status without requesting weather."""
     config = _runner_config(config)
     current = _instant(now)
     directory = Path(output_root) / config["id"]
     path = _state_path(directory)
     if not path.exists():
-        return {"site_id": config["id"], "status": "not_initialized", "latest": None}
+        result = {"site_id": config["id"], "status": "not_initialized", "latest": None}
+        if include_details:
+            result["details"] = None
+        return result
     state = _load_json(path)
     if state.get("config_fingerprint") != _fingerprint(config):
         raise ValueError("forecast configuration differs from runner state")
@@ -541,17 +546,25 @@ def status(config: dict, output_root: str | Path = DEFAULT_OUTPUT, *, now: datet
     key = _key(today, config)
     latest = None
     latest_error = None
+    details = None
     if (directory / "latest.json").exists():
         try:
-            candidate = _checked_latest(directory, state)
+            if include_details:
+                candidate, details = _checked_latest(directory, state, include_record=True)
+            else:
+                candidate = _checked_latest(directory, state)
             latest = {**candidate, "is_current_date": candidate["target_date"] == today.isoformat(),
                       "event_has_passed": current >= datetime.fromisoformat(candidate["event_time_utc"])}
         except (OSError, ValueError, KeyError, TypeError, StopIteration) as exc:
             latest_error = {"type": type(exc).__name__, "message": str(exc)}
-    return {"site_id": config["id"], "status": "initialized", "start_date": state["start_date"],
+            details = None
+    result = {"site_id": config["id"], "status": "initialized", "start_date": state["start_date"],
             "last_tick_utc": state["last_tick_utc"], "current_date": today.isoformat(),
             "current_slot": state["slots"].get(key), "latest": latest, "latest_error": latest_error,
             "expected_dates": len(state["slots"])}
+    if include_details:
+        result["details"] = details
+    return result
 
 
 def preview(config: dict, output_root: str | Path = DEFAULT_OUTPUT, *, target: date | None = None) -> Path:
@@ -591,6 +604,8 @@ def build_parser() -> argparse.ArgumentParser:
             child.add_argument("--days", type=int, default=7)
         if command == "preview":
             child.add_argument("--date", type=date.fromisoformat)
+        if command == "status":
+            child.add_argument("--format", choices=("json", "text"), default="json")
     return parser
 
 
@@ -604,6 +619,11 @@ def main(argv: list[str] | None = None) -> int:
                           max_attempts=args.max_attempts, retry_minutes=args.retry_minutes,
                           cache_root=args.cache_root, cache_retention_days=args.cache_retention_days)
         elif args.command == "status":
+            if args.format == "text":
+                from predictor.forecast_status import render_status
+
+                print(render_status(config, args.output), end="")
+                return 0
             result = status(config, args.output)
         elif args.command == "plan":
             start = args.start or _utc_now().astimezone(ZoneInfo(config["timezone"])).date()
@@ -614,6 +634,13 @@ def main(argv: list[str] | None = None) -> int:
             result = {"action": "preview", "status": record["status"], "attempt": str(path)}
     except (OSError, ValueError, RuntimeError) as exc:
         parser.error(str(exc))
+    if args.command == "tick" and result.get("action") != "locked":
+        try:
+            from predictor.forecast_status import write_status_report
+
+            write_status_report(config, args.output)
+        except Exception as exc:
+            print(f"Forecast status report could not be saved: {type(exc).__name__}: {exc}", file=sys.stderr)
     print(json.dumps(result, indent=2, allow_nan=False))
     if result.get("status") in ("exhausted", "delivery_failed", "late_completion", "failed"):
         return 1
