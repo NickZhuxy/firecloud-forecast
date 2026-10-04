@@ -83,13 +83,38 @@ execution files. A local-date bug was also corrected: a September 14 sunset in
 Los Angeles must not resolve to September 13 locally just because the event lies
 on a different UTC date.
 
-The event helper now selects by longitude-based local solar day. This addresses
-the documented rollover problem; it is not a full civil-timezone lookup. China
-remains the first fully supported product region. Extending coverage also needs
+The event helper then selected by longitude-based local solar day. This addressed
+the documented rollover problem; it was not a full civil-timezone lookup. China
+was the first supported product region. Extending coverage also needed
 regional maps, delivery conventions, source checks, and evaluation.
 
 Evidence: [community foundation and event-date correction](https://github.com/NickZhuxy/firecloud-forecast/commit/4e3174e),
 [date semantics](usage.md), [event-date regression tests](../predictor/tests/test_solar_event.py).
+
+## 6. Regional delivery needs more than accepting coordinates
+
+**October 2026.** The New York City pilot added an explicit region profile, local
+map bounds, and an `America/New_York` civil-date policy, including daylight saving
+time. Its complete sunward weather domain is separate from the allowed observer
+bounds. The pilot uses the existing GFS calculation and records that satellite
+correction is unavailable for this region. A public archived case separates the
+exact sunset instant from the weather model's selected forecast hour.
+
+The next delivery change is under review: a deterministic unattended runner with
+bounded retries, interruption recovery, separate previews and verified original
+artifacts. Its local service records missed windows when the host is unavailable.
+It requires no personal photographs or daily observation sheet. A readable status
+snapshot makes waiting, failed and stale results visible without treating saved
+files as proof of current service health.
+
+The lesson is that a regional forecast needs a correct local date, an inspectable
+weather domain, honest source timing, and a usable delivery path. Those software
+properties still do not establish accuracy against the observed sky.
+
+Evidence: [merged New York City pilot](https://github.com/NickZhuxy/firecloud-forecast/commit/e432b22),
+[archived New York City case](../examples/new-york-sunset/README.md),
+[automatic delivery under review](https://github.com/NickZhuxy/firecloud-forecast/pull/122),
+[delivery guide](automatic-forecasts.md), [product priorities](roadmap.md).
 
 ## What remains open
 
