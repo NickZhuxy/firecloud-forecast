@@ -1,4 +1,16 @@
-# Local forecast and observation pilot
+# Optional local forecast observations
+
+Forecast generation does not require photographs, webcam images, or observation
+labels. This guide describes an optional manual evaluation workflow for
+contributors who choose to collect observations. It is not a required product
+setup step. This observation workflow currently has no unattended runner or
+webcam collector.
+
+A webcam can replace personal photography in a separate automated evaluation
+workflow once its location, view, timestamps, and supported access method are
+verified. Compare those images with forecasts for the camera's actual location;
+a nearby camera is not direct evidence of the sky at another viewpoint. Webcam
+availability must not prevent the requested location's forecast from running.
 
 Use one consistent viewpoint for a 2–4 week exploratory sunset pilot. Save the
 prediction before observing the sky. Keep the scoring unchanged during this pilot.
