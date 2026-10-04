@@ -70,12 +70,6 @@ This verifies the archived example's checksums and prints its event time, actual
 GFS forecast time, and condition index. It does not rerun the weather model or
 validate the forecast against observations.
 
-For local computation:
-
-```bash
-uv run firecloud --source local --event sunset
-```
-
 For a New York City sunset forecast:
 
 ```bash
@@ -94,6 +88,25 @@ large, and full refinement can take tens of minutes or longer. On macOS, if
 native GRIB or mapping libraries are missing, install `eccodes`, `geos`, and
 `proj` with Homebrew. See [usage and troubleshooting](docs/usage.md).
 
+## Automatic local forecasts
+
+Configure your location once. Check a preview. Then activate the local service.
+See the [setup procedure](docs/automatic-forecasts.md).
+The service saves the scheduled forecast and updates a status page.
+You do not need photos or a daily terminal command.
+
+For a saved location, use these commands from the repository root:
+
+```bash
+uv run firecloud status --config .local/forecast-service/viewpoint.json --output output/forecasts
+uv run firecloud preview --config .local/forecast-service/viewpoint.json --output output/forecasts
+```
+
+`status` reads saved records. It does not request weather data.
+`preview` requests an extra forecast. It does not replace a scheduled forecast.
+Use the same configuration and output paths as your installed service.
+The Mac must be awake, logged in, and online for scheduled requests.
+
 ## What it does
 
 - Produces national sunrise/sunset maps and optional detailed local maps.
@@ -106,14 +119,6 @@ native GRIB or mapping libraries are missing, install `eccodes`, `geos`, and
 The default local path uses GFS profiles and Open-Meteo cloud, humidity, and
 visibility forecasts. It does not supply terrain heights or aerosol fields along
 each path. These input limits apply to the New York City pilot.
-
-```bash
-uv run firecloud                          # Today, both events; remote first
-uv run firecloud --event sunrise          # One event
-uv run firecloud --lat 31.23 --lon 121.47  # Add local products around Shanghai
-uv run firecloud --scope local --lat 31.23 --lon 121.47 --event sunset
-uv run firecloud --source local --no-refine --event sunset
-```
 
 `--source auto` is the default. If remote products are missing, invalid, or do not
 match the requested grid, it falls back to local computation. Use `--source remote`
@@ -134,6 +139,9 @@ output/YYYY-MM-DD/
 
 New York City products use `output/us-nyc/YYYY-MM-DD/`. The JSON file records
 the event time in local time and UTC. It records the GFS forecast hour separately.
+Newly generated maps show the computed grid values without smoothing.
+Gray cells identify missing data. See [how to read the maps](docs/scientific-figures.md).
+Archived examples retain their original map style.
 
 ## Documentation
 
@@ -143,6 +151,7 @@ the event time in local time and UTC. It records the GFS forecast hour separatel
 | [Example forecast](examples/shanghai-sunset/README.md) | A real map, exact source times, and offline integrity verification |
 | [New York City pilot](examples/new-york-sunset/README.md) | A local forecast, model times, input limits, and download measurements |
 | [Automatic forecasts](docs/automatic-forecasts.md) | Schedule local forecasts, keep source records, and read the latest result |
+| [Read the maps](docs/scientific-figures.md) | Index scale, missing data, map geometry, and source times |
 | [Optional observations](docs/observation-pilot.md) | Save forecasts and record observations for an optional comparison |
 | [Project story](docs/project-story.md) | Development milestones, lessons, and evidence from repository history |
 | [Product roadmap](docs/roadmap.md) | Product priorities and checks for each next step |
