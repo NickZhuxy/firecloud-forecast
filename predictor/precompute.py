@@ -18,6 +18,7 @@ from predictor.fetch import OpenMeteoRunCache, OpenMeteoSource
 from predictor.gfs import GFSSource
 from predictor.local_product import generate_local_product
 from predictor.national_product import ProductArtifacts, generate_product
+from predictor.regions import get_region
 from predictor.remote_product import REMOTE_SCHEMA_VERSION, point_key
 from predictor.solar_event import SolarEvent
 
@@ -32,6 +33,7 @@ class PrecomputeLocation:
     lon: float
     radius_km: float = 150.0
     resolution_deg: float = 0.1
+    region: str = "china"
 
     @property
     def slug(self) -> str:
@@ -94,15 +96,22 @@ def parse_location(
     radius_km: float = 150.0,
     resolution_deg: float = 0.1,
 ) -> PrecomputeLocation:
-    """Parse ``NAME:LAT:LON`` used by repeatable CLI/workflow inputs."""
+    """Parse ``NAME:LAT:LON[:REGION]`` used by repeatable CLI/workflow inputs."""
     try:
-        name, lat_text, lon_text = value.split(":", 2)
+        name, lat_text, lon_text, *rest = value.split(":")
         lat = float(lat_text)
         lon = float(lon_text)
+        if len(rest) > 1:
+            raise ValueError("too many fields")
     except (TypeError, ValueError) as exc:
         raise argparse.ArgumentTypeError(
-            "location must be NAME:LAT:LON, for example shanghai:31.23:121.47"
+            "location must be NAME:LAT:LON[:REGION], for example shanghai:31.23:121.47"
         ) from exc
+    region = rest[0].strip() if rest else "china"
+    try:
+        get_region(region).validate_center(lat, lon)
+    except (KeyError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(f"location {value!r}: {exc}") from exc
     if not name.strip():
         raise argparse.ArgumentTypeError("location name must not be empty")
     if not -90.0 <= lat <= 90.0 or not -180.0 <= lon <= 180.0:
@@ -115,7 +124,80 @@ def parse_location(
         lon=lon,
         radius_km=float(radius_km),
         resolution_deg=float(resolution_deg),
+        region=region,
     )
+
+
+def _copy_grid(artifacts: ProductArtifacts, destination: Path) -> Path | None:
+    grid = getattr(artifacts, "grid_path", None)
+    if grid is None or not Path(grid).is_file():
+        return None
+    shutil.copyfile(grid, destination)
+    return destination
+
+
+def _artifacts_block(manifest_path: Path, image: Path, metadata: Path, grid: Path | None) -> dict:
+    block = {
+        "image": _artifact_entry(image, manifest_path),
+        "metadata": _artifact_entry(metadata, manifest_path),
+    }
+    if grid is not None:
+        block["grid"] = _artifact_entry(grid, manifest_path)
+    return block
+
+
+def _publish_point(
+    root: Path,
+    version: str,
+    location: PrecomputeLocation,
+    target_date: date,
+    event: SolarEvent,
+    artifacts: ProductArtifacts,
+    generated_at: datetime,
+    *,
+    region: str | None = None,
+) -> Path:
+    """Copy one local product into the run tree and write its latest manifest.
+
+    China keeps ``{date}/{event}/points/``; a pilot region adds a
+    ``regions/{region}/`` prefix to both the run and the latest path.
+    """
+    metadata = json.loads(artifacts.metadata_path.read_text(encoding="utf-8"))
+    model_runs = _model_runs(metadata)
+    key = point_key(location.lat, location.lon)
+    region_parts = ("regions", region) if region else ()
+    tail = (*region_parts, target_date.isoformat(), event.value, "points")
+    publish_dir = root.joinpath(
+        "products", "runs", version, _model_run_slug(model_runs), *tail, key,
+    )
+    publish_dir.mkdir(parents=True, exist_ok=True)
+    image_path = publish_dir / "point.png"
+    metadata_path = publish_dir / "point.json"
+    shutil.copyfile(artifacts.image_path, image_path)
+    shutil.copyfile(artifacts.metadata_path, metadata_path)
+    grid_path = _copy_grid(artifacts, publish_dir / "point.grid.json")
+
+    manifest_path = root.joinpath("products", "latest", *tail, f"{key}.json")
+    manifest = {
+        "schema_version": REMOTE_SCHEMA_VERSION,
+        "scope": "point",
+        "algorithm_version": version,
+        "model_runs": model_runs,
+        "target_date": target_date.isoformat(),
+        "event": event.value,
+        "generated_at": _iso_z(generated_at),
+        "valid_until": _iso_z(generated_at + timedelta(hours=_PUBLISH_VALID_HOURS)),
+        "location_name": location.name,
+        "location_slug": location.slug,
+        "center": [location.lat, location.lon],
+        "radius_km": location.radius_km,
+        "resolution_deg": location.resolution_deg,
+        "artifacts": _artifacts_block(manifest_path, image_path, metadata_path, grid_path),
+    }
+    if region:
+        manifest["region"] = region
+    _write_json(manifest_path, manifest)
+    return manifest_path
 
 
 def build_site(
@@ -146,6 +228,9 @@ def build_site(
     root.mkdir(parents=True, exist_ok=True)
     (root / ".nojekyll").write_text("", encoding="utf-8")
     shared_source = source or GFSSource(as_of=generated_at)
+    china_locations = tuple(loc for loc in locations if loc.region == "china")
+    regional_locations = tuple(loc for loc in locations if loc.region != "china")
+    regional: dict[str, list[Path]] = {}
     # Every local product of this run reads its Open-Meteo weather from one set
     # of responses: each location is requested once, not once per day and event.
     weather_cache = OpenMeteoRunCache.for_dates(
@@ -187,6 +272,7 @@ def build_site(
                 metadata_path = publish_dir / "national.json"
                 shutil.copyfile(artifacts.image_path, image_path)
                 shutil.copyfile(artifacts.metadata_path, metadata_path)
+                grid_path = _copy_grid(artifacts, publish_dir / "national.grid.json")
 
                 manifest_path = (
                     root
@@ -206,15 +292,14 @@ def build_site(
                     "valid_until": _iso_z(
                         generated_at + timedelta(hours=_PUBLISH_VALID_HOURS)
                     ),
-                    "artifacts": {
-                        "image": _artifact_entry(image_path, manifest_path),
-                        "metadata": _artifact_entry(metadata_path, manifest_path),
-                    },
+                    "artifacts": _artifacts_block(
+                        manifest_path, image_path, metadata_path, grid_path
+                    ),
                 }
                 _write_json(manifest_path, manifest)
                 manifests.append(manifest_path)
 
-                for location in locations:
+                for location in china_locations:
                     local_artifacts: ProductArtifacts = local_generate(
                         target_date,
                         work_root / target_date.isoformat(),
@@ -229,65 +314,41 @@ def build_site(
                         satellite=satellite,
                         now=generated_at,
                     )
-                    local_metadata = json.loads(
-                        local_artifacts.metadata_path.read_text(encoding="utf-8")
-                    )
-                    local_model_runs = _model_runs(local_metadata)
-                    local_run_slug = _model_run_slug(local_model_runs)
-                    key = point_key(location.lat, location.lon)
-                    local_publish_dir = (
-                        root
-                        / "products"
-                        / "runs"
-                        / version
-                        / local_run_slug
-                        / target_date.isoformat()
-                        / event.value
-                        / "points"
-                        / key
-                    )
-                    local_publish_dir.mkdir(parents=True, exist_ok=True)
-                    local_image_path = local_publish_dir / "point.png"
-                    local_metadata_path = local_publish_dir / "point.json"
-                    shutil.copyfile(local_artifacts.image_path, local_image_path)
-                    shutil.copyfile(local_artifacts.metadata_path, local_metadata_path)
+                    manifests.append(_publish_point(
+                        root, version, location, target_date, event,
+                        local_artifacts, generated_at,
+                    ))
 
-                    local_manifest_path = (
-                        root
-                        / "products"
-                        / "latest"
-                        / target_date.isoformat()
-                        / event.value
-                        / "points"
-                        / f"{key}.json"
+        # Pilot regions use their own calendar date and skip the China-only
+        # satellite stage. Their manifests stay out of the China list.
+        for location in regional_locations:
+            profile = get_region(location.region)
+            region_start = generated_at.astimezone(ZoneInfo(profile.timezone_name)).date()
+            region_cache = OpenMeteoRunCache.for_dates(
+                region_start, region_start + timedelta(days=days - 1)
+            )
+            for offset in range(days):
+                target_date = region_start + timedelta(days=offset)
+                for event in events:
+                    local_artifacts = local_generate(
+                        target_date,
+                        work_root / "regions" / location.region / target_date.isoformat(),
+                        location.lat,
+                        location.lon,
+                        dpi=dpi,
+                        cube_source=shared_source,
+                        source=OpenMeteoSource(solar_event=event, run_cache=region_cache),
+                        solar_event=event,
+                        radius_km=location.radius_km,
+                        resolution_deg=location.resolution_deg,
+                        satellite=False,
+                        now=generated_at,
+                        region=location.region,
                     )
-                    local_manifest = {
-                        "schema_version": REMOTE_SCHEMA_VERSION,
-                        "scope": "point",
-                        "algorithm_version": version,
-                        "model_runs": local_model_runs,
-                        "target_date": target_date.isoformat(),
-                        "event": event.value,
-                        "generated_at": _iso_z(generated_at),
-                        "valid_until": _iso_z(
-                            generated_at + timedelta(hours=_PUBLISH_VALID_HOURS)
-                        ),
-                        "location_name": location.name,
-                        "location_slug": location.slug,
-                        "center": [location.lat, location.lon],
-                        "radius_km": location.radius_km,
-                        "resolution_deg": location.resolution_deg,
-                        "artifacts": {
-                            "image": _artifact_entry(
-                                local_image_path, local_manifest_path
-                            ),
-                            "metadata": _artifact_entry(
-                                local_metadata_path, local_manifest_path
-                            ),
-                        },
-                    }
-                    _write_json(local_manifest_path, local_manifest)
-                    manifests.append(local_manifest_path)
+                    regional.setdefault(location.region, []).append(_publish_point(
+                        root, version, location, target_date, event,
+                        local_artifacts, generated_at, region=location.region,
+                    ))
 
     latest_root = root / "products" / "latest"
     _write_json(
@@ -298,9 +359,13 @@ def build_site(
             "manifests": [
                 path.relative_to(latest_root).as_posix() for path in manifests
             ],
+            "regional": {
+                region: [path.relative_to(latest_root).as_posix() for path in paths]
+                for region, paths in regional.items()
+            },
         },
     )
-    return manifests
+    return manifests + [path for paths in regional.values() for path in paths]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -319,7 +384,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--location",
         action="append",
         default=[],
-        metavar="NAME:LAT:LON",
+        metavar="NAME:LAT:LON[:REGION]",
         help="precompute an exact local point; repeat for multiple locations",
     )
     parser.add_argument("--local-radius", type=float, default=150.0)
