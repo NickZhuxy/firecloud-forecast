@@ -19,6 +19,9 @@ const ui = {
 // products: key -> {label, items: [{date, event, url, manifest}]}
 const products = new Map();
 let current = null; // {manifest, url, grid, metadata, view}
+// Index ranges left off the map, keyed by their lower bound ("0.00") or "missing".
+// The choice carries across products, which share the same classes.
+const hiddenRanges = new Set(["0.00"]);
 
 async function getJSON(url) {
   const response = await fetch(url, { cache: "no-cache" });
@@ -171,11 +174,17 @@ function inDomain(grid, j, i) {
   return !grid.in_domain || grid.in_domain[j][i];
 }
 
+// The legend class of a value: its key and colour.
+function rangeOf(value, grid) {
+  if (value === null || value === undefined) return ["missing", grid.no_data_color || MISSING_COLOR];
+  let found = grid.colors[0];
+  for (const stop of grid.colors) if (value >= stop[0]) found = stop;
+  return [found[0].toFixed(2), found[1]];
+}
+
 function colorFor(value, grid) {
-  if (value === null || value === undefined) return grid.no_data_color || MISSING_COLOR;
-  let color = grid.colors[0][1];
-  for (const [bound, hex] of grid.colors) if (value >= bound) color = hex;
-  return color;
+  const [key, color] = rangeOf(value, grid);
+  return hiddenRanges.has(key) ? "#ffffff" : color;
 }
 
 function draw() {
@@ -236,18 +245,30 @@ function draw() {
   }
 }
 
-function drawLegend(grid) {
-  const parts = [document.createTextNode("Index:")];
-  grid.colors.forEach(([bound, hex], k) => {
-    const swatch = document.createElement("span");
-    swatch.style.background = hex;
-    parts.push(swatch);
-    const upper = k + 1 < grid.colors.length ? grid.colors[k + 1][0] : 1;
-    parts.push(document.createTextNode(`${bound.toFixed(2)}–${upper.toFixed(2)}`));
+// One checkbox per index range; an unticked range is drawn blank.
+function legendEntry(key, color, text) {
+  const label = document.createElement("label");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = !hiddenRanges.has(key);
+  box.addEventListener("change", () => {
+    if (box.checked) hiddenRanges.delete(key);
+    else hiddenRanges.add(key);
+    if (current) draw();
   });
-  const missing = document.createElement("span");
-  missing.style.background = grid.no_data_color || MISSING_COLOR;
-  parts.push(missing, document.createTextNode("missing"));
+  const swatch = document.createElement("span");
+  swatch.style.background = color;
+  label.append(box, swatch, text);
+  return label;
+}
+
+function drawLegend(grid) {
+  const parts = [document.createTextNode("Show: ")];
+  grid.colors.forEach(([bound, hex], k) => {
+    const upper = k + 1 < grid.colors.length ? grid.colors[k + 1][0] : 1;
+    parts.push(legendEntry(bound.toFixed(2), hex, `${bound.toFixed(2)}–${upper.toFixed(2)}`));
+  });
+  parts.push(legendEntry("missing", grid.no_data_color || MISSING_COLOR, "missing"));
   ui.legend.replaceChildren(...parts);
 }
 
