@@ -229,3 +229,29 @@ def test_remote_point_fetch_rejects_a_different_requested_grid(tmp_path):
             resolution_deg=0.05,
         )
     assert not (tmp_path / "point-31.23_121.47-sunrise.png").exists()
+
+
+def test_remote_client_accepts_manifest_with_grid_artifact(tmp_path):
+    now = datetime(2026, 7, 10, 9, tzinfo=timezone.utc)
+    base = "https://example.test/firecloud/"
+    manifest_url = base + "products/latest/2026-07-10/sunrise.json"
+    image_url = base + "products/runs/abc123/gfs-20260710T00Z/2026-07-10/sunrise/national.png"
+    metadata_url = base + "products/runs/abc123/gfs-20260710T00Z/2026-07-10/sunrise/national.json"
+    image, metadata, grid = b"png-payload", b'{"product":"x"}\n', b'{"schema":"firecloud-grid/1"}'
+    manifest = _manifest(now, image, metadata)
+    manifest["artifacts"]["grid"] = {
+        "path": "../../runs/abc123/gfs-20260710T00Z/2026-07-10/sunrise/national.grid.json",
+        "bytes": len(grid),
+        "sha256": hashlib.sha256(grid).hexdigest(),
+    }
+    session = _Session({
+        manifest_url: _Response(payload=manifest),
+        image_url: _Response(content=image),
+        metadata_url: _Response(content=metadata),
+    })
+    client = RemoteProductClient(base_url=base, session=session, now_fn=lambda: now)
+
+    result = client.fetch(date(2026, 7, 10), "sunrise", tmp_path)
+
+    assert result.artifacts.image_path.read_bytes() == image
+    assert result.artifacts.metadata_path.read_bytes() == metadata

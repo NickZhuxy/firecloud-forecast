@@ -927,3 +927,12 @@ def test_sunrise_caption_keeps_both_dates_for_utc_midnight_event_and_weather_ran
     assert "04 Oct 2026 · per-cell sunrise 05:53–10:36 CST" in text
     assert "03 Oct 21:53–04 Oct 02:36 UTC" in text
     assert "weather hours 03 Oct 21:00–04 Oct 03:00 UTC" in text
+
+
+def test_save_product_writes_national_grid_sidecar(tmp_path):
+    artifacts = save_product(_field(), _DATE, tmp_path, _context(), generated_at=_GENERATED, dpi=60)
+    assert artifacts.grid_path == tmp_path / "national-sunset.grid.json"
+    grid = json.loads(artifacts.grid_path.read_text(encoding="utf-8"))
+    assert grid["scope"] == "national"
+    assert grid["label"] == "national screening"
+    assert len(grid["index"]) == len(_field().lats)

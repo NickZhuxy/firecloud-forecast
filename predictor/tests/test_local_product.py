@@ -509,3 +509,22 @@ def test_compact_local_layout_keeps_missing_center_header_and_footer_inside_canv
     center = next(text for text in fig.texts if text.get_text().startswith("Center index"))
     event = next(text for text in fig.texts if " · event " in text.get_text())
     assert not center.get_window_extent(renderer).overlaps(event.get_window_extent(renderer))
+
+
+def test_save_local_product_writes_grid_sidecar_matching_the_png_field(tmp_path):
+    import numpy as np
+
+    field = _field()
+    art = save_local_product(
+        field, _DATE, tmp_path, solar_event=SolarEvent.SUNSET, generated_at=_GEN,
+        context=_context(), dpi=60,
+    )
+    assert art.grid_path == art.image_path.with_name(art.image_path.stem + ".grid.json")
+    grid = json.loads(art.grid_path.read_text(encoding="utf-8"))
+    assert grid["schema"] == "firecloud-grid/1"
+    assert grid["scope"] == "point"
+    expected = np.round(np.asarray(field.probability, dtype=float), 3).astype(object)
+    expected[~np.isfinite(np.asarray(field.probability, dtype=float))] = None
+    assert grid["index"] == expected.tolist()
+    assert grid["event_time_utc"] == field.valid_time.isoformat()
+    assert grid["lines"]

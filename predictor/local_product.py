@@ -46,6 +46,7 @@ from predictor.national_product import (
     _utc,
     display_index_field,
     load_map_context,
+    write_grid_sidecar,
 )
 from predictor.solar_event import SolarEvent, spec_for
 from predictor.regions import get_region
@@ -315,7 +316,17 @@ def save_local_product(
         encoding="utf-8",
     )
     metadata_tmp.replace(metadata_path)
-    return ProductArtifacts(image_path=image_path, metadata_path=metadata_path)
+
+    from predictor.grid_export import local_grid_payload
+
+    grid_path = write_grid_sidecar(
+        directory, stem,
+        local_grid_payload(
+            field, event=SolarEvent(solar_event).value,
+            event_time_utc=_utc(field.valid_time).isoformat(), context=context,
+        ),
+    )
+    return ProductArtifacts(image_path=image_path, metadata_path=metadata_path, grid_path=grid_path)
 
 
 def generate_local_product(
@@ -380,7 +391,9 @@ def generate_local_product(
             reason=f"unsupported satellite coverage for region {profile.key}",
             lead_hr_range=None,
         )
-        field = replace(field, nowcast=stage_block(skipped, probability))
+        field = replace(
+            field, nowcast=stage_block(skipped, probability), nowcast_mask=skipped.corrected_mask,
+        )
     elif satellite:
         field = _with_nowcast(field, event_time, satellite_source, now)
     return save_local_product(
@@ -406,6 +419,9 @@ def _with_nowcast(field, event_time: datetime, satellite_source, now: datetime |
         satellite_source, now=now or datetime.now(timezone.utc),
     )
     block = stage_block(result, field.probability)
+    mask = np.asarray(result.corrected_mask, dtype=bool)
     if result.applied:
-        return replace(field, probability=result.corrected_probability, nowcast=block)
-    return replace(field, nowcast=block)
+        return replace(
+            field, probability=result.corrected_probability, nowcast=block, nowcast_mask=mask,
+        )
+    return replace(field, nowcast=block, nowcast_mask=mask)
