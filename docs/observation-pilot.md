@@ -3,8 +3,9 @@
 Forecast generation does not require photographs, webcam images, or observation
 labels. This guide describes an optional manual evaluation workflow for
 contributors who choose to collect observations. It is not a required product
-setup step. This observation workflow currently has no unattended runner or
-webcam collector.
+setup step. Use the [automatic forecast runner](automatic-forecasts.md) for daily
+forecast delivery. Webcam collection and automatic observation labels are not
+implemented.
 
 A webcam can replace personal photography in a separate automated evaluation
 workflow once its location, view, timestamps, and supported access method are

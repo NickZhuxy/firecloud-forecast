@@ -94,6 +94,11 @@ The [archived NYC pilot case](../examples/new-york-sunset/README.md) records one
 run, its source times, zero-gate explanation, download measurements, and checksums.
 Its offline verification requires no weather download and does not replay the model.
 
+For forecasts without daily terminal commands, use the
+[automatic local runner](automatic-forecasts.md). It schedules the existing local
+generator, saves independent attempts, and maintains a latest-result file.
+Photographs, observation sheets, and webcams are not prerequisites.
+
 ## Select products
 
 | Scope | Behavior |
