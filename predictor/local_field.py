@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 
 from predictor.clouds import CloudDiagnosisConfig, DEFAULT_CLOUD_CONFIG
+from predictor.column_cache import ColumnDiagnosisCache
 from predictor.spatial import build_sunward_path
 from predictor.sunward_section import (
     DETAIL_SUNWARD_DISTANCES_KM,
@@ -168,23 +169,16 @@ def local_grid(
     return center_lat + offsets_lat, center_lon + offsets_lon
 
 
-def _shared_cube_bbox(
-    lats, lons, time, *, distances_km, azimuth_deg, elevation_fn, domain, margin_deg
-) -> tuple[float, float, float, float]:
+def _shared_cube_bbox(paths, *, margin_deg: float) -> tuple[float, float, float, float]:
     """``(lat_min, lat_max, lon_min, lon_max)`` covering every cell's sunward path."""
     lat_min = lon_min = math.inf
     lat_max = lon_max = -math.inf
-    for la in lats:
-        for lo in lons:
-            path = build_sunward_path(
-                float(la), float(lo), time, azimuth_deg=azimuth_deg,
-                distances_km=distances_km, elevation_fn=elevation_fn, domain=domain,
-            )
-            for s in path.samples:
-                lat_min = min(lat_min, s.lat)
-                lat_max = max(lat_max, s.lat)
-                lon_min = min(lon_min, s.lon)
-                lon_max = max(lon_max, s.lon)
+    for path in paths:
+        for s in path.samples:
+            lat_min = min(lat_min, s.lat)
+            lat_max = max(lat_max, s.lat)
+            lon_min = min(lon_min, s.lon)
+            lon_max = max(lon_max, s.lon)
     return (lat_min - margin_deg, lat_max + margin_deg, lon_min - margin_deg, lon_max + margin_deg)
 
 
@@ -223,10 +217,16 @@ def build_local_field(
         "Local product grid: %d cells (%d x %d), radius %.0f km, resolution %.3f deg",
         n_points, lats.size, lons.size, radius_km, resolution_deg,
     )
-    bbox = _shared_cube_bbox(
-        lats, lons, time, distances_km=distances_km, azimuth_deg=azimuth_deg,
-        elevation_fn=elevation_fn, domain=domain, margin_deg=margin_deg,
-    )
+    coords = [(float(la), float(lo)) for la in lats for lo in lons]
+    # Each cell's sunward path is built once: it sets the shared bbox and is scored.
+    paths = [
+        build_sunward_path(
+            la, lo, time, azimuth_deg=azimuth_deg,
+            distances_km=distances_km, elevation_fn=elevation_fn, domain=domain,
+        )
+        for la, lo in coords
+    ]
+    bbox = _shared_cube_bbox(paths, margin_deg=margin_deg)
     logger.info(
         "Local product GFS cube: fetching latitude %.2f..%.2f, longitude %.2f..%.2f",
         bbox[0], bbox[1], bbox[2], bbox[3],
@@ -237,7 +237,6 @@ def build_local_field(
     # Snapshots: one batched Open-Meteo request set (fetch_many, 280 coords/request)
     # instead of N sequential calls, so a several-hundred-cell grid stays seconds, not
     # minutes. Falls back to per-cell fetch for sources without batching (e.g. tests).
-    coords = [(float(la), float(lo)) for la in lats for lo in lons]
     source = predictor.source
     if hasattr(source, "fetch_many"):
         logger.info("Local product weather: fetching %d batched snapshots", len(coords))
@@ -252,12 +251,14 @@ def build_local_field(
     center_i = int(np.argmin(np.abs(lons - center_lon)))
     center_k = center_j * lons.size + center_i
     center_diagnostics = None
+    column_cache = ColumnDiagnosisCache(cube, config)
     logger.info("Local product scoring: scoring %d cells", n_points)
     for k, (la, lo) in enumerate(coords):
         forecast = score_point_with_cube(
             predictor, cube, snapshots[k], la, lo, time,
             distances_km=distances_km, azimuth_deg=azimuth_deg,
             elevation_fn=elevation_fn, domain=domain, config=config, aod_fn=aod_fn,
+            column_cache=column_cache, path=paths[k],
         )
         probability[k // lons.size, k % lons.size] = forecast.probability
         if k == center_k:
@@ -272,6 +273,10 @@ def build_local_field(
                 "inputs": getattr(forecast, "inputs", {}),
                 "geometry": getattr(forecast, "geometry", None),
             }
+    logger.info(
+        "Local product scoring: column cache %d hits, %d misses",
+        column_cache.hits, column_cache.misses,
+    )
     finite = probability[np.isfinite(probability)]
     if finite.size:
         logger.info(
