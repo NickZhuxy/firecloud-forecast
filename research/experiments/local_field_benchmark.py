@@ -178,20 +178,16 @@ def run_synthetic(
     center: tuple[float, float],
     radius_km: float,
     resolution_deg: float,
-    *,
-    workers: int = 1,
 ) -> dict:
     """Score a local grid on a synthetic cube; no network, no rendering."""
     lat, lon = center
     # Wide enough for every cell's 800 km path in any direction.
     cube = heterogeneous_cube((lat - 10.0, lat + 10.0), (lon - 14.0, lon + 14.0))
     predictor = standard_predictor(SyntheticSource())
-    kwargs = {"radius_km": radius_km, "resolution_deg": resolution_deg}
-    if workers != 1:
-        kwargs["workers"] = workers
     field, marks, start, end = _timed(
         lambda: build_local_field(
-            predictor, _CubeSource(cube), lat, lon, SYNTHETIC_VALID, **kwargs,
+            predictor, _CubeSource(cube), lat, lon, SYNTHETIC_VALID,
+            radius_km=radius_km, resolution_deg=resolution_deg,
         )
     )
     timings = _stage_timings(marks, start, end)
@@ -212,19 +208,15 @@ def run_cached(
     *,
     region: str = "china",
     output_dir: Path = _ROOT / "research" / "data" / "cache" / "bench" / "out",
-    workers: int = 1,
 ) -> dict:
     """Generate the real local product with satellite correction off."""
     from predictor.local_product import generate_local_product
 
-    kwargs = {}
-    if workers != 1:
-        kwargs["workers"] = None if workers == 0 else workers
     artifacts, marks, start, end = _timed(
         lambda: generate_local_product(
             target_date, output_dir, center[0], center[1],
             solar_event=event, radius_km=radius_km, resolution_deg=resolution_deg,
-            satellite=False, region=region, **kwargs,
+            satellite=False, region=region,
         )
     )
     metadata = json.loads(Path(artifacts.metadata_path).read_text(encoding="utf-8"))
@@ -248,7 +240,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--region", default="china")
     parser.add_argument("--radius", type=float, default=150.0)
     parser.add_argument("--resolution", type=float, default=0.1)
-    parser.add_argument("--workers", type=int, default=1, help="0 = auto")
     parser.add_argument("--profile", type=Path, default=None, help="write cProfile stats")
     parser.add_argument("--json", type=Path, default=None, help="write timings as JSON")
     return parser
@@ -260,10 +251,10 @@ def main(argv: list[str] | None = None) -> int:
 
     def run():
         if args.mode == "synthetic":
-            return run_synthetic(center, args.radius, args.resolution, workers=args.workers)
+            return run_synthetic(center, args.radius, args.resolution)
         return run_cached(
             center, args.date or date.today(), args.event, args.radius, args.resolution,
-            region=args.region, workers=args.workers,
+            region=args.region,
         )
 
     profiler = cProfile.Profile() if args.profile else None

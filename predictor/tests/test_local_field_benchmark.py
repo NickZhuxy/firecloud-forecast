@@ -36,3 +36,14 @@ def test_heterogeneous_cube_columns_differ():
     }
     assert len(columns) > 3
     assert cube.temperature_k.shape == (cube.levels_hpa.size, cube.lats.size, cube.lons.size)
+
+
+def test_benchmark_has_no_workers_option():
+    # Parallel scoring was not built; the flag must not reach build_local_field.
+    bench = _load_benchmark()
+    try:
+        bench.main(["synthetic", "--radius", "20", "--resolution", "0.2", "--workers", "2"])
+    except SystemExit as exit_:
+        assert exit_.code == 2
+    else:
+        raise AssertionError("--workers was accepted")

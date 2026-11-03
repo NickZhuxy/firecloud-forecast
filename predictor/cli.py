@@ -72,8 +72,9 @@ def plan_products(
 ) -> list[PlannedProduct]:
     """Pure plan: the products one invocation should produce (offline-testable).
 
-    The default includes national maps and, when coordinates are supplied, local
-    maps. ``local`` requires coordinates; ``national`` rejects them so a location
+    ``all`` includes national maps and, when coordinates are supplied, local
+    maps. ``main`` passes ``local`` instead when coordinates are given without
+    ``--scope``. ``local`` requires coordinates; ``national`` rejects them so a location
     request cannot be silently ignored. China keeps ``{output_base}/{date}/``;
     pilot products use ``{output_base}/{region}/{date}/``.
     """
