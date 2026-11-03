@@ -310,7 +310,7 @@ def test_main_scope_all_with_coords_generates_both_national_and_local(monkeypatc
         national.append(solar_event)
         return _fake_artifact(tmp_path, f"national-{solar_event.value}")
 
-    def fake_local(target_date, output_dir, lat, lon, *, dpi, solar_event,
+    def fake_local(target_date, output_dir, lat, lon, *, dpi, source, solar_event,
                    radius_km, resolution_deg, satellite):
         local.append((lat, lon, solar_event, radius_km, resolution_deg))
         return _fake_artifact(tmp_path, f"point-{lat}_{lon}-{solar_event.value}")
@@ -427,7 +427,7 @@ def test_no_satellite_flag_propagates_to_both_products(monkeypatch, tmp_path):
         seen["national"].append(satellite)
         return _fake_artifact(tmp_path, f"national-{solar_event.value}")
 
-    def fake_local(target_date, output_dir, lat, lon, *, dpi, solar_event,
+    def fake_local(target_date, output_dir, lat, lon, *, dpi, source, solar_event,
                    radius_km, resolution_deg, satellite):
         seen["local"].append(satellite)
         return _fake_artifact(tmp_path, f"point-{solar_event.value}")
@@ -696,6 +696,8 @@ def test_nyc_cli_computes_only_local_preserving_region_and_disabling_satellite(
         "--source", source, "--output", str(tmp_path), "--radius", "25",
     ])
     assert rc == 0
+    weather = calls[0][4].pop("source")
+    assert weather._solar_event is SolarEvent.SUNSET
     assert calls == [(
         date(2026, 10, 4), tmp_path / "us-nyc" / "2026-10-04", 40.7128, -74.0060,
         {"dpi": 160, "solar_event": SolarEvent.SUNSET, "radius_km": 25.0,
@@ -831,3 +833,26 @@ def test_remote_source_failure_never_starts_large_local_download(
     assert rc == 1
     assert "Remote precomputed product unavailable" in out
     assert "Retry later, or use --source local" in out
+
+
+def test_main_point_request_shares_open_meteo_responses_between_events(monkeypatch, tmp_path):
+    from predictor.fetch import OpenMeteoSource
+
+    sources = []
+
+    def fake_local(target_date, output_dir, lat, lon, **kwargs):
+        sources.append((kwargs["solar_event"], kwargs["source"]))
+        return _fake_artifact(tmp_path, f"point-{kwargs['solar_event'].value}")
+
+    monkeypatch.setattr(cli_mod, "generate_local_product", fake_local)
+    rc = main([
+        "--date", "2026-06-29", "--source", "local",
+        "--lat", "31.2", "--lon", "121.5", "--output", str(tmp_path),
+    ])
+    assert rc == 0
+    assert [event for event, _ in sources] == [SolarEvent.SUNRISE, SolarEvent.SUNSET]
+    for event, source in sources:
+        assert isinstance(source, OpenMeteoSource)
+        assert source._solar_event is event
+    assert sources[0][1]._run_cache is sources[1][1]._run_cache
+    assert sources[0][1]._run_cache.covers(datetime(2026, 6, 28, 21, tzinfo=timezone.utc), 1)

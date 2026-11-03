@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from predictor.fetch import OpenMeteoRunCache, OpenMeteoSource
 from predictor.gfs import GFSSource
 from predictor.local_product import generate_local_product
 from predictor.national_product import ProductArtifacts, generate_product
@@ -145,6 +146,11 @@ def build_site(
     root.mkdir(parents=True, exist_ok=True)
     (root / ".nojekyll").write_text("", encoding="utf-8")
     shared_source = source or GFSSource(as_of=generated_at)
+    # Every local product of this run reads its Open-Meteo weather from one set
+    # of responses: each location is requested once, not once per day and event.
+    weather_cache = OpenMeteoRunCache.for_dates(
+        start_date, start_date + timedelta(days=days - 1)
+    )
     manifests: list[Path] = []
 
     with tempfile.TemporaryDirectory(prefix="firecloud-precompute-") as temporary:
@@ -216,6 +222,7 @@ def build_site(
                         location.lon,
                         dpi=dpi,
                         cube_source=shared_source,
+                        source=OpenMeteoSource(solar_event=event, run_cache=weather_cache),
                         solar_event=event,
                         radius_km=location.radius_km,
                         resolution_deg=location.resolution_deg,

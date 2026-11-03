@@ -6,7 +6,7 @@ Real implementations live alongside FakeSource (used by tests).
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -72,6 +72,54 @@ class FakeSource:
         return self.snapshot
 
 
+class OpenMeteoRunCache:
+    """Share Open-Meteo forecast responses between the products of one run.
+
+    One response holds the whole hourly series and the daily event times of its
+    date range, so the products for other days and for the other solar event
+    can read it instead of asking for the same locations again. Open-Meteo counts
+    every location of every request against the free quota. The snapshots do
+    not change: the nearest hour and the nearest event are inside both ranges.
+    """
+
+    DAILY = f"{spec_for(SolarEvent.SUNRISE).daily_field},{spec_for(SolarEvent.SUNSET).daily_field}"
+
+    def __init__(self, start: date, end: date) -> None:
+        self.start = start
+        self.end = end
+        self.requests = 0
+        self._payloads: dict[tuple, object] = {}
+
+    @classmethod
+    def for_dates(cls, first: date, last: date) -> "OpenMeteoRunCache":
+        """A cache for products whose local dates run from ``first`` to ``last``."""
+        # An event's UTC time can be one day before (sunrise east of Greenwich) or
+        # after (sunset west of it) its local date, and a request adds one day on
+        # each side of that time.
+        return cls(first - timedelta(days=2), last + timedelta(days=2))
+
+    def covers(self, query_utc: datetime, window_days: int) -> bool:
+        return (
+            self.start <= (query_utc - timedelta(days=window_days)).date()
+            and (query_utc + timedelta(days=window_days)).date() <= self.end
+        )
+
+    def params(self, params: dict) -> dict:
+        return {
+            **params,
+            "daily": self.DAILY,
+            "start_date": self.start.isoformat(),
+            "end_date": self.end.isoformat(),
+        }
+
+    def payload(self, params: dict, fetch):
+        key = tuple(sorted(params.items()))
+        if key not in self._payloads:
+            self._payloads[key] = fetch()
+            self.requests += 1
+        return self._payloads[key]
+
+
 class OpenMeteoSource:
     """Fetch point weather from the free, key-less, global Open-Meteo API.
 
@@ -95,9 +143,16 @@ class OpenMeteoSource:
     MAX_REQUEST_ATTEMPTS = 3
     TRANSIENT_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
-    def __init__(self, session=None, timeout: float = 15.0, solar_event: SolarEvent | str = SolarEvent.SUNSET):
+    def __init__(
+        self,
+        session=None,
+        timeout: float = 15.0,
+        solar_event: SolarEvent | str = SolarEvent.SUNSET,
+        run_cache: OpenMeteoRunCache | None = None,
+    ):
         self._session = session
         self._timeout = timeout
+        self._run_cache = run_cache
         # #60: bind this source to a solar event (sunset/sunrise). It chooses the
         # Open-Meteo daily field and the event time; the scoring azimuth/GFS step
         # follow from the event time supplied to the scorer. Defaults to sunset.
@@ -277,10 +332,13 @@ class OpenMeteoSource:
         out: list[WeatherSnapshot] = []
         for i in range(0, len(coords), self.MAX_COORDS_PER_REQUEST):
             chunk = coords[i:i + self.MAX_COORDS_PER_REQUEST]
-            payload = self._get_json(
-                self.ENDPOINT,
-                self._params(chunk, query_utc, window_days=window_days, solar_event=self._solar_event),
-            )
+            params = self._params(chunk, query_utc, window_days=window_days, solar_event=self._solar_event)
+            cache = self._run_cache
+            if cache is not None and cache.covers(query_utc, window_days):
+                params = cache.params(params)
+                payload = cache.payload(params, lambda: self._get_json(self.ENDPOINT, params))
+            else:
+                payload = self._get_json(self.ENDPOINT, params)
             results = payload if isinstance(payload, list) else [payload]
             if sunset_offset is None:
                 out.extend(

@@ -30,6 +30,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from predictor.fetch import OpenMeteoRunCache, OpenMeteoSource
 from predictor.gfs import GFSSource, GFSUnavailable
 from predictor.local_product import generate_local_product
 from predictor.national_product import generate_product
@@ -312,7 +313,9 @@ def _fetch_remote_product(product: PlannedProduct, target_date: date, args):
     return result.artifacts
 
 
-def _run_product(product: PlannedProduct, target_date: date, args) -> object:
+def _run_product(
+    product: PlannedProduct, target_date: date, args, weather_cache: OpenMeteoRunCache | None = None,
+) -> object:
     if args.source != "local":
         try:
             return _fetch_remote_product(product, target_date, args)
@@ -330,7 +333,9 @@ def _run_product(product: PlannedProduct, target_date: date, args) -> object:
     region_options = {"region": region.key} if region.key != "china" else {}
     return generate_local_product(
         target_date, product.output_dir, product.lat, product.lon,
-        dpi=args.dpi, solar_event=product.solar_event,
+        dpi=args.dpi,
+        source=OpenMeteoSource(solar_event=product.solar_event, run_cache=weather_cache),
+        solar_event=product.solar_event,
         radius_km=args.radius, resolution_deg=args.resolution,
         satellite=not args.no_satellite and region.satellite_enabled,
         **region_options,
@@ -420,12 +425,15 @@ def main(argv: list[str] | None = None) -> int:
     n = len(plan)
     succeeded = 0
     run_started = time.perf_counter()
+    # Sunrise and sunset maps for one point ask Open-Meteo for the same locations;
+    # one response set serves both.
+    weather_cache = OpenMeteoRunCache.for_dates(target_date, target_date)
     for i, product in enumerate(plan, start=1):
         label = _product_label(product)
         print(f"\n[{i}/{n}] {label}…")
         started = time.perf_counter()
         try:
-            artifacts = _run_product(product, target_date, args)
+            artifacts = _run_product(product, target_date, args, weather_cache)
         except RemoteProductUnavailable as exc:
             _print_remote_failure(
                 i, n, label, str(exc), remote_enabled=region.remote_enabled,
