@@ -1,0 +1,92 @@
+{
+  "description": "Manually constructed numeric illustrations. These are not forecasts or observed weather.",
+  "center": [40.7128, -74.006],
+  "lats": [40.4128, 40.5128, 40.6128, 40.7128, 40.8128, 40.9128, 41.0128],
+  "lons": [-74.306, -74.206, -74.106, -74.006, -73.906, -73.806, -73.706],
+  "cases": [
+    {
+      "id": "01-score-bands",
+      "title": "Full color scale",
+      "lesson": "One fixed scale across every map.\nRead the numbers for exact values.",
+      "values": [
+        [0.10, 0.30, 0.45, 0.60, 0.78, 0.93, null],
+        [0.10, 0.30, 0.45, 0.60, 0.78, 0.93, null],
+        [0.10, 0.30, 0.45, 0.60, 0.78, 0.93, null],
+        [0.10, 0.30, 0.45, 0.60, 0.78, 0.93, null],
+        [0.10, 0.30, 0.45, 0.60, 0.78, 0.93, null],
+        [0.10, 0.30, 0.45, 0.60, 0.78, 0.93, null],
+        [0.10, 0.30, 0.45, 0.60, 0.78, 0.93, null]
+      ],
+      "callouts": [
+        {"row": 5, "column": 0, "label": "0.10", "offset_points": [0, 0]},
+        {"row": 5, "column": 1, "label": "0.30", "offset_points": [0, 0]},
+        {"row": 5, "column": 2, "label": "0.45", "offset_points": [0, 0]},
+        {"row": 5, "column": 3, "label": "0.60", "offset_points": [0, 0]},
+        {"row": 5, "column": 4, "label": "0.78", "offset_points": [0, 0]},
+        {"row": 5, "column": 5, "label": "0.93", "offset_points": [0, 0]}
+      ]
+    },
+    {
+      "id": "02-isolated-peak",
+      "title": "Isolated peak",
+      "lesson": "Point: 1.00. Nearby: 0.00–0.30.\nEach cell keeps its original score.",
+      "values": [
+        [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00],
+        [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00],
+        [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00],
+        [0.00, 0.00, 0.00, 1.00, 0.10, 0.00, 0.00],
+        [0.00, 0.00, 0.00, 0.30, 0.00, 0.00, 0.00],
+        [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00],
+        [0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
+      ],
+      "callouts": [
+        {"row": 3, "column": 3, "label": "1.00", "offset_points": [-20, 22]},
+        {"row": 3, "column": 2, "label": "0.00", "offset_points": [0, 0]},
+        {"row": 2, "column": 3, "label": "0.00", "offset_points": [0, 0]},
+        {"row": 3, "column": 4, "label": "0.10", "offset_points": [0, 0]},
+        {"row": 4, "column": 3, "label": "0.30", "offset_points": [0, 0]}
+      ]
+    },
+    {
+      "id": "03-nearby-patch",
+      "title": "Nearby high scores",
+      "lesson": "Point: 0.10. Nearby: 0.90.\nThe gray gap has no score.",
+      "values": [
+        [0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10],
+        [0.10, 0.10, 0.10, 0.10, 0.90, 0.90, 0.90],
+        [0.10, 0.10, 0.10, 0.10, 0.90, null, 0.90],
+        [0.10, 0.10, 0.10, 0.10, 0.90, null, 0.90],
+        [0.10, 0.10, 0.10, 0.10, 0.90, null, 0.90],
+        [0.10, 0.10, 0.10, 0.10, 0.90, 0.90, 0.90],
+        [0.10, 0.10, 0.10, 0.10, 0.10, 0.10, 0.10]
+      ],
+      "callouts": [
+        {"row": 3, "column": 3, "label": "0.10", "offset_points": [-20, -22]},
+        {"row": 3, "column": 4, "label": "0.90", "offset_points": [0, 0]},
+        {"row": 3, "column": 5, "label": "No data", "offset_points": [0, 0]},
+        {"row": 3, "column": 6, "label": "0.90", "offset_points": [0, 0]},
+        {"row": 5, "column": 2, "label": "0.10", "offset_points": [0, 0]}
+      ]
+    },
+    {
+      "id": "04-zero-and-missing",
+      "title": "Zero and missing",
+      "lesson": "Ivory: a valid score of 0.00.\nGray: no score available.",
+      "values": [
+        [0.00, 0.00, 0.00, 0.00, null, null, null],
+        [0.00, 0.00, 0.00, 0.00, null, null, null],
+        [0.00, 0.00, 0.00, 0.00, null, null, null],
+        [0.00, 0.00, 0.00, 0.00, null, null, null],
+        [0.00, 0.00, 0.00, 0.00, null, null, null],
+        [0.00, 0.00, 0.00, 0.00, null, null, null],
+        [0.00, 0.00, 0.00, 0.00, null, null, null]
+      ],
+      "callouts": [
+        {"row": 3, "column": 2, "label": "0.00", "offset_points": [0, 0]},
+        {"row": 3, "column": 4, "label": "No data", "offset_points": [0, 0]},
+        {"row": 5, "column": 1, "label": "0.00", "offset_points": [0, 0]},
+        {"row": 1, "column": 5, "label": "No data", "offset_points": [0, 0]}
+      ]
+    }
+  ]
+}

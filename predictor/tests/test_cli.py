@@ -1,5 +1,6 @@
 # predictor/tests/test_cli.py
 """Tests for the unified ``firecloud`` CLI entry (#61), offline."""
+import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -34,6 +35,10 @@ def test_defaults_national_both_events_today():
     assert args.source == "auto"
     assert args.scope == "all"
     assert args.region == "china"
+    assert args.radius == 150.0
+    assert args.resolution == 0.1
+    assert args.dpi == 160
+    assert args.no_refine is False and args.no_satellite is False
 
 
 def test_event_choice_rejects_junk():
@@ -45,6 +50,151 @@ def test_long_alias_parses_as_lon():
     args = build_parser().parse_args(["--lat", "31.5", "--long", "121.5"])
     assert args.lat == 31.5
     assert args.lon == 121.5
+
+
+# --- saved-location aliases (existing runner contracts) ---
+
+
+@pytest.mark.parametrize(
+    ("arguments", "command", "format_choice"),
+    [
+        (["status"], "status", "text"),
+        (["status", "--format", "json"], "status", "json"),
+        (["status", "--format=json"], "status", "json"),
+        (["status", "--for=json"], "status", "json"),
+        (["preview", "--date", "2026-10-04"], "preview", None),
+    ],
+)
+def test_saved_location_aliases_delegate_to_runner_and_preserve_overrides(
+    monkeypatch, arguments, command, format_choice
+):
+    import predictor.forecast_runner as runner
+
+    seen = []
+    original_arguments = arguments.copy()
+
+    def runner_main(forwarded):
+        seen.append(runner.build_parser().parse_args(forwarded))
+        return 23
+
+    monkeypatch.setattr(runner, "main", runner_main)
+    assert main(arguments) == 23
+    assert arguments == original_arguments
+    assert len(seen) == 1
+    assert seen[0].command == command
+    assert seen[0].config == runner.DEFAULT_CONFIG
+    assert seen[0].output == runner.DEFAULT_OUTPUT
+    if format_choice is not None:
+        assert seen[0].format == format_choice
+    else:
+        assert seen[0].date == date(2026, 10, 4)
+
+
+@pytest.mark.parametrize("command", ["status", "preview"])
+def test_saved_location_alias_help_is_scoped_and_uses_process_arguments(
+    monkeypatch, capsys, command
+):
+    monkeypatch.setattr(cli_mod.sys, "argv", ["firecloud", command, "--help"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert f"usage: firecloud {command}" in output
+    assert "--config" in output and "--output" in output
+    assert "{tick,plan,status,preview}" not in output
+
+
+def test_main_help_exposes_saved_location_routes(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["--help"])
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "Saved-location commands:" in output
+    assert "firecloud status" in output and "firecloud preview" in output
+    assert "--scope" in output and "--event" in output
+
+
+@pytest.fixture
+def saved_location(tmp_path):
+    path = tmp_path / "public city.json"
+    path.write_text(json.dumps({
+        "id": "example-city", "name": "Public city sample", "region": "us-nyc",
+        "timezone": "America/New_York", "latitude": 40.7128, "longitude": -74.0060,
+        "radius_km": 25, "resolution_deg": 0.1,
+    }), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("format_args", [[], ["--format", "json"]])
+def test_status_alias_reads_explicit_paths_without_weather_or_writes(
+    monkeypatch, tmp_path, capsys, saved_location, format_args
+):
+    import predictor.forecast_runner as runner
+    import predictor.observation_pilot as pilot
+
+    output_root = tmp_path / "separate data"
+    output_root.mkdir()
+    (output_root / "retained.txt").write_text("preserve this", encoding="utf-8")
+    before = {
+        path: path.read_bytes() if path.is_file() else None
+        for path in tmp_path.rglob("*")
+    }
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("status must not run weather generation or scheduler ticks")
+
+    monkeypatch.setattr(pilot, "_generate_product", forbidden)
+    monkeypatch.setattr(runner, "tick", forbidden)
+    monkeypatch.setattr(runner, "preview", forbidden)
+    monkeypatch.setattr(cli_mod, "_run_product", forbidden)
+    assert main([
+        "status", "--config", str(saved_location), "--output", str(output_root),
+        *format_args,
+    ]) == 0
+    output = capsys.readouterr().out
+    if format_args:
+        assert json.loads(output)["status"] == "not_initialized"
+    else:
+        assert output.startswith("# Public city sample forecast status")
+        assert "no runner record" in output
+    assert {
+        path: path.read_bytes() if path.is_file() else None
+        for path in tmp_path.rglob("*")
+    } == before
+    # The module remains JSON by default for existing callers.
+    assert runner.main(["status", "--config", str(saved_location), "--output", str(output_root)]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "not_initialized"
+
+
+def test_preview_alias_routes_extra_request_without_scheduling(
+    monkeypatch, tmp_path, capsys, saved_location
+):
+    import predictor.forecast_runner as runner
+
+    attempt = tmp_path / "extra-attempt.json"
+    attempt.write_text(json.dumps({"status": "success"}), encoding="utf-8")
+    output_root = tmp_path / "preview data"
+    seen = []
+
+    def preview(config, output, *, target):
+        seen.append((config["id"], output, target))
+        return attempt
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("an extra preview must not tick the scheduled runner")
+
+    monkeypatch.setattr(runner, "preview", preview)
+    monkeypatch.setattr(runner, "tick", forbidden)
+    monkeypatch.setattr(cli_mod, "_run_product", forbidden)
+    assert main([
+        "preview", "--config", str(saved_location), "--output", str(output_root),
+        "--date", "2026-10-04",
+    ]) == 0
+    assert seen == [("example-city", output_root, date(2026, 10, 4))]
+    assert json.loads(capsys.readouterr().out) == {
+        "action": "preview", "status": "success", "attempt": str(attempt),
+    }
+    assert not output_root.exists()
 
 
 # --- planning (pure) ---

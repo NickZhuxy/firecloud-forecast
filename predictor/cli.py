@@ -1,6 +1,6 @@
 """Unified ``firecloud`` command-line entry (#61).
 
-One command, flags rather than subcommands. With no arguments it produces today's
+Forecast generation uses flags. With no arguments it produces today's
 national firecloud potential for **both** events (sunrise + sunset) into a per-date folder
 ``output/{date}/``:
 
@@ -15,11 +15,14 @@ Default ``--event both`` runs the national overview twice (one GFS read per even
 that doubled fetch is intended). With ``--lat/--lon`` (or ``--lat/--long``), it also
 generates the local fine product for each selected event. ``--scope local`` limits
 the request to local products; ``--scope national`` requests only national maps.
+``firecloud status`` and ``firecloud preview`` use a saved location through the
+existing forecast runner. A preview is an extra request, not a scheduled forecast.
 """
 from __future__ import annotations
 
 import argparse
 import logging
+import sys
 import time
 import traceback
 from dataclasses import dataclass
@@ -113,6 +116,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="firecloud",
         description="Generate firecloud (sunrise/sunset glow) forecast products. "
                     "China is supported; New York City is a local pilot.",
+        epilog="Saved-location commands: firecloud status (readable status; no weather "
+               "request), firecloud preview (extra forecast request). "
+               "Use firecloud status --help or firecloud preview --help for options.",
     )
     parser.add_argument(
         "--region", choices=REGION_KEYS, default="china",
@@ -368,6 +374,15 @@ def _national_product_mod():
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in ("status", "preview"):
+        from predictor.forecast_runner import main as runner_main
+
+        if argv[0] == "status":
+            # Later user options override this human-readable alias default.
+            argv = ["status", "--format", "text", *argv[1:]]
+        return runner_main(argv)
+
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.dpi <= 0:
