@@ -91,6 +91,7 @@ def test_build_site_publishes_configured_local_point_manifests(tmp_path):
         *,
         dpi,
         cube_source,
+        source,
         solar_event,
         radius_km,
         resolution_deg,
@@ -145,3 +146,51 @@ def test_parse_location_uses_shared_grid_settings():
     )
 
     assert location == PrecomputeLocation("shanghai", 31.23, 121.47, 80.0, 0.05)
+
+
+def test_build_site_shares_one_open_meteo_cache_across_local_products(tmp_path):
+    from predictor.fetch import OpenMeteoSource
+
+    weather_sources = []
+
+    def fake_national(target_date, output_dir, *, solar_event, **_):
+        directory = Path(output_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        image = directory / f"national-{solar_event.value}.png"
+        metadata = directory / f"national-{solar_event.value}.json"
+        image.write_bytes(b"national")
+        metadata.write_text(json.dumps({"source_label": "gfs@2026-07-10T00Z+f18"}), encoding="utf-8")
+        return ProductArtifacts(image_path=image, metadata_path=metadata)
+
+    def fake_local(target_date, output_dir, lat, lon, *, source, solar_event, **_):
+        weather_sources.append((target_date, solar_event, source))
+        directory = Path(output_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        stem = f"point-{lat:g}_{lon:g}-{solar_event.value}"
+        image, metadata = directory / f"{stem}.png", directory / f"{stem}.json"
+        image.write_bytes(b"point")
+        metadata.write_text(json.dumps({"source_label": "gfs@2026-07-10T00Z+f19"}), encoding="utf-8")
+        return ProductArtifacts(image_path=image, metadata_path=metadata)
+
+    build_site(
+        tmp_path / "site",
+        start_date=date(2026, 7, 10),
+        days=2,
+        source=object(),
+        now=datetime(2026, 7, 10, 9, tzinfo=timezone.utc),
+        locations=(
+            PrecomputeLocation("Shanghai", 31.23, 121.47),
+            PrecomputeLocation("Hangzhou", 30.27, 120.15),
+        ),
+        generate=fake_national,
+        local_generate=fake_local,
+    )
+
+    assert len(weather_sources) == 2 * 2 * 2
+    caches = {id(source._run_cache) for _, _, source in weather_sources}
+    assert len(caches) == 1
+    cache = weather_sources[0][2]._run_cache
+    assert (cache.start, cache.end) == (date(2026, 7, 8), date(2026, 7, 13))
+    for _, event, source in weather_sources:
+        assert isinstance(source, OpenMeteoSource)
+        assert source._solar_event is event
