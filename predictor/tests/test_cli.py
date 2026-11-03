@@ -33,7 +33,7 @@ def test_defaults_national_both_events_today():
     assert args.date is None            # resolved to today in main()
     assert args.output == Path("output")
     assert args.source == "auto"
-    assert args.scope == "all"
+    assert args.scope is None           # resolved in main(): local with coordinates, else all
     assert args.region == "china"
     assert args.radius == 150.0
     assert args.resolution == 0.1
@@ -302,7 +302,7 @@ def test_main_requires_lat_and_lon_together():
         main(["--date", "2026-06-29", "--lat", "31.2"])  # missing --lon
 
 
-def test_main_with_coords_generates_both_national_and_local(monkeypatch, tmp_path):
+def test_main_scope_all_with_coords_generates_both_national_and_local(monkeypatch, tmp_path):
     national, local = [], []
 
     def fake_generate(target_date, output_dir, *, dpi, source, solar_event, refine,
@@ -318,13 +318,35 @@ def test_main_with_coords_generates_both_national_and_local(monkeypatch, tmp_pat
     monkeypatch.setattr(cli_mod, "generate_product", fake_generate)
     monkeypatch.setattr(cli_mod, "generate_local_product", fake_local)
     rc = main([
-        "--date", "2026-06-29", "--event", "sunset",
+        "--date", "2026-06-29", "--event", "sunset", "--scope", "all",
         "--lat", "31.2", "--lon", "121.5", "--output", str(tmp_path),
         "--radius", "120", "--resolution", "0.2",
     ])
     assert rc == 0
     assert national == [SolarEvent.SUNSET]                          # national ran
     assert local == [(31.2, 121.5, SolarEvent.SUNSET, 120.0, 0.2)]  # local ran with flags
+
+
+def test_main_coordinates_without_scope_compute_only_local_products(monkeypatch, tmp_path):
+    # A picked point should not wait for national maps unless --scope all asks for them.
+    local = []
+
+    def national_should_not_run(*args, **kwargs):
+        pytest.fail("coordinates without --scope must not generate national maps")
+
+    def fake_local(target_date, output_dir, lat, lon, **kwargs):
+        local.append((lat, lon, kwargs["solar_event"]))
+        return _fake_artifact(tmp_path, f"point-{kwargs['solar_event'].value}")
+
+    monkeypatch.setattr(cli_mod, "generate_product", national_should_not_run)
+    monkeypatch.setattr(cli_mod, "generate_local_product", fake_local)
+    rc = main([
+        "--date", "2026-06-29", "--event", "sunset", "--source", "local",
+        "--lat", "31.2", "--lon", "121.5", "--output", str(tmp_path),
+    ])
+
+    assert rc == 0
+    assert local == [(31.2, 121.5, SolarEvent.SUNSET)]
 
 
 @pytest.mark.parametrize("source", ["auto", "local"])
@@ -413,7 +435,7 @@ def test_no_satellite_flag_propagates_to_both_products(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_mod, "generate_product", fake_generate)
     monkeypatch.setattr(cli_mod, "generate_local_product", fake_local)
     base = ["--date", "2026-06-29", "--event", "sunset", "--output", str(tmp_path),
-            "--lat", "31.2", "--lon", "121.5"]
+            "--scope", "all", "--lat", "31.2", "--lon", "121.5"]
     main(base)
     main(base + ["--no-satellite"])
 
@@ -559,6 +581,7 @@ def test_auto_source_uses_remote_for_published_point_product(monkeypatch, tmp_pa
     rc = main([
         "--date", "2026-06-29",
         "--event", "sunset",
+        "--scope", "all",
         "--lat", "31.23",
         "--lon", "121.47",
         "--output", str(tmp_path),

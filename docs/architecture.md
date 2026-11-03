@@ -1,8 +1,9 @@
 # Architecture
 
 The public entry point is `predictor.cli:main`, installed as `firecloud`.
-It plans national and optional local products for the requested date and events;
-`--scope local` limits the plan to the requested location.
+It plans the products for the requested date and events. Without coordinates it
+plans the national maps. With `--lat` and `--lon` and no `--scope`, it plans only
+the local maps; `--scope all` adds the national maps.
 The default source policy tries published artifacts first, then computes locally.
 
 ## Package map

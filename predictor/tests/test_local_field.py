@@ -262,3 +262,45 @@ def test_local_field_cell_equals_standalone_single_point():
         _VALID, distances_km=dist,
     ).probability
     assert field.probability[j, i] == pytest.approx(standalone)
+
+
+def _load_benchmark():
+    import importlib.util
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    path = root / "research" / "experiments" / "local_field_benchmark.py"
+    spec = importlib.util.spec_from_file_location("local_field_benchmark", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize(
+    ("center", "lat_range", "lon_range"),
+    [((31.23, 121.47), (21.0, 41.0), (107.0, 136.0)),
+     ((40.7128, -74.006), (31.0, 51.0), (-88.0, -60.0))],
+)
+def test_build_local_field_is_unchanged_by_speedups(caplog, center, lat_range, lon_range):
+    # Every cell must equal the plain per-cell score: no cache, path built inside.
+    from predictor.sunward_section import DETAIL_SUNWARD_DISTANCES_KM, score_point_with_cube
+
+    bench = _load_benchmark()
+    cube = bench.heterogeneous_cube(lat_range, lon_range)
+    predictor = standard_predictor(bench.SyntheticSource())
+    caplog.set_level(logging.INFO, logger="predictor.local_field")
+    field = build_local_field(
+        predictor, _FakeCubeSource(cube), *center, bench.SYNTHETIC_VALID,
+        radius_km=60.0, resolution_deg=0.1,
+    )
+    expected = np.empty_like(field.probability)
+    for j, la in enumerate(field.lats):
+        for i, lo in enumerate(field.lons):
+            expected[j, i] = score_point_with_cube(
+                predictor, cube, bench.synthetic_snapshot(float(la), float(lo)),
+                float(la), float(lo), bench.SYNTHETIC_VALID,
+                distances_km=DETAIL_SUNWARD_DISTANCES_KM,
+            ).probability
+    np.testing.assert_array_equal(field.probability, expected)
+    assert np.unique(expected).size > 2
+    assert any("column cache" in record.getMessage() for record in caplog.records)

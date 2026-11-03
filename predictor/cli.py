@@ -72,8 +72,9 @@ def plan_products(
 ) -> list[PlannedProduct]:
     """Pure plan: the products one invocation should produce (offline-testable).
 
-    The default includes national maps and, when coordinates are supplied, local
-    maps. ``local`` requires coordinates; ``national`` rejects them so a location
+    ``all`` includes national maps and, when coordinates are supplied, local
+    maps. ``main`` passes ``local`` instead when coordinates are given without
+    ``--scope``. ``local`` requires coordinates; ``national`` rejects them so a location
     request cannot be silently ignored. China keeps ``{output_base}/{date}/``;
     pilot products use ``{output_base}/{region}/{date}/``.
     """
@@ -133,9 +134,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="which solar event(s) to forecast (default: both)",
     )
     parser.add_argument(
-        "--scope", choices=["all", "national", "local"], default="all",
+        "--scope", choices=["all", "national", "local"], default=None,
         help="products to generate: all includes national maps plus local maps when "
-             "coordinates are supplied; local requires --lat and --lon (default: all)",
+             "coordinates are supplied; local requires --lat and --lon (default: local "
+             "when --lat and --lon are given, otherwise all)",
     )
     parser.add_argument("--lat", type=float, default=None, help="local product latitude")
     parser.add_argument(
@@ -394,10 +396,12 @@ def main(argv: list[str] | None = None) -> int:
         if region.key != "china" else date.today()
     )
     target_date = args.date or default_date
+    # A requested point gets its local maps only; national maps need --scope all.
+    scope = args.scope or ("local" if args.lat is not None else "all")
     try:
         plan = plan_products(
             target_date, args.event, args.lat, args.lon,
-            output_base=args.output, scope=args.scope, region=region.key,
+            output_base=args.output, scope=scope, region=region.key,
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -410,7 +414,7 @@ def main(argv: list[str] | None = None) -> int:
 
     cold = _cache_is_cold(target_date)
     print(_plan_header(
-        target_date, args.event, args.lat, len(plan), cold, args.source, args.scope, region.key,
+        target_date, args.event, args.lat, len(plan), cold, args.source, scope, region.key,
     ))
 
     n = len(plan)
