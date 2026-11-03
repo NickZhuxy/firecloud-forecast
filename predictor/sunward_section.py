@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from predictor.clouds import CloudDiagnosisConfig, DEFAULT_CLOUD_CONFIG, diagnose_clouds
+from predictor.column_cache import ColumnDiagnosisCache
 from predictor.cross_section import SunwardCrossSection, build_cross_section
 from predictor.geometry import convective_duration_min
 from predictor.normalize import normalize
@@ -47,6 +48,7 @@ def assemble_sunward_cross_section(
     heights_m: list[float] | None = None,
     config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
     aod_fn=None,
+    column_cache: ColumnDiagnosisCache | None = None,
 ) -> SunwardCrossSection:
     """Build the cross-section by extracting one column per path sample.
 
@@ -58,7 +60,12 @@ def assemble_sunward_cross_section(
     AOD at each in-domain sample for the per-column path-extinction trace (injected
     so the assembly stays network-free, mirroring ``elevation_fn``); out-of-domain
     columns get ``None``. Without it, the cross-section carries no aerosol field.
+
+    ``column_cache`` (built on the same ``cube`` and ``config``) reuses each nearest
+    column's diagnosis across samples and cells; results are identical.
     """
+    if column_cache is not None and column_cache.config is not config:
+        raise ValueError("column_cache was built with a different cloud config")
     profiles: list = []
     layers_per_point: list = []
     aod_per_column: list | None = [] if aod_fn is not None else None
@@ -69,9 +76,13 @@ def assemble_sunward_cross_section(
             if aod_per_column is not None:
                 aod_per_column.append(None)
             continue
-        normalized = normalize(cube.profile_at(sample.lat, sample.lon))
-        profiles.append(normalized)
-        layers_per_point.append(diagnose_clouds(normalized, config))
+        if column_cache is not None:
+            profiles.append(column_cache.normalized(sample.lat, sample.lon))
+            layers_per_point.append(column_cache.layers(sample.lat, sample.lon))
+        else:
+            normalized = normalize(cube.profile_at(sample.lat, sample.lon))
+            profiles.append(normalized)
+            layers_per_point.append(diagnose_clouds(normalized, config))
         if aod_per_column is not None:
             aod_per_column.append(aod_fn(sample.lat, sample.lon))
     return build_cross_section(
@@ -195,6 +206,8 @@ def score_point_with_cube(
     config: CloudDiagnosisConfig = DEFAULT_CLOUD_CONFIG,
     aod_fn=None,
     stability_config: StabilityConfig = DEFAULT_STABILITY_CONFIG,
+    column_cache: ColumnDiagnosisCache | None = None,
+    path: SunwardPath | None = None,
 ):
     """Score one point against an ALREADY-FETCHED cube + snapshot.
 
@@ -202,18 +215,30 @@ def score_point_with_cube(
     canvas and assembles the sunward cross-section from ``cube`` (no fetch), then
     scores. ``score_point_with_sunward_section`` is this plus a per-point cube fetch;
     a local grid (``local_field``) reuses ONE cube across every observer instead.
+
+    A local grid may also pass a shared ``column_cache`` and the cell's prebuilt
+    ``path`` (the same ``build_sunward_path`` result); both leave the score unchanged.
     """
-    observer = normalize(cube.profile_at(lat, lon))
-    cloud_layers = diagnose_clouds(observer, config)
-    stability = diagnose_stability(observer, stability_config)
-    path = build_sunward_path(
-        lat, lon, time,
-        azimuth_deg=azimuth_deg,
-        distances_km=distances_km,
-        elevation_fn=elevation_fn,
-        domain=domain,
+    if column_cache is not None:
+        if column_cache.stability_config is not stability_config:
+            raise ValueError("column_cache was built with a different stability config")
+        cloud_layers = column_cache.layers(lat, lon)
+        stability = column_cache.stability(lat, lon)
+    else:
+        observer = normalize(cube.profile_at(lat, lon))
+        cloud_layers = diagnose_clouds(observer, config)
+        stability = diagnose_stability(observer, stability_config)
+    if path is None:
+        path = build_sunward_path(
+            lat, lon, time,
+            azimuth_deg=azimuth_deg,
+            distances_km=distances_km,
+            elevation_fn=elevation_fn,
+            domain=domain,
+        )
+    cross_section = assemble_sunward_cross_section(
+        path, cube, config=config, aod_fn=aod_fn, column_cache=column_cache
     )
-    cross_section = assemble_sunward_cross_section(path, cube, config=config, aod_fn=aod_fn)
     forecast = predictor.score_snapshot(
         snapshot, lat, lon, time,
         cloud_layers=cloud_layers, sunward_cross_section=cross_section,
