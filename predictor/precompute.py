@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import os
 import posixpath
 import re
@@ -21,6 +22,8 @@ from predictor.national_product import ProductArtifacts, generate_product
 from predictor.regions import get_region
 from predictor.remote_product import REMOTE_SCHEMA_VERSION, point_key
 from predictor.solar_event import SolarEvent
+
+logger = logging.getLogger(__name__)
 
 _PUBLISH_VALID_HOURS = 18
 _MODEL_RUN_RE = re.compile(r"gfs@(\d{4}-\d{2}-\d{2})T(\d{2})Z")
@@ -320,7 +323,8 @@ def build_site(
                     ))
 
         # Pilot regions use their own calendar date and skip the China-only
-        # satellite stage. Their manifests stay out of the China list.
+        # satellite stage. Their manifests stay out of the China list, and a
+        # failed pilot product is logged and left out.
         for location in regional_locations:
             profile = get_region(location.region)
             region_start = generated_at.astimezone(ZoneInfo(profile.timezone_name)).date()
@@ -330,21 +334,29 @@ def build_site(
             for offset in range(days):
                 target_date = region_start + timedelta(days=offset)
                 for event in events:
-                    local_artifacts = local_generate(
-                        target_date,
-                        work_root / "regions" / location.region / target_date.isoformat(),
-                        location.lat,
-                        location.lon,
-                        dpi=dpi,
-                        cube_source=shared_source,
-                        source=OpenMeteoSource(solar_event=event, run_cache=region_cache),
-                        solar_event=event,
-                        radius_km=location.radius_km,
-                        resolution_deg=location.resolution_deg,
-                        satellite=False,
-                        now=generated_at,
-                        region=location.region,
-                    )
+                    try:
+                        local_artifacts = local_generate(
+                            target_date,
+                            work_root / "regions" / location.region / target_date.isoformat(),
+                            location.lat,
+                            location.lon,
+                            dpi=dpi,
+                            cube_source=shared_source,
+                            source=OpenMeteoSource(solar_event=event, run_cache=region_cache),
+                            solar_event=event,
+                            radius_km=location.radius_km,
+                            resolution_deg=location.resolution_deg,
+                            satellite=False,
+                            now=generated_at,
+                            region=location.region,
+                        )
+                    except Exception:
+                        # A pilot product must not stop the China feed from deploying.
+                        logger.exception(
+                            "Skipping %s %s %s: local product failed",
+                            location.name, target_date.isoformat(), event.value,
+                        )
+                        continue
                     regional.setdefault(location.region, []).append(_publish_point(
                         root, version, location, target_date, event,
                         local_artifacts, generated_at, region=location.region,

@@ -140,7 +140,14 @@ async function show() {
   try {
     grid = await getJSON(new URL(artifacts.grid.path, url));
   } catch (error) {
-    setMessage("Cell values could not be loaded for this product.");
+    // Never leave the previous product on screen under the new selection.
+    lines.push("Cell values could not be loaded for this product.");
+    setMessage(lines.join(" "));
+    current = null;
+    ui.canvas.hidden = true;
+    ui.fallback.hidden = false;
+    ui.fallback.src = new URL(artifacts.image.path, url).href;
+    ui.legend.textContent = "";
     return;
   }
   ui.fallback.hidden = true;
@@ -160,6 +167,10 @@ function edges(centres) {
   return out;
 }
 
+function inDomain(grid, j, i) {
+  return !grid.in_domain || grid.in_domain[j][i];
+}
+
 function colorFor(value, grid) {
   if (value === null || value === undefined) return grid.no_data_color || MISSING_COLOR;
   let color = grid.colors[0][1];
@@ -177,7 +188,9 @@ function draw() {
   const east = lonEdges[lonEdges.length - 1];
   // Equirectangular with the standard parallel at the map's middle latitude.
   const kx = Math.cos(((south + north) / 2) * Math.PI / 180);
-  const cssWidth = ui.canvas.parentElement.clientWidth;
+  // The canvas content box, not its parent: padding or borders would scale it.
+  const cssWidth = ui.canvas.clientWidth;
+  if (!cssWidth) return;
   const scale = cssWidth / ((east - west) * kx);
   const cssHeight = (north - south) * scale;
   const ratio = window.devicePixelRatio || 1;
@@ -186,7 +199,7 @@ function draw() {
   ui.canvas.style.height = `${cssHeight}px`;
   const px = (lon) => (lon - west) * kx * scale * ratio;
   const py = (lat) => (north - lat) * scale * ratio;
-  current.view = { west, north, kx, scale, latEdges, lonEdges };
+  current.view = { west, north, kx, scale, ratio, latEdges, lonEdges };
 
   const ctx = ui.canvas.getContext("2d");
   ctx.fillStyle = "#ffffff";
@@ -197,7 +210,8 @@ function draw() {
     for (let i = 0; i < grid.lons.length; i += 1) {
       const x0 = px(lonEdges[i]);
       const x1 = px(lonEdges[i + 1]);
-      ctx.fillStyle = colorFor(grid.index[j][i], grid);
+      // Cells outside the product's coverage stay blank, as in the PNG.
+      ctx.fillStyle = inDomain(grid, j, i) ? colorFor(grid.index[j][i], grid) : "#ffffff";
       // Round outward so neighbouring cells leave no hairline gaps.
       ctx.fillRect(Math.floor(x0), Math.floor(y0), Math.ceil(x1) - Math.floor(x0), Math.ceil(y1) - Math.floor(y0));
     }
@@ -289,14 +303,22 @@ function row(label, value) {
 function onClick(clickEvent) {
   if (!current || !current.view) return;
   const { grid, metadata, manifest, view } = current;
+  // Map through bitmap pixels, the same space draw() painted in.
   const rect = ui.canvas.getBoundingClientRect();
-  const x = clickEvent.clientX - rect.left;
-  const y = clickEvent.clientY - rect.top;
-  const lon = view.west + x / (view.kx * view.scale);
-  const lat = view.north - y / view.scale;
+  const bx = (clickEvent.clientX - rect.left) * (ui.canvas.width / rect.width);
+  const by = (clickEvent.clientY - rect.top) * (ui.canvas.height / rect.height);
+  const lon = view.west + bx / (view.kx * view.scale * view.ratio);
+  const lat = view.north - by / (view.scale * view.ratio);
   const i = cellIndex(view.lonEdges, lon);
   const j = cellIndex(view.latEdges, lat);
   if (i < 0 || j < 0) return;
+  if (!inDomain(grid, j, i)) {
+    ui.readout.textContent = [
+      row("lat, lon", `${grid.lats[j].toFixed(2)}, ${grid.lons[i].toFixed(2)}`),
+      row("index", "outside coverage"),
+    ].join("\n");
+    return;
+  }
   const value = grid.index[j][i];
   const notes = [];
   if (grid.label) notes.push(grid.label);

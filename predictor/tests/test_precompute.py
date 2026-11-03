@@ -278,3 +278,25 @@ def test_parse_location_accepts_optional_region():
         parse_location("paris:48.85:2.35:eu-paris")
     with pytest.raises(argparse.ArgumentTypeError):
         parse_location("far:30.0:-74.0:us-nyc")   # outside the pilot's centre box
+
+
+def test_regional_failure_does_not_block_the_china_feed(tmp_path, caplog):
+    def fake_local(target_date, output_dir, lat, lon, *, solar_event, **kwargs):
+        if kwargs.get("region") == "us-nyc":
+            raise RuntimeError("HTTP Error 429: Too Many Requests")
+        return _artifacts(output_dir, f"point-{solar_event.value}", "gfs@2026-11-03T00Z+f10")
+
+    manifests = build_site(
+        tmp_path / "site", start_date=date(2026, 11, 3), days=1, source=object(),
+        now=datetime(2026, 11, 3, 3, tzinfo=timezone.utc), events=(SolarEvent.SUNSET,),
+        locations=(
+            PrecomputeLocation("Shanghai", 31.23, 121.47),
+            PrecomputeLocation("new-york", 40.7128, -74.006, region="us-nyc"),
+        ),
+        generate=_national_with_grid, local_generate=fake_local,
+    )
+    assert len(manifests) == 2
+    index = json.loads((tmp_path / "site" / "products" / "latest" / "index.json").read_text())
+    assert len(index["manifests"]) == 2
+    assert index["regional"] == {}
+    assert "new-york" in caplog.text and "429" in caplog.text

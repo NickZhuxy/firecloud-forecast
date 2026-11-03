@@ -936,3 +936,10 @@ def test_save_product_writes_national_grid_sidecar(tmp_path):
     assert grid["scope"] == "national"
     assert grid["label"] == "national screening"
     assert len(grid["index"]) == len(_field().lats)
+    # Cells outside China are clipped from the PNG; the page must hide them too.
+    from predictor.national_product import geometry_mask
+
+    field = _field()
+    expected = geometry_mask(_context().country, field.lats, field.lons)
+    assert grid["in_domain"] == expected.tolist()
+    assert 0 < expected.sum() < expected.size

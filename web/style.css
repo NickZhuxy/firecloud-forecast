@@ -52,8 +52,17 @@ img {
   display: block;
   width: 100%;
   height: auto;
-  border: 1px solid #000000;
+  margin: 1px 0;
+}
+
+/* An outline takes no layout space, so the canvas box is exactly the drawing. */
+canvas {
+  outline: 1px solid #000000;
   cursor: crosshair;
+}
+
+img {
+  border: 1px solid #000000;
 }
 
 #message {

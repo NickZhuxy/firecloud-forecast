@@ -25,8 +25,10 @@ radius and 0.1° grid spacing. New York products use the New York calendar date 
 skip the satellite stage.
 
 Each run asks Open-Meteo once per location and grid batch, and every product of the
-run reads from those responses. The free tier counts each grid cell as one location,
-so each extra local location adds about 837 × 4 locations per day.
+run reads from those responses. The free tier counts each grid cell as one location:
+Shanghai's 150 km grid has 837 cells and New York's has 945, and the workflow runs
+4 times a day. If a New York product fails, the run logs it, leaves it out and still
+deploys the China products.
 
 Builds download weather data and can run for hours. Check the runner and Pages
 limits for your account before enabling scheduled publishing. Availability depends

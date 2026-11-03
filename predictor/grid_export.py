@@ -13,7 +13,7 @@ import numpy as np
 from matplotlib.colors import BoundaryNorm, to_hex
 
 from predictor.map_style import INDEX_CMAP, NO_DATA_COLOR
-from predictor.national_product import DISPLAY_INDEX_BOUNDS, MapContext
+from predictor.national_product import DISPLAY_INDEX_BOUNDS, MapContext, geometry_mask
 from predictor.rules import limiting_gate  # noqa: F401  (re-exported for callers)
 
 if TYPE_CHECKING:
@@ -124,6 +124,8 @@ def national_grid_payload(field: NationalField, *, event: str, context: MapConte
     payload = _base(field, scope="national", event=event, context=context, tolerance_deg=0.05)
     payload["label"] = "national screening"
     payload["source_label"] = field.source_label
+    # The PNG clips the field to China; cells outside it are not part of the product.
+    payload["in_domain"] = _flags(geometry_mask(context.country, field.lats, field.lons))
     if field.refined_mask is not None:
         payload["refined"] = _flags(field.refined_mask)
     return payload
