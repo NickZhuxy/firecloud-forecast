@@ -63,6 +63,12 @@ rule and its weight.
 
 ## Quick start
 
+To see the forecast without an installation, open the
+[map](https://nickzhuxy.github.io/firecloud-forecast/). Select a product, a date,
+and an event. Click a cell to read its values.
+
+To run the forecast on your computer, do the steps that follow.
+
 Prerequisites: Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
 
 1. Get the code and install it:
