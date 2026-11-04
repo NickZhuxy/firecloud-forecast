@@ -152,8 +152,6 @@ uv run firecloud preview --config .local/forecast-service/viewpoint.json --outpu
 
 ## Limits
 
-- The index uses heuristic weights. It is not calibrated against observations.
-  `0.8` does not mean an 80% chance of a colored sky.
 - GFS has 0.25° resolution. A 0.1° local grid samples the model more often,
   but it does not add detail that the model does not have.
 - Cloud edges, aerosol and timing are uncertain at model resolution. The model
