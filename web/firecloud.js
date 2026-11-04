@@ -16,7 +16,7 @@ const ui = {
   readout: document.getElementById("readout"),
 };
 
-// products: key -> {label, items: [{date, event, url, manifest}]}
+// products: key -> {label, items: [{date, event, url, manifest, metadata, endsAt}]}
 const products = new Map();
 let current = null; // {manifest, url, grid, metadata, view}
 // Index ranges left off the map, keyed by their lower bound ("0.00") or "missing".
@@ -44,6 +44,13 @@ function setMessage(text) {
   ui.message.hidden = !text;
 }
 
+// When the event has finished everywhere on the map, in ms. Null if unknown.
+function eventEnd(metadata) {
+  if (!metadata) return null;
+  const last = metadata.event_range_utc ? metadata.event_range_utc[1] : metadata.event_time_utc;
+  return last ? Date.parse(last) : null;
+}
+
 function fillSelect(select, values, label) {
   const previous = select.value;
   select.replaceChildren(...values.map((value) => {
@@ -69,12 +76,20 @@ async function loadCatalog() {
   const base = new URL(INDEX_URL, document.baseURI);
   const loaded = await Promise.all(paths.map(async (path) => {
     const url = new URL(path, base);
+    let manifest;
     try {
-      return { url, manifest: await getJSON(url) };
+      manifest = await getJSON(url);
     } catch (error) {
       console.warn("Skipping manifest", path, error);
       return null;
     }
+    let metadata = null;
+    try {
+      metadata = await getJSON(new URL(manifest.artifacts.metadata.path, url));
+    } catch (error) {
+      console.warn("Metadata unavailable", path, error);
+    }
+    return { url, manifest, metadata };
   }));
   for (const entry of loaded) {
     if (!entry) continue;
@@ -85,6 +100,8 @@ async function loadCatalog() {
       event: entry.manifest.event,
       url: entry.url,
       manifest: entry.manifest,
+      metadata: entry.metadata,
+      endsAt: eventEnd(entry.metadata),
     });
   }
   if (!products.size) {
@@ -97,12 +114,24 @@ async function loadCatalog() {
   return true;
 }
 
-function refreshChoices() {
+function refreshChoices(target) {
   const items = products.get(ui.product.value).items;
   const dates = [...new Set(items.map((item) => item.date))].sort();
   fillSelect(ui.date, dates);
+  if (target) ui.date.value = target.date;
   const events = ["sunrise", "sunset"].filter((event) => items.some((item) => item.date === ui.date.value && item.event === event));
   fillSelect(ui.event, events);
+  if (target) ui.event.value = target.event;
+}
+
+// The selected event if it is still ahead, else the next one, else the latest.
+function upcomingItem() {
+  const now = Date.now();
+  const timed = products.get(ui.product.value).items
+    .filter((item) => item.endsAt !== null)
+    .sort((a, b) => a.endsAt - b.endsAt);
+  const kept = timed.find((item) => item.date === ui.date.value && item.event === ui.event.value && item.endsAt > now);
+  return kept || timed.find((item) => item.endsAt > now) || timed[timed.length - 1] || null;
 }
 
 function selectedItem() {
@@ -111,23 +140,17 @@ function selectedItem() {
   );
 }
 
-async function show() {
-  refreshChoices();
+async function show(target) {
+  refreshChoices(target);
   const item = selectedItem();
   ui.readout.textContent = "Click a cell.";
   if (!item) return;
-  const { manifest, url } = item;
+  const { manifest, url, metadata } = item;
   const lines = [];
   if (manifest.valid_until && Date.parse(manifest.valid_until) < Date.now()) {
     lines.push(`This forecast is out of date (generated ${utcText(manifest.generated_at)} UTC).`);
   }
   const artifacts = manifest.artifacts || {};
-  let metadata = null;
-  try {
-    metadata = await getJSON(new URL(artifacts.metadata.path, url));
-  } catch (error) {
-    console.warn("Metadata unavailable", error);
-  }
   if (!artifacts.grid) {
     lines.push("Cell values are not available for this product.");
     setMessage(lines.join(" "));
@@ -361,16 +384,16 @@ function onClick(clickEvent) {
 
 async function main() {
   if (!(await loadCatalog())) return;
-  ui.product.addEventListener("change", show);
-  ui.date.addEventListener("change", show);
-  ui.event.addEventListener("change", show);
+  ui.product.addEventListener("change", () => show(upcomingItem()));
+  ui.date.addEventListener("change", () => show());
+  ui.event.addEventListener("change", () => show());
   ui.canvas.addEventListener("click", onClick);
   let pending = 0;
   window.addEventListener("resize", () => {
     clearTimeout(pending);
     pending = setTimeout(() => current && draw(), 150);
   });
-  await show();
+  await show(upcomingItem());
 }
 
 main();
