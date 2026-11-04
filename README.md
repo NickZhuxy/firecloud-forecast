@@ -1,135 +1,128 @@
 # Firecloud Forecast
 
-**Explainable sunrise and sunset glow forecasts.**
+**Sunrise and sunset glow forecasts from cloud layers and the path of sunlight.**
 
 [![Tests](https://github.com/NickZhuxy/firecloud-forecast/actions/workflows/tests.yml/badge.svg)](https://github.com/NickZhuxy/firecloud-forecast/actions/workflows/tests.yml)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Firecloud combines public weather forecasts, cloud-layer diagnosis, and sunward
-illumination geometry to produce national and local maps with traceable metadata.
-Its output is a **condition index from 0 to 1**, not a calibrated probability:
-`0.8` does not mean an 80% chance of a colorful sky.
+Firecloud gives a condition index from 0 to 1 for a sunrise or a sunset.
+The index tells how well the forecast atmosphere matches the conditions for a
+colored sky. It is not a probability.
 
-This is research software. It provides a Python package and command-line tools;
-precomputed maps can be distributed through a static GitHub Pages feed.
-
-**Current coverage:** China has national maps and local maps. New York City has
-an experimental local pilot. Coverage will expand to other regions.
+Coverage: national and local maps for China, and local maps for New York City.
 
 ![Four synthetic examples of the condition-index colors](examples/color-guide/comparison-sheet.png)
 
-*Synthetic examples of the condition index.
+*Synthetic examples of the index colors.
 [Read the four cases and the color scale](examples/color-guide/README.md).*
 
-For real forecasts and recorded source times, see the archived
-[Shanghai case](examples/shanghai-sunset/README.md) and
-[New York City case](examples/new-york-sunset/README.md).
+## How it works
 
-Weather data by [Open-Meteo.com](https://open-meteo.com/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)),
-alongside NOAA GFS; transformed into Firecloud's derived diagnostic.
-Map context made with Natural Earth.
+Cloud cover alone does not decide if clouds glow. An overcast sky often stays
+gray, and a few high clouds can glow brightly. Firecloud asks two questions.
 
-## The question behind the project
+### Is there a cloud layer that can catch the light?
 
-Cloud cover alone cannot describe whether clouds can catch low-angle sunlight.
-Firecloud asks a more specific question: **is there a suitable cloud layer, and
-can sunlight reach it through the atmosphere toward the horizon?**
+After sunset, the sun is below your horizon, but it still lights clouds that
+are high enough. Firecloud reads the Global Forecast System (GFS) profile above
+the point. It finds each cloud layer and its base, top, phase and opacity. Then
+it selects the layer that can act as the canvas.
 
-The project has grown from a compact scoring prototype into cloud-profile
-diagnosis, sunward geometry, local and national products, and a published forecast
-feed. The [project story](docs/project-story.md) follows that development through
-concrete experiments, mistakes, and design decisions. The research sources remain
-available so contributors can inspect how the reasoning evolved.
+### Can sunlight reach that layer?
+
+Light reaches the canvas at a grazing angle, from the direction of the sun.
+Firecloud builds a path toward the sun, out to 800 km. It reads a GFS column
+every 25 km along that path. Then it traces the ray to the base of the canvas.
+A low cloud deck, terrain or dense aerosol on the path can block the ray.
+
+### How the conditions combine
+
+Some conditions are necessary. Firecloud calls them gates:
+
+- mid or high cloud is present,
+- low cloud does not cover the view,
+- the sun is at a usable angle,
+- sunlight can reach the canvas.
+
+Other conditions change the quality. Firecloud calls them modifiers: humidity,
+clean air, cloud altitude, cloud amount and boundary confidence.
+
+```text
+gate     = weighted geometric mean of the gate scores
+modifier = weighted arithmetic mean of the modifier scores
+index    = gate × modifier
+```
+
+If one gate is zero, the index is zero. Good modifiers cannot make up for a
+missing canvas or a blocked path.
+
+The national map uses a faster version without the 800 km ray trace. It then
+traces rays again for the most promising areas. The local map runs the full
+calculation at each grid cell. [Methodology](research/methodology.md) gives each
+rule and its weight.
 
 ## Quick start
 
-Requires Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
+To see the forecast without an installation, open the
+[map](https://nickzhuxy.github.io/firecloud-forecast/). Select a product, a date,
+and an event. Click a cell to read its values.
 
-```bash
-git clone https://github.com/NickZhuxy/firecloud-forecast.git
-cd firecloud-forecast
-uv sync --frozen
-uv run firecloud --help
-uv run firecloud --source remote --event sunset
-```
+To run the forecast on your computer, do the steps that follow.
 
-The last command downloads a published map if one is available. It fails with
-an explanation if the feed is unavailable or stale, without starting a local
-weather-data download. The public feed is best-effort and may have coverage gaps.
+Prerequisites: Python 3.11 or newer and [uv](https://docs.astral.sh/uv/).
 
-For a published location forecast without generating national maps:
+1. Get the code and install it:
 
-```bash
-uv run firecloud --scope local --source remote --event sunset --lat 31.23 --lon 121.47
-```
+   ```bash
+   git clone https://github.com/NickZhuxy/firecloud-forecast.git
+   cd firecloud-forecast
+   uv sync --frozen
+   ```
 
-For an offline introduction that requires only Python and no weather downloads:
+2. Get the published national sunset map:
 
-```bash
-python examples/shanghai-sunset/verify.py
-```
+   ```bash
+   uv run firecloud --source remote --event sunset
+   ```
 
-This verifies the archived example's checksums and prints its event time, actual
-GFS forecast time, and condition index. It does not rerun the weather model or
-validate the forecast against observations.
+3. Get a local map for one point. Give the latitude and longitude:
 
-For a New York City sunset forecast:
+   ```bash
+   uv run firecloud --event sunset --lat 31.23 --lon 121.47
+   ```
 
-```bash
-uv run firecloud --region us-nyc --scope local --source local --event sunset \
-  --lat 40.7128 --lon -74.0060 --radius 25 --resolution 0.1
-```
+   With coordinates, the command makes only the local maps.
+   Add `--scope all` to also make the national maps.
 
-These are public example coordinates. Select your location with `--lat` and
-`--lon`. The pilot accepts centers from 40.0 to 41.5°N and 75.0 to 72.5°W.
-It uses the `America/New_York` calendar date, including daylight saving time.
-It has no published feed or satellite correction. Its weather path can extend
-into Canada and over the ocean. See [the pilot limits](docs/usage.md#new-york-city-pilot).
+4. For New York City, add the region:
 
-The first local run downloads GFS subsets and Cartopy map data. Downloads can be
-large, and full refinement can take tens of minutes or longer. On macOS, if
-native GRIB or mapping libraries are missing, install `eccodes`, `geos`, and
+   ```bash
+   uv run firecloud --region us-nyc --source local --event sunset \
+     --lat 40.7128 --lon -74.0060
+   ```
+
+   The New York pilot accepts centers from 40.0 to 41.5°N and 75.0 to 72.5°W.
+   It uses the New York calendar date. See [the pilot limits](docs/usage.md#new-york-city-pilot).
+
+To check an archived forecast without a download, run
+`python examples/shanghai-sunset/verify.py`.
+
+On macOS, if GRIB or map libraries are missing, install `eccodes`, `geos` and
 `proj` with Homebrew. See [usage and troubleshooting](docs/usage.md).
 
-## Automatic local forecasts
+## Run time
 
-Configure your location once. Check a preview. Then activate the local service.
-See the [setup procedure](docs/automatic-forecasts.md).
-The service saves the scheduled forecast and updates a status page.
-You do not need photos or a daily terminal command.
+Measured on one Mac (Apple silicon) for a 150 km local map with 837 cells:
 
-For a saved location, use these commands from the repository root:
+| Case | Time |
+| --- | --- |
+| First run for a forecast hour (downloads about 130 MB of GFS data) | about 25 s |
+| GFS data already on disk | about 6 s |
 
-```bash
-uv run firecloud status --config .local/forecast-service/viewpoint.json --output output/forecasts
-uv run firecloud preview --config .local/forecast-service/viewpoint.json --output output/forecasts
-```
+Open-Meteo counts each grid cell as one location. Its free tier allows about
+5,000 locations per hour, so it refuses many local maps in one hour (HTTP 429).
 
-`status` reads saved records. It does not request weather data.
-`preview` requests an extra forecast. It does not replace a scheduled forecast.
-Use the same configuration and output paths as your installed service.
-The Mac must be awake, logged in, and online for scheduled requests.
-
-## What it does
-
-- Produces national sunrise/sunset maps and optional detailed local maps.
-- Reads GFS 0.25° forecasts and diagnoses cloud base, top, phase, and opacity.
-- Evaluates the sunward path out to 800 km, including cloud and aerosol obstruction.
-- Combines necessary conditions and quality modifiers into an explainable index.
-- Saves PNG maps and JSON provenance, timing, and algorithm metadata.
-- Supports remote downloads with checksum verification and valid-cache fallback.
-
-The default local path uses GFS profiles and Open-Meteo cloud, humidity, and
-visibility forecasts. It does not supply terrain heights or aerosol fields along
-each path. These input limits apply to the New York City pilot.
-
-`--source auto` is the default. If remote products are missing, invalid, or do not
-match the requested grid, it falls back to local computation. Use `--source remote`
-when you only want published products. Local products default to a 150 km radius
-and 0.1° evaluation grid; this finer sampling does **not** increase the resolution
-of the underlying GFS model.
-
-Outputs are grouped by date:
+## Outputs
 
 ```text
 output/YYYY-MM-DD/
@@ -140,79 +133,61 @@ output/YYYY-MM-DD/
 └── point-31.23_121.47-sunset.png   # Plus JSON, when coordinates are supplied
 ```
 
-New York City products use `output/us-nyc/YYYY-MM-DD/`. The JSON file records
-the event time in local time and UTC. It records the GFS forecast hour separately.
-Newly generated maps show the computed grid values without smoothing.
-Gray cells identify missing data. See [how to read the maps](docs/scientific-figures.md).
-Archived examples retain their original map style.
+New York City products go to `output/us-nyc/YYYY-MM-DD/`. Each JSON file records
+the event time, the GFS run and forecast hour, the inputs and the algorithm
+version. Gray cells on a map are missing data.
+[How to read the maps](docs/scientific-figures.md) explains the scale.
+
+## Automatic local forecasts
+
+A Mac can make a forecast for one saved location before each sunrise or sunset.
+See the [setup procedure](docs/automatic-forecasts.md).
+
+```bash
+uv run firecloud status --config .local/forecast-service/viewpoint.json --output output/forecasts
+uv run firecloud preview --config .local/forecast-service/viewpoint.json --output output/forecasts
+```
+
+`status` reads saved results. `preview` requests one extra forecast.
+
+## Limits
+
+- GFS has 0.25° resolution. A 0.1° local grid samples the model more often,
+  but it does not add detail that the model does not have.
+- Cloud edges, aerosol and timing are uncertain at model resolution. The model
+  does not forecast convective clouds well.
+- The default local run has no terrain heights and no per-column aerosol
+  depth along the path.
+- Firecloud does not compute a full spectral radiative transfer. It does not
+  predict sky colors.
+- Some Python fields keep the old name `probability`. They hold the condition
+  index.
 
 ## Documentation
 
 | Guide | Contents |
 | --- | --- |
-| [Usage](docs/usage.md) | Installation, CLI options, output interpretation, troubleshooting |
-| [Example forecast](examples/shanghai-sunset/README.md) | A real map, exact source times, and offline integrity verification |
-| [New York City pilot](examples/new-york-sunset/README.md) | A local forecast, model times, input limits, and download measurements |
-| [Automatic forecasts](docs/automatic-forecasts.md) | Schedule local forecasts, keep source records, and read the latest result |
-| [Read the maps](docs/scientific-figures.md) | Index scale, missing data, map geometry, and source times |
-| [Color examples](examples/color-guide/README.md) | Six score intervals, nearby values, zero, and missing data |
-| [Optional observations](docs/observation-pilot.md) | Save forecasts and record observations for an optional comparison |
-| [Project story](docs/project-story.md) | Development milestones, lessons, and evidence from repository history |
-| [Product roadmap](docs/roadmap.md) | Product priorities and checks for each next step |
-| [Architecture](docs/architecture.md) | Data flow, package map, contributor invariants |
-| [Methodology](research/methodology.md) | Implemented assumptions, scoring, scientific limitations |
-| [Static publishing](docs/publishing.md) | Precomputation and GitHub Pages setup |
-| [Contributing](CONTRIBUTING.md) | Development setup, tests, and pull requests |
-| [Research](research/README.md) | Experiments and the historical paper |
+| [Usage](docs/usage.md) | Installation, CLI options, output, troubleshooting |
+| [Methodology](research/methodology.md) | Rules, thresholds, weights and scientific limits |
+| [Read the maps](docs/scientific-figures.md) | Index scale, missing data, map geometry, source times |
+| [Shanghai example](examples/shanghai-sunset/README.md) | A real map, its source times and an offline check |
+| [New York City example](examples/new-york-sunset/README.md) | A local forecast, model times and input limits |
+| [Color examples](examples/color-guide/README.md) | Score intervals, zero and missing data |
+| [Automatic forecasts](docs/automatic-forecasts.md) | Scheduled local forecasts and status |
+| [Optional observations](docs/observation-pilot.md) | Record what the sky did next to the forecast |
+| [Architecture](docs/architecture.md) | Data flow, package map, contracts |
+| [Static publishing](docs/publishing.md) | Precomputed maps on GitHub Pages |
+| [Project story](docs/project-story.md) | How the design changed and why |
+| [Roadmap](docs/roadmap.md) | Next steps and their checks |
+| [Contributing](CONTRIBUTING.md) | Development setup, tests, pull requests |
 
-## Repository layout
+## License and data
 
-```text
-predictor/              Forecast package and command-line entry points
-  tests/                Synthetic, regression, and opt-in network tests
-docs/                   User and developer guides
-examples/               Small, documented forecast snapshots with provenance
-research/
-  experiments/          Reproducible research scripts
-  paper/                Historical LaTeX case study and figure sources
-  methodology.md        Current implementation guide
-.github/                Test/publishing workflows and contribution templates
-```
-
-Downloaded grids, routine forecast output, private reference documents, and personal
-planning archives stay outside version control. The lockfile, small paper figures,
-and a bounded documented forecast example remain tracked for reproducibility. Internal implementation diaries have
-been replaced by focused public guides; their originals remain in Git history.
-
-## Scientific status
-
-The score is an uncalibrated heuristic. Cloud boundaries, aerosol structure,
-terrain, and event timing are uncertain at model resolution. Offline regression
-and physical-consistency tests check software behavior; they do not establish
-real-world forecast skill. Satellite-related modules are experimental and their
-availability must be checked in product metadata. This is not a full spectral
-radiative-transfer model, and it does not predict exact sky colors.
-
-Some Python fields retain historical names such as `probability` for compatibility;
-interpret them as condition indices. The legacy `label_zh` localization field is
-also retained, while public documentation and command-line output use English.
-
-## Contributing and next steps
-
-Bug reports, reproducible forecast cases, documentation improvements, and
-independent validation are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md)
-and the [issue tracker](https://github.com/NickZhuxy/firecloud-forecast/issues).
-Planning lives on the [project board](https://github.com/users/NickZhuxy/projects/2).
-
-Current product work focuses on automatic local forecasts and clear result reports.
-See the [product roadmap](docs/roadmap.md) for the next steps and acceptance criteria.
-Independent forecast evaluation remains a research goal.
-Webcam collection and machine-learning validation are on hold.
-Algorithm changes need a separate review.
-
-## License
-
-Licensed under the [MIT License](LICENSE).
+The code uses the [MIT License](LICENSE).
 The included Inter font files use the [SIL Open Font License 1.1](predictor/assets/fonts/OFL.txt).
-Weather data, maps, and third-party references have their own terms; see
+
+Weather data by [Open-Meteo.com](https://open-meteo.com/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)),
+alongside NOAA GFS; transformed into Firecloud's derived diagnostic.
+Map context made with Natural Earth.
+Weather data, maps and third-party references have their own terms; see
 [data sources](docs/data-sources.md).
