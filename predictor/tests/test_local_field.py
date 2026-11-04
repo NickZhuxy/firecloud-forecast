@@ -293,14 +293,25 @@ def test_build_local_field_is_unchanged_by_speedups(caplog, center, lat_range, l
         predictor, _FakeCubeSource(cube), *center, bench.SYNTHETIC_VALID,
         radius_km=60.0, resolution_deg=0.1,
     )
+    from predictor.grid_export import limiting_gate
+    from predictor.rules import STANDARD_GATES
+
     expected = np.empty_like(field.probability)
+    gates = np.empty_like(field.probability)
+    limiting = np.empty(field.probability.shape, dtype=object)
     for j, la in enumerate(field.lats):
         for i, lo in enumerate(field.lons):
-            expected[j, i] = score_point_with_cube(
+            forecast = score_point_with_cube(
                 predictor, cube, bench.synthetic_snapshot(float(la), float(lo)),
                 float(la), float(lo), bench.SYNTHETIC_VALID,
                 distances_km=DETAIL_SUNWARD_DISTANCES_KM,
-            ).probability
+            )
+            expected[j, i] = forecast.probability
+            gates[j, i] = forecast.gate_score
+            limiting[j, i] = limiting_gate(forecast.components, STANDARD_GATES)
     np.testing.assert_array_equal(field.probability, expected)
+    np.testing.assert_array_equal(field.gate_score, gates)
+    assert field.limiting_gate.tolist() == limiting.tolist()
+    assert field.nowcast_mask is None
     assert np.unique(expected).size > 2
     assert any("column cache" in record.getMessage() for record in caplog.records)

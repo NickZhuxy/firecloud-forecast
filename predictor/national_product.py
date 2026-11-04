@@ -67,6 +67,19 @@ class MapContext:
 class ProductArtifacts:
     image_path: Path
     metadata_path: Path
+    grid_path: Path | None = None
+
+
+def write_grid_sidecar(directory: Path, stem: str, payload: dict) -> Path:
+    """Atomically write ``{stem}.grid.json``: the per-cell values the web map draws."""
+    grid_path = directory / f"{stem}.grid.json"
+    grid_tmp = directory / f".{stem}.grid.json.tmp"
+    grid_tmp.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    grid_tmp.replace(grid_path)
+    return grid_path
 
 
 @dataclass(frozen=True)
@@ -561,7 +574,14 @@ def save_product(
         encoding="utf-8",
     )
     metadata_tmp.replace(metadata_path)
-    return ProductArtifacts(image_path=image_path, metadata_path=metadata_path)
+
+    from predictor.grid_export import national_grid_payload
+
+    grid_path = write_grid_sidecar(
+        directory, stem,
+        national_grid_payload(field, event=SolarEvent(solar_event).value, context=context),
+    )
+    return ProductArtifacts(image_path=image_path, metadata_path=metadata_path, grid_path=grid_path)
 
 
 def _intersects(bounds, bbox) -> bool:

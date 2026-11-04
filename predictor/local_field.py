@@ -25,6 +25,7 @@ import numpy as np
 
 from predictor.clouds import CloudDiagnosisConfig, DEFAULT_CLOUD_CONFIG
 from predictor.column_cache import ColumnDiagnosisCache
+from predictor.rules import STANDARD_GATES, limiting_gate
 from predictor.spatial import build_sunward_path
 from predictor.sunward_section import (
     DETAIL_SUNWARD_DISTANCES_KM,
@@ -49,6 +50,11 @@ class LocalField:
     nowcast: dict | None = None
     provenance: dict | None = None
     center_diagnostics: dict | None = None
+    # Per-cell web-map details: the gate product G, the gate that holds the
+    # index back most, and the cells Stage C changed (None when it did not run).
+    gate_score: np.ndarray | None = None
+    limiting_gate: np.ndarray | None = None
+    nowcast_mask: np.ndarray | None = None
 
 
 def _utc_text(value: datetime | None) -> str | None:
@@ -252,6 +258,9 @@ def build_local_field(
     center_k = center_j * lons.size + center_i
     center_diagnostics = None
     column_cache = ColumnDiagnosisCache(cube, config)
+    gate_score = np.full(probability.shape, np.nan)
+    limiting = np.full(probability.shape, None, dtype=object)
+    gate_names = getattr(predictor, "gate_names", None) or STANDARD_GATES
     logger.info("Local product scoring: scoring %d cells", n_points)
     for k, (la, lo) in enumerate(coords):
         forecast = score_point_with_cube(
@@ -260,7 +269,11 @@ def build_local_field(
             elevation_fn=elevation_fn, domain=domain, config=config, aod_fn=aod_fn,
             column_cache=column_cache, path=paths[k],
         )
-        probability[k // lons.size, k % lons.size] = forecast.probability
+        row, column = k // lons.size, k % lons.size
+        probability[row, column] = forecast.probability
+        if getattr(forecast, "gate_score", None) is not None:
+            gate_score[row, column] = forecast.gate_score
+        limiting[row, column] = limiting_gate(getattr(forecast, "components", {}), gate_names)
         if k == center_k:
             center_diagnostics = {
                 "stage": "model_before_nowcast",
@@ -294,4 +307,6 @@ def build_local_field(
             cube, snapshots, time, cube_source, elevation_fn=elevation_fn, aod_fn=aod_fn,
         ),
         center_diagnostics=center_diagnostics,
+        gate_score=gate_score,
+        limiting_gate=limiting,
     )

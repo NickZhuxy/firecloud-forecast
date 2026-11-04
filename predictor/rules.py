@@ -390,6 +390,22 @@ STANDARD_GATES: set[str] = {
 }
 
 
+def limiting_gate(components: dict[str, float], gate_names) -> str | None:
+    """The gate with the lowest score; ``None`` when no gate holds the index back.
+
+    Ties go to the earliest gate in ``components`` order.
+    """
+    gates = set(gate_names)
+    lowest_name, lowest = None, math.inf
+    for name, value in components.items():
+        if name in gates and value is not None and float(value) < lowest:
+            lowest_name, lowest = name, float(value)
+    if lowest_name is None or lowest >= 1.0:
+        return None
+    return lowest_name
+
+
+
 class RuleBasedPredictor:
     def __init__(
         self,

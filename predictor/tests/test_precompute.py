@@ -194,3 +194,109 @@ def test_build_site_shares_one_open_meteo_cache_across_local_products(tmp_path):
     for _, event, source in weather_sources:
         assert isinstance(source, OpenMeteoSource)
         assert source._solar_event is event
+
+
+def _artifacts(directory, stem, label):
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    image, metadata = directory / f"{stem}.png", directory / f"{stem}.json"
+    grid = directory / f"{stem}.grid.json"
+    image.write_bytes(b"png")
+    metadata.write_text(json.dumps({"source_label": label}), encoding="utf-8")
+    grid.write_text('{"schema":"firecloud-grid/1"}', encoding="utf-8")
+    return ProductArtifacts(image_path=image, metadata_path=metadata, grid_path=grid)
+
+
+def _national_with_grid(target_date, output_dir, *, solar_event, **_):
+    return _artifacts(output_dir, f"national-{solar_event.value}", "gfs@2026-11-03T00Z+f09")
+
+
+def test_manifests_include_grid_artifact(tmp_path):
+    def fake_local(target_date, output_dir, lat, lon, *, solar_event, **_):
+        return _artifacts(output_dir, f"point-{solar_event.value}", "gfs@2026-11-03T00Z+f10")
+
+    manifests = build_site(
+        tmp_path / "site", start_date=date(2026, 11, 3), days=1, source=object(),
+        now=datetime(2026, 11, 3, 3, tzinfo=timezone.utc), events=(SolarEvent.SUNSET,),
+        locations=(PrecomputeLocation("Shanghai", 31.23, 121.47),),
+        generate=_national_with_grid, local_generate=fake_local,
+    )
+    names = {}
+    for path in manifests:
+        manifest = json.loads(path.read_text())
+        grid = manifest["artifacts"]["grid"]
+        resolved = path.parent / grid["path"]
+        assert resolved.is_file() and grid["bytes"] == resolved.stat().st_size
+        names[manifest["scope"]] = resolved.name
+        assert set(manifest["artifacts"]) == {"image", "metadata", "grid"}
+    assert names == {"national": "national.grid.json", "point": "point.grid.json"}
+
+
+def test_regional_location_uses_region_dates_and_paths(tmp_path):
+    calls = []
+
+    def fake_local(target_date, output_dir, lat, lon, *, solar_event, **kwargs):
+        calls.append((target_date, solar_event, kwargs))
+        return _artifacts(output_dir, f"point-{solar_event.value}", "gfs@2026-11-03T00Z+f22")
+
+    # 03:00Z is still 2 Nov in New York and already 3 Nov in Shanghai.
+    manifests = build_site(
+        tmp_path / "site", start_date=date(2026, 11, 3), days=2, source=object(),
+        now=datetime(2026, 11, 3, 3, tzinfo=timezone.utc),
+        locations=(PrecomputeLocation("new-york", 40.7128, -74.006, region="us-nyc"),),
+        generate=_national_with_grid, local_generate=fake_local,
+    )
+    assert sorted({c[0] for c in calls}) == [date(2026, 11, 2), date(2026, 11, 3)]
+    assert len(calls) == 4
+    for _, event, kwargs in calls:
+        assert kwargs["region"] == "us-nyc"
+        assert kwargs["satellite"] is False
+        assert kwargs["source"]._solar_event is event
+    regional = [p for p in manifests if "regions" in p.parts]
+    assert len(regional) == 4
+    first = json.loads(regional[0].read_text())
+    assert first["region"] == "us-nyc"
+    assert "regions/us-nyc/2026-11-02/sunrise/points/" in regional[0].as_posix()
+    assert "/regions/us-nyc/" in (regional[0].parent / first["artifacts"]["image"]["path"]).resolve().as_posix()
+    index = json.loads((tmp_path / "site" / "products" / "latest" / "index.json").read_text())
+    assert not any("regions/" in item for item in index["manifests"])
+    assert len(index["manifests"]) == 4
+    assert sorted(index["regional"]["us-nyc"]) == sorted(
+        p.relative_to(tmp_path / "site" / "products" / "latest").as_posix() for p in regional
+    )
+
+
+def test_parse_location_accepts_optional_region():
+    import argparse
+
+    import pytest
+
+    assert parse_location("shanghai:31.23:121.47").region == "china"
+    nyc = parse_location("new-york:40.7128:-74.0060:us-nyc")
+    assert (nyc.name, nyc.lat, nyc.lon, nyc.region) == ("new-york", 40.7128, -74.006, "us-nyc")
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_location("paris:48.85:2.35:eu-paris")
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_location("far:30.0:-74.0:us-nyc")   # outside the pilot's centre box
+
+
+def test_regional_failure_does_not_block_the_china_feed(tmp_path, caplog):
+    def fake_local(target_date, output_dir, lat, lon, *, solar_event, **kwargs):
+        if kwargs.get("region") == "us-nyc":
+            raise RuntimeError("HTTP Error 429: Too Many Requests")
+        return _artifacts(output_dir, f"point-{solar_event.value}", "gfs@2026-11-03T00Z+f10")
+
+    manifests = build_site(
+        tmp_path / "site", start_date=date(2026, 11, 3), days=1, source=object(),
+        now=datetime(2026, 11, 3, 3, tzinfo=timezone.utc), events=(SolarEvent.SUNSET,),
+        locations=(
+            PrecomputeLocation("Shanghai", 31.23, 121.47),
+            PrecomputeLocation("new-york", 40.7128, -74.006, region="us-nyc"),
+        ),
+        generate=_national_with_grid, local_generate=fake_local,
+    )
+    assert len(manifests) == 2
+    index = json.loads((tmp_path / "site" / "products" / "latest" / "index.json").read_text())
+    assert len(index["manifests"]) == 2
+    assert index["regional"] == {}
+    assert "new-york" in caplog.text and "429" in caplog.text

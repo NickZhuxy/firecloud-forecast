@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "predictor/**"
+      - "web/**"
       - "uv.lock"
       - ".github/workflows/precompute-pages.yml"
   workflow_dispatch:
@@ -19,9 +20,9 @@ on:
         default: 2
         type: number
       locations:
-        description: Comma-separated NAME:LAT:LON local products
+        description: Comma-separated NAME:LAT:LON[:REGION] local products
         required: false
-        default: shanghai:31.23:121.47
+        default: shanghai:31.23:121.47,new-york:40.7128:-74.0060:us-nyc
         type: string
       local_radius:
         description: Local product radius in km
@@ -57,7 +58,7 @@ jobs:
       MPLBACKEND: Agg
       START_DATE: ${{ inputs.start_date || '' }}
       DAYS: ${{ inputs.days || 2 }}
-      LOCATIONS: ${{ inputs.locations || 'shanghai:31.23:121.47' }}
+      LOCATIONS: ${{ inputs.locations || 'shanghai:31.23:121.47,new-york:40.7128:-74.0060:us-nyc' }}
       LOCAL_RADIUS: ${{ inputs.local_radius || 150 }}
       LOCAL_RESOLUTION: ${{ inputs.local_resolution || 0.1 }}
     steps:
@@ -97,6 +98,9 @@ jobs:
             fi
           done
           uv run --no-sync python -m predictor.precompute "${args[@]}"
+
+      - name: Add the static map page
+        run: cp -R web/. _site/
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

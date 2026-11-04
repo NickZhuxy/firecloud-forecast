@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firecloud</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+<h1>Firecloud</h1>
+<p>Sunrise and sunset glow condition index, 0 to 1. Click a cell to read its values.</p>
+
+<form id="controls">
+<label>Product <select id="product"></select></label>
+<label>Date <select id="date"></select></label>
+<label>Event <select id="event"></select></label>
+</form>
+
+<p id="message" hidden></p>
+<canvas id="map" width="960" height="600"></canvas>
+<img id="fallback" alt="Forecast map" hidden>
+<p id="legend"></p>
+<pre id="readout">Click a cell.</pre>
+
+<p class="small">Data: NOAA GFS and Open-Meteo.com (CC BY 4.0). Map outlines: Natural Earth.</p>
+</main>
+<script src="firecloud.js"></script>
+</body>
+</html>
